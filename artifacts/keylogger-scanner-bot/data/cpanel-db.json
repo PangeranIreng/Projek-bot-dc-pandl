@@ -1,0 +1,38 @@
+{
+  "panels": [
+    {
+      "buttons": [
+        {
+          "id": "btn-1784026828737",
+          "action": "toggle",
+          "label": "Member",
+          "emoji": "👤",
+          "roleId": "1462696202842931329",
+          "style": "Success"
+        },
+        {
+          "id": "btn-1784026999383",
+          "action": "toggle",
+          "label": "Akses BoomBox",
+          "emoji": "🎶",
+          "roleId": "1525951735879696555",
+          "style": "Secondary"
+        }
+      ],
+      "thumbnail": null,
+      "banner": null,
+      "footer": "Pangeran Assistant AI",
+      "color": 5793266,
+      "template": "custom",
+      "guildId": "1462696202842931327",
+      "channelId": "1465381701013209199",
+      "title": "🏠 Welcome — Ambil Role Sesuai Kebutuhan.",
+      "description": "Klik tombol di bawah untuk mendapatkan role Member dan Akses Boombox.",
+      "createdBy": "1462685321262272664",
+      "id": "cp-1",
+      "createdAt": "2026-07-14T10:56:41.282Z",
+      "messageId": "1526542952049016843"
+    }
+  ],
+  "counter": 1
+}

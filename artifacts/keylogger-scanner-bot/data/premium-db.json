@@ -1,0 +1,22 @@
+{
+  "premiumUsers": {},
+  "premiumRoles": {},
+  "customLimitUsers": {
+    "1526499408282390619": {
+      "limit": 1,
+      "type": "permanent",
+      "expiresAt": null
+    }
+  },
+  "customLimitRoles": {},
+  "dashboard": {
+    "messageId": "1526652281016025232",
+    "entryIndex": 8
+  },
+  "premStatsDashboard": {
+    "channelId": "1524810922009432144",
+    "messageId": "1526661703125962976"
+  },
+  "lastPremiumTarget": "<@1326328818448859287>",
+  "lastCustomLimitTarget": "<@1526499408282390619>"
+}

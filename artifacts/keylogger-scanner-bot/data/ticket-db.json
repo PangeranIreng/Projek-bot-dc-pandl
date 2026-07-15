@@ -1,0 +1,88 @@
+{
+  "config": {
+    "panelChannelId": "1462696203694379100",
+    "panelMessageId": "1526320879917858888",
+    "logsChannelId": "1524811019514286263",
+    "dashboardMessageId": "1526320881339469939",
+    "mentionRoleId": "1462696203241132118",
+    "claimChannelId": "1526557283092271114",
+    "claimRoleId": "1462696203241132118"
+  },
+  "counter": 6,
+  "tickets": [
+    {
+      "number": 1,
+      "threadId": "1526321302858895420",
+      "userId": "1462685321262272664",
+      "handlerId": "1462685321262272664",
+      "status": "closed",
+      "createdAt": "2026-07-13T20:15:57.226Z",
+      "closedAt": "2026-07-13T20:16:26.005Z",
+      "durationMs": 28779,
+      "firstReplySent": false
+    },
+    {
+      "number": 2,
+      "threadId": "1526500665424351292",
+      "userId": "1526499408282390619",
+      "handlerId": "1462685321262272664",
+      "status": "closed",
+      "createdAt": "2026-07-14T08:08:40.294Z",
+      "closedAt": "2026-07-14T11:21:25.982Z",
+      "durationMs": null,
+      "firstReplySent": false
+    },
+    {
+      "number": 3,
+      "threadId": "1526549755671347231",
+      "userId": "1526499408282390619",
+      "handlerId": "1462685321262272664",
+      "status": "closed",
+      "createdAt": "2026-07-14T11:23:44.760Z",
+      "closedAt": "2026-07-14T12:28:44.325Z",
+      "durationMs": 3899565,
+      "firstReplySent": true,
+      "statusMessageId": "1526549763905032213",
+      "controlMessageId": "1526549765624434719"
+    },
+    {
+      "number": 4,
+      "threadId": "1526556129747009617",
+      "userId": "1462685321262272664",
+      "handlerId": "1462685321262272664",
+      "status": "closed",
+      "createdAt": "2026-07-14T11:49:05.407Z",
+      "closedAt": "2026-07-14T12:28:41.386Z",
+      "durationMs": 2375979,
+      "firstReplySent": false,
+      "statusMessageId": "1526556141134548996",
+      "controlMessageId": "1526556143046885459"
+    },
+    {
+      "number": 5,
+      "threadId": "1526570534236721242",
+      "userId": "1462685321262272664",
+      "handlerId": null,
+      "status": "closed",
+      "createdAt": "2026-07-14T12:46:19.707Z",
+      "closedAt": "2026-07-14T12:46:30.928Z",
+      "durationMs": null,
+      "firstReplySent": false,
+      "statusMessageId": "1526570546060591126",
+      "controlMessageId": "1526570548287639655"
+    },
+    {
+      "number": 6,
+      "threadId": "1526576848526643210",
+      "userId": "1462685321262272664",
+      "handlerId": "1462685321262272664",
+      "status": "closed",
+      "createdAt": "2026-07-14T13:11:24.348Z",
+      "closedAt": "2026-07-14T13:12:36.161Z",
+      "durationMs": 71813,
+      "firstReplySent": true,
+      "statusMessageId": "1526576856692686880",
+      "controlMessageId": "1526576858806620300"
+    }
+  ]
+}
