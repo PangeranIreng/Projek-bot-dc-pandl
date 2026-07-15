@@ -163,23 +163,34 @@ function smoothDelay() {
   return sleep(100 + Math.floor(Math.random() * 100)); // 100–200ms
 }
 
-/** Bounds an arbitrary stage promise so it can never hang the job/queue slot
- * forever. Each pipeline stage below (info fetch, download, upload) already
- * has its own internal request/exec timeouts, but this is the outer,
- * explicit ceiling per spec ("timeout yang jelas untuk setiap request dan
- * download") and is what actually routes a stuck stage into the normal
- * failure path (Error Log + user-facing failure embed + next-in-queue)
- * instead of silently freezing the status message. */
-function withStageTimeout(promise, ms, stageLabel) {
+/**
+ * Bounds a stage so it can never hang the job/queue slot forever.
+ *
+ * Accepts EITHER:
+ *   • A plain Promise  — `withStageTimeout(somePromise, ms, label)`
+ *   • A factory fn     — `withStageTimeout((signal) => makePromise(signal), ms, label)`
+ *
+ * When a factory is provided an AbortController is created and its signal is
+ * passed into the factory. When the timeout fires, `controller.abort()` is
+ * called BEFORE rejecting, so yt-dlp child processes receive a SIGTERM and
+ * terminate immediately instead of running as zombies until the 10-min queue
+ * ceiling catches them (FIX Bug 4: zombie yt-dlp processes on stage timeout).
+ */
+function withStageTimeout(promiseOrFactory, ms, stageLabel) {
+  const isFactory = typeof promiseOrFactory === "function";
+  const controller = isFactory ? new AbortController() : null;
+  const work = isFactory ? promiseOrFactory(controller.signal) : promiseOrFactory;
+
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
+      controller?.abort(); // kill the yt-dlp child process immediately
       const err = new Error(`${stageLabel} timed out (>${Math.round(ms / 1000)}s)`);
       err.code = "BOOMBOX_STAGE_TIMEOUT";
       reject(err);
     }, ms);
   });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
 function tryCleanup(tmpDir) {
@@ -578,12 +589,18 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       // (yt-dlp multi-method + ytdl-core + kaizenapi, each already bounded
       // individually) — belt-and-suspenders so a gap in any one of those
       // internal timeouts still can't freeze this stage indefinitely.
+      //
+      // FIX (Bug 4): pass a factory fn so withStageTimeout can create an
+      // AbortController and pass its signal into ytdl(). When the 9-min
+      // ceiling fires, abort() kills the yt-dlp child process immediately
+      // instead of letting it run as a zombie until the OS reaps it.
       ytResult = await withStageTimeout(
-        ytdl(
+        (signal) => ytdl(
           url,
           BOOMBOX_CONFIG.AUDIO_TYPE,
           BOOMBOX_CONFIG.AUDIO_QUALITY,
           (label) => editStep(2, label),
+          signal,
         ),
         9 * 60_000,
         "Download audio",

@@ -65,7 +65,11 @@ function _isPermanentError(err) {
 
 async function _doUpload(filePath, fileName) {
   const form = new FormData();
-  form.append("file_0_", fs.createReadStream(filePath), fileName);
+  // FIX (Bug 7): create the read stream as a named variable so we can
+  // explicitly destroy it in the error path, preventing file-descriptor leaks
+  // when axios throws before the upload completes (timeout, network error, etc.)
+  const readStream = fs.createReadStream(filePath);
+  form.append("file_0_", readStream, fileName);
   form.append("submitr", "[ رفع الملفات ]");
 
   let html;
@@ -85,6 +89,10 @@ async function _doUpload(filePath, fileName) {
     logger.debug(`[top4top] HTTP ${res.status} — response length: ${String(res.data).length} chars`);
     html = res.data;
   } catch (err) {
+    // Explicitly close the read stream so the file descriptor is released
+    // immediately, not left open until GC runs.
+    try { readStream.destroy(); } catch {}
+
     const status = err.response?.status;
     const msg    = err.message || "";
 

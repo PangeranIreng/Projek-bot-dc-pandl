@@ -67,17 +67,101 @@ function _withTimeout(promise, ms, message) {
 }
 
 // ── Binary bootstrap ──────────────────────────────────────────────────────────
+//
+// FIX: ensureBinary() used to run a GitHub API version-check on EVERY request.
+// Under 20 concurrent users this fired 20+ network calls simultaneously,
+// blocking the "Analyzing Link..." stage for every job and racing to download
+// the same binary file concurrently (no mutex). Now:
+//   • initBinary()   — exported, called ONCE at startup (ready.js). Downloads
+//                      the binary if missing and does the GitHub version check.
+//                      Subsequent calls return the same singleton promise.
+//   • ensureBinary() — per-request fast path: just verifies the file exists
+//                      (fs.existsSync, no network). Falls back to initBinary()
+//                      only if the binary is somehow missing at request time.
+//
+// This eliminates all per-request GitHub calls AND the concurrent-download race.
 
-// Idle-socket timeout for the binary download. This is the root cause fix
-// for jobs getting stuck at "Analyzing Link...": ensureBinary() (called at
-// the very top of BOTH getVideoInfo() and ytdl()) used to fetch this binary
-// with no timeout at all -- a stalled GitHub connection (TCP connected, zero
-// bytes ever received) hung the promise forever, freezing the job's very
-// first stage with no error, no Error Log entry, and no way out short of the
-// 10-minute queue-level safety net (which itself never told the user
-// anything). `timeout` here is an IDLE timer -- it resets on every byte
-// received, so genuinely slow-but-alive downloads are unaffected.
 const BINARY_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/** Singleton promise for the one-time startup init. */
+let _binaryInitPromise = null;
+
+/**
+ * Called ONCE at startup (from ready.js / handleReady).
+ * Downloads the binary if missing, then checks GitHub for a newer release.
+ * Safe to call multiple times — only runs once; extra calls return the same
+ * already-settled promise.
+ *
+ * @returns {Promise<void>}
+ */
+export function initBinary() {
+  if (!_binaryInitPromise) {
+    _binaryInitPromise = _doInitBinary()
+      .catch((err) => {
+        // Don't permanently block future requests if startup init fails.
+        // Clear the singleton so the first real request retries download.
+        _binaryInitPromise = null;
+        logger.error(`[ytmp3gg] Binary pre-init failed: ${err.message}`);
+        // Non-fatal at startup — bot continues; ensureBinary() retries on first request.
+      });
+  }
+  return _binaryInitPromise;
+}
+
+/** The actual one-time init work. @private */
+async function _doInitBinary() {
+  if (!fs.existsSync(BIN_PATH)) {
+    await _downloadBinary();
+    return;
+  }
+  let localVersion = null;
+  try {
+    const { stdout } = await execFileAsync(BIN_PATH, ["--version"], { timeout: 10_000 });
+    localVersion = stdout.trim();
+  } catch {
+    logger.warn("[ytmp3gg] Could not read yt-dlp version — re-downloading");
+    await _downloadBinary();
+    return;
+  }
+  try {
+    const latestVersion = await _fetchLatestYtdlpVersion();
+    if (latestVersion && latestVersion !== localVersion) {
+      logger.info(`[ytmp3gg] Updating yt-dlp: ${localVersion} → ${latestVersion}`);
+      await _downloadBinary();
+      logger.info(`[ytmp3gg] yt-dlp updated to ${latestVersion}`);
+    } else {
+      logger.info(`[ytmp3gg] yt-dlp up to date (${localVersion})`);
+    }
+  } catch (err) {
+    logger.warn(`[ytmp3gg] yt-dlp version check failed — using ${localVersion}: ${err.message}`);
+  }
+}
+
+/**
+ * Per-request binary check. Fast path: binary already exists → returns
+ * immediately (no network). Fallback: if missing, triggers a re-download
+ * (guards against concurrent re-downloads via the singleton pattern).
+ * @private
+ */
+async function ensureBinary() {
+  // Wait for startup init if it's still in progress. If it already completed
+  // (or was never started), this is a no-op.
+  if (_binaryInitPromise) {
+    await _binaryInitPromise.catch(() => {}); // init failure is non-fatal here
+  }
+  // Fast path — binary is present, no network needed.
+  if (fs.existsSync(BIN_PATH)) return;
+
+  // Binary is missing (init failed, or first request arrived before init ran).
+  // Re-use the singleton so concurrent requests don't double-download.
+  logger.warn("[ytmp3gg] yt-dlp binary missing at request time — downloading now");
+  if (!_binaryInitPromise) {
+    _binaryInitPromise = _downloadBinary()
+      .then(() => { logger.info("[ytmp3gg] yt-dlp re-downloaded on demand"); })
+      .finally(() => { _binaryInitPromise = null; }); // allow future re-check
+  }
+  await _binaryInitPromise;
+}
 
 /** Download (or re-download) the yt-dlp_linux binary from GitHub. */
 async function _downloadBinary() {
@@ -149,44 +233,6 @@ async function _fetchLatestYtdlpVersion() {
     req.on("error",   () => resolve(null));
     req.end();
   });
-}
-
-/**
- * Ensure the yt-dlp_linux binary exists AND is up to date.
- * On every bot start: download if missing, then check GitHub for a newer
- * release and auto-update if one is found. Version check failure is
- * non-fatal — the existing binary is used as-is.
- */
-async function ensureBinary() {
-  if (!fs.existsSync(BIN_PATH)) {
-    await _downloadBinary();
-    return;
-  }
-
-  // Read the local version
-  let localVersion = null;
-  try {
-    const { stdout } = await execFileAsync(BIN_PATH, ["--version"], { timeout: 10_000 });
-    localVersion = stdout.trim();
-  } catch {
-    logger.warn("[ytmp3gg] Could not read yt-dlp version — re-downloading");
-    await _downloadBinary();
-    return;
-  }
-
-  // Compare with the latest GitHub release
-  try {
-    const latestVersion = await _fetchLatestYtdlpVersion();
-    if (latestVersion && latestVersion !== localVersion) {
-      logger.info(`[ytmp3gg] Updating yt-dlp: ${localVersion} → ${latestVersion}`);
-      await _downloadBinary();
-      logger.info(`[ytmp3gg] yt-dlp updated to ${latestVersion}`);
-    } else {
-      logger.info(`[ytmp3gg] yt-dlp up to date (${localVersion})`);
-    }
-  } catch (err) {
-    logger.warn(`[ytmp3gg] yt-dlp version check failed — using ${localVersion}: ${err.message}`);
-  }
 }
 
 // ── Core download logic ───────────────────────────────────────────────────────
@@ -319,7 +365,15 @@ function _translateError(err) {
   return new Error(`Download gagal: ${raw.slice(0, 200)}`);
 }
 
-/** Returns true for errors where retrying with different args won't help. */
+/**
+ * Returns true for errors where retrying with a different provider/args won't
+ * help — the video itself is unavailable (deleted, private, region-locked, etc.)
+ *
+ * NOTE: Timeouts and network errors are intentionally NOT permanent — they are
+ * transient failures that should trigger the multi-provider fallback chain.
+ * Previously "timed out" was included here, which caused yt-dlp timeouts to
+ * abort the entire fallback (ytdl-core and kaizenapi were never tried).
+ */
 function _isPermanentFailure(err) {
   const m = err.message.toLowerCase();
   return (
@@ -329,8 +383,9 @@ function _isPermanentFailure(err) {
     m.includes("usia")             ||
     m.includes("login")            ||
     m.includes("region blocked")   ||
-    m.includes("timed out")        ||
     m.includes("tidak ditemukan")
+    // "timed out" / "network timeout" intentionally removed:
+    // timeouts are transient and must trigger fallback to the next provider.
   );
 }
 
@@ -836,6 +891,18 @@ export async function getVideoInfo(url) {
   await ensureBinary();
 
   const isTikTok = /tiktok\.com/i.test(url);
+
+  // FIX (Bug 5): Respect provider health circuit breaker.
+  // If yt-dlp is OFFLINE (5x consecutive failures), skip straight to returning
+  // nulls so the pipeline proceeds to the real ytdl() download call (which has
+  // its own full multi-provider fallback). Previously this would still wait for
+  // a 20s yt-dlp timeout on every metadata fetch even when yt-dlp was known-bad.
+  const healthKey = isTikTok ? "yt-dlp-tiktok" : "yt-dlp-youtube";
+  if (providerHealth.shouldSkip(healthKey)) {
+    logger.warn(`[ytmp3gg] getVideoInfo: ${healthKey} is OFFLINE — skipping metadata fetch, proceeding to download`);
+    return { duration: null, title: null, thumbnail: null, uploader: null };
+  }
+
   const resolvedUrl = isTikTok ? await resolveTikTokUrl(url) : url;
   logger.debug(`[ytmp3gg] getVideoInfo (simulate) | url="${resolvedUrl}"`);
 

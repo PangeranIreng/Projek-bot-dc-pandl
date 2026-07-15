@@ -12,6 +12,7 @@ import { updatePremStatsDashboard }   from "../features/premium/statsDashboard.j
 import { updateTicketDashboard }      from "../features/ticket/dashboard.js";
 import { ticketDB }           from "../database/ticketDB.js";
 import { IDS }                from "../../config/constants.js";
+import { initBinary }         from "../services/ytmp3gg.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -23,6 +24,13 @@ export async function handleReady(client, secrets, state) {
   logger.info(`Memantau channel scan: ${secrets.scanChannelId}`);
 
   initErrorLogger(client);
+
+  // Pre-download / version-check the yt-dlp binary once at startup so the
+  // first BoomBox request doesn't pay a GitHub API round-trip, and concurrent
+  // first requests can't race to download the binary simultaneously.
+  initBinary().catch((err) => {
+    logger.warn(`[BoomBox] yt-dlp binary pre-init failed (non-fatal): ${err.message}`);
+  });
 
   try {
     state.commands = await loadCommands();

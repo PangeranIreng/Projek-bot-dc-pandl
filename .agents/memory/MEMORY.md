@@ -10,3 +10,4 @@
 - [Bot source layout](bot-source-layout.md) — bot code lives at the repo root (no artifacts/ dir), runs via `pnpm start`/`node src/index.js` on any panel.
 - [Duplicate premium dashboard removed](premium-dashboard-consolidation.md) — two near-identical monitoring panels ran side by side from identical call sites; kept statsDashboard.js only.
 - [BoomBox "Analyzing" stage hang](boombox-analyzing-stage-hang.md) — unbounded https.get in ensureBinary() could freeze jobs forever; layer idle timeouts per-request AND per-stage.
+- [BoomBox stability fixes](boombox-stability-fixes.md) — 5 root-cause bugs fixed: timeout=permanent (broke fallback), per-request GitHub API in ensureBinary, no AbortController (zombie yt-dlp), getVideoInfo ignoring health, top4top stream leak.
