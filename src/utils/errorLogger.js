@@ -42,6 +42,9 @@ export function initErrorLogger(client) {
  *   channel?: string,
  *   command?: string,
  *   error?:   Error,
+ *   provider?: string,
+ *   status?:   string,
+ *   action?:   string,
  * }} payload
  */
 export async function logError(payload) {
@@ -56,13 +59,21 @@ export async function logError(payload) {
 }
 
 async function _sendError(payload) {
-  const { feature, reason, stage, user, guild, channel, command, error } = payload ?? {};
+  const { feature, reason, stage, user, guild, channel, command, error, provider, status, action } = payload ?? {};
 
   const fields = [
     { name: "🔧 Feature",    value: String(feature || "Unknown"), inline: true },
     { name: "📍 Stage",      value: String(stage   || "Unknown"), inline: true },
     { name: "💬 Reason",     value: truncate(String(reason || "No reason provided"), 1024), inline: false },
   ];
+
+  // Provider/Status/Action — only present for BoomBox provider health-check
+  // transitions (see services/providerHealth.js); omitted for every other
+  // caller so existing error embeds (Scanner, Ticket, Premium, ...) are
+  // unchanged.
+  if (provider) fields.push({ name: "📡 Provider",  value: String(provider), inline: true });
+  if (status)   fields.push({ name: "🚦 Status",    value: String(status),   inline: true });
+  if (action)   fields.push({ name: "➡️ Action",    value: String(action),   inline: true });
 
   if (command) fields.push({ name: "💡 Command",  value: String(command), inline: true });
   if (user)    fields.push({ name: "👤 User",     value: `<@${user}>`,    inline: true });

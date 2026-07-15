@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import ytdlCore           from "@distube/ytdl-core";
 import { kaizenDownload } from "./kaizenDownloader.js";
 import { logger }        from "../utils/logger.js";
+import * as providerHealth from "./providerHealth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN_DIR   = path.join(__dirname, "..", "bin");
@@ -194,7 +195,7 @@ async function ensureBinary() {
  * One download attempt with a specific set of extra args.
  * @private
  */
-async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120_000) {
+async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120_000, signal = undefined) {
   const outputTemplate = path.join(tmpDir, "audio.%(ext)s");
   const audioFmt = type === "mp4" ? "m4a" : "mp3";
   const audioQ   = type === "mp3" ? `${quality}K` : "0";
@@ -225,10 +226,20 @@ async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120
   const { stdout, stderr } = await execFileAsync(BIN_PATH, args, {
     timeout:   timeoutMs,
     maxBuffer: 10 * 1024 * 1024,
+    signal,
   });
 
   if (stderr?.trim()) logger.debug(`[ytmp3gg] stderr: ${stderr.trim()}`);
   return stdout;
+}
+
+/** True when `err` is the result of an AbortSignal firing (job cancelled by
+ * the caller — e.g. handler.js's outer stage timeout), not a real provider
+ * failure. Must be checked before any fallback/retry decision: continuing
+ * to try further methods after the whole job was already abandoned upstream
+ * just wastes a slot's worth of CPU/network for no one. */
+function _isAborted(err, signal) {
+  return err?.name === "AbortError" || signal?.aborted === true;
 }
 
 /**
@@ -503,7 +514,7 @@ const YTDL_CORE_DOWNLOAD_TIMEOUT_MS = 120_000;
 
 /** Pipes `stream` to `outputFile`, aborting both if nothing finishes within
  * `timeoutMs`. @private */
-function _pipeStreamWithTimeout(stream, outputFile, timeoutMs) {
+function _pipeStreamWithTimeout(stream, outputFile, timeoutMs, signal) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(outputFile);
     const timer = setTimeout(() => {
@@ -512,7 +523,14 @@ function _pipeStreamWithTimeout(stream, outputFile, timeoutMs) {
       file.destroy();
       reject(err);
     }, timeoutMs);
-    const settle = (fn) => (arg) => { clearTimeout(timer); fn(arg); };
+    const settle = (fn) => (arg) => { clearTimeout(timer); onAbort && signal?.removeEventListener("abort", onAbort); fn(arg); };
+    const onAbort = () => {
+      const err = new Error("Dibatalkan (timeout tahap)"); err.name = "AbortError";
+      stream.destroy?.(err);
+      file.destroy();
+      settle(reject)(err);
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
     stream.on("error", settle(reject));
     file.on("error", settle(reject));
     file.on("finish", settle(resolve));
@@ -520,9 +538,11 @@ function _pipeStreamWithTimeout(stream, outputFile, timeoutMs) {
   });
 }
 
-async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress) {
+async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signal) {
   logger.info(`[ytmp3gg] YouTube — trying fallback engine (@distube/ytdl-core)`);
   await onProgress?.("Recovering download...");
+
+  if (signal?.aborted) { const e = new Error("Dibatalkan (timeout tahap)"); e.name = "AbortError"; throw e; }
 
   const info = await _withTimeout(
     ytdlCore.getInfo(input, {
@@ -538,7 +558,7 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress) {
   const outputFile = path.join(tmpDir, `audio.${ext}`);
   const stream      = ytdlCore.downloadFromInfo(info, { quality: "highestaudio", filter: "audioonly" });
 
-  await _pipeStreamWithTimeout(stream, outputFile, YTDL_CORE_DOWNLOAD_TIMEOUT_MS);
+  await _pipeStreamWithTimeout(stream, outputFile, YTDL_CORE_DOWNLOAD_TIMEOUT_MS, signal);
 
   // Transcode to the requested output format/quality with ffmpeg, matching
   // what the yt-dlp path produces, so downstream code (top4top upload,
@@ -550,7 +570,7 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress) {
   if (audioQ) ffmpegArgs.push("-b:a", audioQ);
   ffmpegArgs.push(finalFile);
 
-  await execFileAsync(FFMPEG_PATH, ffmpegArgs, { timeout: 60_000 });
+  await execFileAsync(FFMPEG_PATH, ffmpegArgs, { timeout: 60_000, signal });
   try { fs.unlinkSync(outputFile); } catch {}
 
   const details  = info.videoDetails ?? {};
@@ -565,32 +585,57 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress) {
   return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile: finalFile, tmpDir };
 }
 
-async function _ytdlYouTube(input, type, quality, onProgress) {
+async function _ytdlYouTube(input, type, quality, onProgress, signal) {
   const tmpDir    = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-"));
   let   lastError = new Error("YouTube download gagal setelah semua metode dicoba");
 
-  for (let i = 0; i < YOUTUBE_METHODS.length; i++) {
-    if (i > 0) {
+  // ── Provider 1: yt-dlp (Utama) ────────────────────────────────────────────
+  // Health-checked: if this provider has failed 5x in a row recently, skip
+  // straight to the backups instead of burning time retrying a client we
+  // already know is currently blocked/broken.
+  if (providerHealth.shouldSkip("yt-dlp-youtube")) {
+    logger.warn(`[ytmp3gg] yt-dlp (YouTube) is OFFLINE (health check) — skipping straight to backups`);
+    lastError = new Error("yt-dlp sedang OFFLINE (5x gagal berturut-turut) — mencoba provider cadangan");
+  } else {
+    for (let i = 0; i < YOUTUBE_METHODS.length; i++) {
+      if (signal?.aborted) { lastError = new Error("Dibatalkan (timeout tahap)"); lastError.name = "AbortError"; break; }
+      if (i > 0) {
+        try {
+          for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
+        } catch {}
+        await onProgress?.("Trying another method...");
+      }
+
+      logger.info(`[ytmp3gg] YouTube — trying method ${i + 1}/${YOUTUBE_METHODS.length}`);
       try {
-        for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
-      } catch {}
-      await onProgress?.("Trying another method...");
-    }
+        const stdout = await _attempt(input, type, quality, YOUTUBE_METHODS[i], tmpDir, _methodTimeout(i), signal);
+        logger.info(`[ytmp3gg] YouTube method ${i + 1} succeeded — stopping fallback loop`);
+        providerHealth.recordSuccess("yt-dlp-youtube");
+        return _parseOutput(stdout, tmpDir, type, quality);
+      } catch (err) {
+        if (_isAborted(err, signal)) { lastError = err; break; }
+        lastError = _translateError(err);
+        logger.warn(`[ytmp3gg] YouTube method ${i + 1} failed: ${lastError.message}`);
 
-    logger.info(`[ytmp3gg] YouTube — trying method ${i + 1}/${YOUTUBE_METHODS.length}`);
-    try {
-      const stdout = await _attempt(input, type, quality, YOUTUBE_METHODS[i], tmpDir, _methodTimeout(i));
-      logger.info(`[ytmp3gg] YouTube method ${i + 1} succeeded — stopping fallback loop`);
-      return _parseOutput(stdout, tmpDir, type, quality);
-    } catch (err) {
-      lastError = _translateError(err);
-      logger.warn(`[ytmp3gg] YouTube method ${i + 1} failed: ${lastError.message}`);
-
-      if (_isPermanentFailure(lastError)) {
-        logger.info(`[ytmp3gg] Permanent failure — stopping YouTube fallback`);
-        break;
+        if (_isPermanentFailure(lastError)) {
+          logger.info(`[ytmp3gg] Permanent failure — stopping YouTube fallback`);
+          break;
+        }
       }
     }
+
+    // Permanent failures (deleted/private/region-blocked) are a real
+    // per-video outcome, not a provider health problem — don't count them
+    // against yt-dlp's health. Anti-bot/timeout/network-style failures DO
+    // count, since those indicate the provider itself is currently struggling.
+    if (!_isAborted(lastError, signal) && !(_isPermanentFailure(lastError) && !lastError.message.includes("Anti-Bot"))) {
+      providerHealth.recordFailure("yt-dlp-youtube", { reason: lastError.message, isTimeout: lastError.message.toLowerCase().includes("timeout") });
+    }
+  }
+
+  if (_isAborted(lastError, signal)) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    throw lastError;
   }
 
   // All yt-dlp player-client variants failed (or hit a permanent failure) —
@@ -606,27 +651,49 @@ async function _ytdlYouTube(input, type, quality, onProgress) {
     for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
   } catch {}
 
-  // ── API 2: @distube/ytdl-core ─────────────────────────────────────────────
-  try {
-    return await _ytdlCoreFallback(input, type, quality, tmpDir, onProgress);
-  } catch (err) {
-    logger.warn(`[ytmp3gg] API 2 (ytdl-core) also failed: ${err.message}`);
-    // ytdl-core failed too — fall through to API 3 (kaizenapi)
+  // ── Backup API 1: @distube/ytdl-core ──────────────────────────────────────
+  if (providerHealth.shouldSkip("ytdl-core")) {
+    logger.warn(`[ytmp3gg] ytdl-core is OFFLINE (health check) — skipping to next backup`);
+  } else if (!signal?.aborted) {
+    try {
+      const result = await _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signal);
+      providerHealth.recordSuccess("ytdl-core");
+      return result;
+    } catch (err) {
+      if (_isAborted(err, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw err; }
+      logger.warn(`[ytmp3gg] Backup API 1 (ytdl-core) also failed: ${err.message}`);
+      providerHealth.recordFailure("ytdl-core", { reason: err.message, isTimeout: err.message.toLowerCase().includes("timeout") });
+      // ytdl-core failed too — fall through to Backup API 2 (kaizenapi)
+    }
   }
 
-  // ── API 3 (last resort): kaizenapi.my.id ─────────────────────────────────
+  // ── Backup API 2 (last resort): kaizenapi.my.id ───────────────────────────
   // Only used when BOTH yt-dlp and ytdl-core have been exhausted.
   // Never used as primary or secondary — only as final backup.
   try {
     for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
   } catch {}
 
+  if (providerHealth.shouldSkip("kaizenapi")) {
+    logger.warn(`[ytmp3gg] kaizenapi is OFFLINE (health check) — no more backups, giving up`);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    throw lastError;
+  }
+  if (signal?.aborted) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    const abortErr = new Error("Dibatalkan (timeout tahap)"); abortErr.name = "AbortError"; throw abortErr;
+  }
+
   try {
     await onProgress?.("Trying alternative API...");
-    logger.info(`[ytmp3gg] YouTube — trying API 3 (kaizenapi.my.id)`);
-    return await kaizenDownload(input, type, quality, tmpDir);
+    logger.info(`[ytmp3gg] YouTube — trying Backup API 2 (kaizenapi.my.id)`);
+    const result = await kaizenDownload(input, type, quality, tmpDir, signal);
+    providerHealth.recordSuccess("kaizenapi");
+    return result;
   } catch (kaizenErr) {
-    logger.warn(`[ytmp3gg] API 3 (kaizenapi) also failed: ${kaizenErr.message}`);
+    if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
+    logger.warn(`[ytmp3gg] Backup API 2 (kaizenapi) also failed: ${kaizenErr.message}`);
+    providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: kaizenErr.message.toLowerCase().includes("timeout") });
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     throw lastError;
   }
@@ -675,11 +742,18 @@ const TIKTOK_METHODS = [
   ],
 ];
 
-async function _ytdlTikTok(input, type, quality, onProgress) {
+async function _ytdlTikTok(input, type, quality, onProgress, signal) {
   const tmpDir    = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-"));
   let   lastError = new Error("TikTok download gagal setelah semua metode dicoba");
 
+  if (providerHealth.shouldSkip("yt-dlp-tiktok")) {
+    logger.warn(`[ytmp3gg] yt-dlp (TikTok) is OFFLINE (health check) — no TikTok backup available`);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    throw new Error("yt-dlp sedang OFFLINE (5x gagal berturut-turut) untuk TikTok — coba lagi dalam beberapa menit");
+  }
+
   for (let i = 0; i < TIKTOK_METHODS.length; i++) {
+    if (signal?.aborted) { lastError = new Error("Dibatalkan (timeout tahap)"); lastError.name = "AbortError"; break; }
     // Clean partial files from the previous failed attempt
     if (i > 0) {
       try {
@@ -692,9 +766,11 @@ async function _ytdlTikTok(input, type, quality, onProgress) {
 
     logger.info(`[ytmp3gg] TikTok — trying method ${i + 1}/${TIKTOK_METHODS.length}`);
     try {
-      const stdout = await _attempt(input, type, quality, TIKTOK_METHODS[i], tmpDir);
+      const stdout = await _attempt(input, type, quality, TIKTOK_METHODS[i], tmpDir, 120_000, signal);
+      providerHealth.recordSuccess("yt-dlp-tiktok");
       return _parseOutput(stdout, tmpDir, type, quality);
     } catch (err) {
+      if (_isAborted(err, signal)) { lastError = err; break; }
       lastError = _translateError(err);
       logger.warn(`[ytmp3gg] TikTok method ${i + 1} failed: ${lastError.message}`);
 
@@ -703,6 +779,10 @@ async function _ytdlTikTok(input, type, quality, onProgress) {
         break;
       }
     }
+  }
+
+  if (!_isAborted(lastError, signal) && !_isPermanentFailure(lastError)) {
+    providerHealth.recordFailure("yt-dlp-tiktok", { reason: lastError.message, isTimeout: lastError.message.toLowerCase().includes("timeout") });
   }
 
   // All methods exhausted — clean up and throw
@@ -722,9 +802,13 @@ async function _ytdlTikTok(input, type, quality, onProgress) {
  *   invoked with a short human-readable status ("Trying another method...",
  *   "Recovering download...") whenever the retry loop advances — lets the
  *   caller edit the same Discord status message instead of guessing state.
+ * @param {AbortSignal} [signal]  Optional — when aborted, all in-flight
+ *   exec/http calls for this request are killed immediately (not just
+ *   abandoned) so a caller-side timeout can never leave a zombie process or
+ *   socket behind. See handler.js's withStageTimeout().
  * @returns {Promise<{ title, thumbnail, uploader, duration, type, quality, localFile, tmpDir }>}
  */
-export async function ytdl(input, type = "mp3", quality = "128", onProgress = null) {
+export async function ytdl(input, type = "mp3", quality = "128", onProgress = null, signal = undefined) {
   await ensureBinary();
 
   const isTikTok = /tiktok\.com/i.test(input);
@@ -733,10 +817,10 @@ export async function ytdl(input, type = "mp3", quality = "128", onProgress = nu
   logger.info(`[ytmp3gg] ▶ Starting download | url="${resolvedInput}" type=${type} quality=${quality}`);
 
   if (isTikTok) {
-    return _ytdlTikTok(resolvedInput, type, quality, onProgress);
+    return _ytdlTikTok(resolvedInput, type, quality, onProgress, signal);
   }
 
-  return _ytdlYouTube(resolvedInput, type, quality, onProgress);
+  return _ytdlYouTube(resolvedInput, type, quality, onProgress, signal);
 }
 
 // ── Metadata-only pre-check (no download) ────────────────────────────────────

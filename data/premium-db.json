@@ -1,12 +1,5 @@
 {
-  "premiumUsers": {
-    "1462685321262272664": {
-      "type": "permanent",
-      "expiresAt": null,
-      "grantedBy": "1462685321262272664",
-      "grantedAt": "2026-07-15T12:41:41.519Z"
-    }
-  },
+  "premiumUsers": {},
   "premiumRoles": {},
   "customLimitUsers": {
     "1526499408282390619": {
