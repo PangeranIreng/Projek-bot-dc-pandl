@@ -1,14 +1,14 @@
 {
   "premiumUsers": {},
   "premiumRoles": {},
-  "customLimitUsers": {
-    "1526499408282390619": {
-      "limit": 1,
+  "customLimitUsers": {},
+  "customLimitRoles": {
+    "1525951735879696555": {
+      "limit": 10,
       "type": "permanent",
       "expiresAt": null
     }
   },
-  "customLimitRoles": {},
   "dashboard": {
     "messageId": "1526931772124954838",
     "entryIndex": 8
@@ -18,5 +18,5 @@
     "messageId": "1526950572991844595"
   },
   "lastPremiumTarget": "<@1462685321262272664>",
-  "lastCustomLimitTarget": "<@1526499408282390619>"
+  "lastCustomLimitTarget": "<@&1525951735879696555>"
 }
