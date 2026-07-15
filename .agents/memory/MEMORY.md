@@ -11,3 +11,4 @@
 - [Duplicate premium dashboard removed](premium-dashboard-consolidation.md) — two near-identical monitoring panels ran side by side from identical call sites; kept statsDashboard.js only.
 - [BoomBox "Analyzing" stage hang](boombox-analyzing-stage-hang.md) — unbounded https.get in ensureBinary() could freeze jobs forever; layer idle timeouts per-request AND per-stage.
 - [BoomBox stability fixes](boombox-stability-fixes.md) — 5 root-cause bugs fixed: timeout=permanent (broke fallback), per-request GitHub API in ensureBinary, no AbortController (zombie yt-dlp), getVideoInfo ignoring health, top4top stream leak.
+- [BoomBox binary path bug](boombox-binary-path-bug.md) — BIN_DIR used one ".." (→ src/bin/) instead of two (→ bin/); caused every request to attempt a 30s GitHub download, producing the "Analyzing Link..." stuck embed.

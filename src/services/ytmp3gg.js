@@ -26,7 +26,12 @@ import { logger }        from "../utils/logger.js";
 import * as providerHealth from "./providerHealth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BIN_DIR   = path.join(__dirname, "..", "bin");
+// FIX (root cause): ytmp3gg.js is at src/services/ — two levels up reaches
+// the workspace root, so BIN_DIR resolves to <root>/bin/ where yt-dlp_linux
+// is committed. Previously only one ".." was used → src/bin/ (non-existent),
+// causing every request to attempt a fresh binary download from GitHub and
+// fail with a 30s timeout before any fallback provider was tried.
+const BIN_DIR   = path.join(__dirname, "..", "..", "bin");
 const BIN_PATH  = path.join(BIN_DIR, "yt-dlp_linux");
 const YTDLP_DL  = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
 
@@ -141,9 +146,22 @@ async function _doInitBinary() {
  * Per-request binary check. Fast path: binary already exists → returns
  * immediately (no network). Fallback: if missing, triggers a re-download
  * (guards against concurrent re-downloads via the singleton pattern).
+ *
+ * FIX: if the binary is genuinely unavailable AND yt-dlp providers are already
+ * OFFLINE, skip the download attempt entirely and throw YTDLP_BINARY_UNAVAILABLE
+ * so callers (getVideoInfo, ytdl) can skip yt-dlp and use backup providers
+ * without burning another 30s waiting for a GitHub download that will fail.
  * @private
  */
 async function ensureBinary() {
+  // If both yt-dlp providers are already OFFLINE (e.g. from a failed binary
+  // download attempt), skip straight to throwing so callers bypass yt-dlp.
+  if (providerHealth.shouldSkip("yt-dlp-youtube") && providerHealth.shouldSkip("yt-dlp-tiktok")) {
+    const err = new Error("yt-dlp binary unavailable — providers marked OFFLINE, using backup chain");
+    err.code = "YTDLP_BINARY_UNAVAILABLE";
+    throw err;
+  }
+
   // Wait for startup init if it's still in progress. If it already completed
   // (or was never started), this is a no-op.
   if (_binaryInitPromise) {
@@ -158,7 +176,20 @@ async function ensureBinary() {
   if (!_binaryInitPromise) {
     _binaryInitPromise = _downloadBinary()
       .then(() => { logger.info("[ytmp3gg] yt-dlp re-downloaded on demand"); })
-      .finally(() => { _binaryInitPromise = null; }); // allow future re-check
+      .catch((downloadErr) => {
+        // FIX: binary download failed — drive both yt-dlp providers to OFFLINE
+        // (5x = threshold) so the NEXT call to ensureBinary() returns
+        // YTDLP_BINARY_UNAVAILABLE immediately instead of retrying the 30s
+        // download.  Backup providers (ytdl-core, kaizenapi) do not need the
+        // binary and will be used automatically via the fallback chain.
+        logger.error(`[ytmp3gg] Binary download failed — marking yt-dlp OFFLINE: ${downloadErr.message}`);
+        for (let i = 0; i < 5; i++) {
+          providerHealth.recordFailure("yt-dlp-youtube", { reason: `Binary unavailable: ${downloadErr.message}`, isTimeout: true });
+          providerHealth.recordFailure("yt-dlp-tiktok",  { reason: `Binary unavailable: ${downloadErr.message}`, isTimeout: true });
+        }
+        throw downloadErr; // re-throw so callers know yt-dlp is unavailable
+      })
+      .finally(() => { _binaryInitPromise = null; }); // allow future re-check after cooldown
   }
   await _binaryInitPromise;
 }
@@ -864,7 +895,18 @@ async function _ytdlTikTok(input, type, quality, onProgress, signal) {
  * @returns {Promise<{ title, thumbnail, uploader, duration, type, quality, localFile, tmpDir }>}
  */
 export async function ytdl(input, type = "mp3", quality = "128", onProgress = null, signal = undefined) {
-  await ensureBinary();
+  // FIX: wrap ensureBinary() so a missing/undownloadable binary does NOT abort
+  // the entire download pipeline. When the binary is unavailable, yt-dlp
+  // providers are already marked OFFLINE by ensureBinary()'s catch block, so
+  // _ytdlYouTube/_ytdlTikTok will skip straight to backup providers (ytdl-core,
+  // kaizenapi) that don't need the binary at all. Previously this bare await
+  // let the throw propagate up and kill the job before backups were tried.
+  try {
+    await ensureBinary();
+  } catch (err) {
+    logger.warn(`[ytmp3gg] ytdl: binary unavailable — yt-dlp will be skipped, backup providers will handle this (${err.message})`);
+    // Continue — _ytdlYouTube/_ytdlTikTok will see yt-dlp-* as OFFLINE and fall through to backups.
+  }
 
   const isTikTok = /tiktok\.com/i.test(input);
   const resolvedInput = isTikTok ? await resolveTikTokUrl(input) : input;
@@ -888,18 +930,26 @@ export async function ytdl(input, type = "mp3", quality = "128", onProgress = nu
  * @returns {Promise<{ title: string|null, duration: number|null, thumbnail: string|null, uploader: string|null }>}
  */
 export async function getVideoInfo(url) {
-  await ensureBinary();
-
   const isTikTok = /tiktok\.com/i.test(url);
 
-  // FIX (Bug 5): Respect provider health circuit breaker.
-  // If yt-dlp is OFFLINE (5x consecutive failures), skip straight to returning
-  // nulls so the pipeline proceeds to the real ytdl() download call (which has
-  // its own full multi-provider fallback). Previously this would still wait for
-  // a 20s yt-dlp timeout on every metadata fetch even when yt-dlp was known-bad.
+  // FIX: health check BEFORE ensureBinary() so a missing/downloading binary
+  // never blocks the metadata fetch when yt-dlp is already known-bad.
+  // Previously ensureBinary() ran first — if it threw (download timeout), the
+  // health check was never reached and getVideoInfo() crashed the pipeline
+  // instead of returning nulls (which the handler treats as non-fatal).
   const healthKey = isTikTok ? "yt-dlp-tiktok" : "yt-dlp-youtube";
   if (providerHealth.shouldSkip(healthKey)) {
     logger.warn(`[ytmp3gg] getVideoInfo: ${healthKey} is OFFLINE — skipping metadata fetch, proceeding to download`);
+    return { duration: null, title: null, thumbnail: null, uploader: null };
+  }
+
+  // Binary check only if yt-dlp is ONLINE and we're going to use it.
+  // If unavailable (download failed), return nulls — non-fatal; the real
+  // ytdl() download call has its own full multi-provider fallback.
+  try {
+    await ensureBinary();
+  } catch (err) {
+    logger.warn(`[ytmp3gg] getVideoInfo: binary unavailable — skipping yt-dlp metadata (${err.message})`);
     return { duration: null, title: null, thumbnail: null, uploader: null };
   }
 
