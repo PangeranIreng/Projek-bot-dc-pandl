@@ -63,11 +63,11 @@ export function truncateTitle(title, maxLen = 40) {
 // tanpa menggeser level tahap.
 
 const STEPS = [
-  { spinner: "⠋", label: "Menghubungkan..."      }, // 0
-  { spinner: "⠹", label: "Mengambil Metadata..."  }, // 1
-  { spinner: "⠼", label: "Menyiapkan Audio..."    }, // 2
-  { spinner: "⠦", label: "Upload BoomBox..."      }, // 3
-  { spinner: "⠇", label: "Verifikasi Link..."     }, // 4
+  { spinner: "⠋", label: "Connecting..."      }, // 0
+  { spinner: "⠹", label: "Reading Metadata..."}, // 1
+  { spinner: "⠼", label: "Downloading Audio..."},// 2
+  { spinner: "⠦", label: "Uploading BoomBox..." }, // 3
+  { spinner: "⠇", label: "Verifying..."       }, // 4
 ];
 
 /**

@@ -656,14 +656,13 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     }).catch(() => {});
 
     // ── Hapus processing embed → kirim pesan error bersih ke channel ──────
-    // Jangan tampilkan: Stack Trace, Provider, API, Internal Error.
-    // Hanya tampilkan pesan ramah + tombol "🔍 Detail" (ephemeral, staff only).
+    // Jangan tampilkan: Stack Trace, Provider, API, Internal Error, tombol Detail.
+    // Full detail sudah dikirim ke Error Log channel via logError() di atas.
     await statusMsg.delete().catch(() => {});
     try {
       await message.channel.send({
-        content:    userMention,
-        embeds:     [buildUserErrorEmbed()],
-        components: [buildErrorDetailButton(detailId)],
+        content: userMention,
+        embeds:  [buildUserErrorEmbed()],
       });
     } catch (sendErr) {
       logger.error(`[BoomBox] Failed to send error message to channel: ${sendErr.message}`);

@@ -520,10 +520,45 @@ function _followRedirects(startUrl, headers, maxHops = 6) {
 }
 
 /**
+ * Strip semua query parameter dari canonical TikTok video URL.
+ *
+ * TikTok share links dari Android/iPhone/Web menyertakan banyak parameter
+ * tracking (_r, u_code, region, mid, preview_pb, sharer_language, _d,
+ * share_item_id, utm_source, dll.) yang tidak diperlukan oleh yt-dlp dan
+ * dapat membuat URL terlalu panjang atau memicu respons berbeda dari server.
+ *
+ * Hanya berlaku untuk URL canonical (@user/video/ID) — short domain
+ * (vt./vm.) sudah di-resolve ke canonical sebelum fungsi ini dipanggil.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function _stripTikTokQueryParams(url) {
+  try {
+    const parsed = new URL(url);
+    // Canonical video URL: tiktok.com/@user/video/ID  (www. atau m. atau bare)
+    if (/\/@[^/]+\/video\/\d+/.test(parsed.pathname)) {
+      const clean = `${parsed.protocol}//${parsed.hostname}${parsed.pathname}`;
+      if (clean !== url) logger.debug(`[ytmp3gg] TikTok URL normalized: stripped ${[...parsed.searchParams.keys()].length} query params`);
+      return clean;
+    }
+  } catch { /* malformed URL — leave as is */ }
+  return url;
+}
+
+/**
  * Resolve a TikTok short/share link to its canonical video URL by following
- * redirects with browser-like headers. Falls back to the original URL
- * (letting yt-dlp's own fallback methods try it directly) if resolution
- * never lands on a real video page.
+ * redirects with browser-like headers, then strips all tracking query
+ * parameters from the resolved URL before passing it to yt-dlp.
+ *
+ * Mendukung:
+ *   - https://www.tiktok.com/@user/video/ID?utm_source=...  (long share link)
+ *   - https://vt.tiktok.com/XXXXX/                          (short link)
+ *   - https://vm.tiktok.com/XXXXX/                          (short link)
+ *   - https://m.tiktok.com/@user/video/ID                   (mobile)
+ *   - Share link Android / iPhone (semua dengan query param panjang)
+ *
+ * Falls back to the original URL if resolution fails (yt-dlp will try anyway).
  *
  * @param {string} url
  * @returns {Promise<string>}
@@ -531,12 +566,28 @@ function _followRedirects(startUrl, headers, maxHops = 6) {
 export async function resolveTikTokUrl(url) {
   if (!/tiktok\.com/i.test(url)) return url;
 
+  // Untuk URL canonical yang sudah punya path @user/video/ID, tidak perlu
+  // follow redirect — langsung strip query params saja.
+  try {
+    const parsed = new URL(url);
+    const isCanonical =
+      /^(www\.|m\.)?tiktok\.com$/i.test(parsed.hostname) &&
+      /\/@[^/]+\/video\/\d+/.test(parsed.pathname);
+    if (isCanonical) {
+      const clean = _stripTikTokQueryParams(url);
+      if (clean !== url) logger.info(`[ytmp3gg] TikTok canonical URL cleaned: ${url.slice(0, 80)}... → ${clean}`);
+      return clean;
+    }
+  } catch { /* bad URL — fall through to redirect resolution */ }
+
+  // URL pendek (vt./vm.) atau non-canonical — follow redirects.
   for (let i = 0; i < TIKTOK_UA_SETS.length; i++) {
     try {
       const resolved = await _followRedirects(url, TIKTOK_UA_SETS[i]);
       if (!_isTikTokBouncePage(resolved)) {
-        if (resolved !== url) logger.info(`[ytmp3gg] TikTok short URL resolved: ${url} -> ${resolved}`);
-        return resolved;
+        const clean = _stripTikTokQueryParams(resolved);
+        if (clean !== url) logger.info(`[ytmp3gg] TikTok short URL resolved: ${url} → ${clean}`);
+        return clean;
       }
       logger.warn(`[ytmp3gg] TikTok resolve attempt ${i + 1} bounced to ${resolved} — retrying with different headers`);
     } catch (err) {
@@ -544,8 +595,9 @@ export async function resolveTikTokUrl(url) {
     }
   }
 
-  logger.warn(`[ytmp3gg] Could not resolve TikTok URL to a canonical video page — passing original to yt-dlp`);
-  return url;
+  // All attempts failed — strip params from original and let yt-dlp try.
+  logger.warn(`[ytmp3gg] Could not resolve TikTok URL — passing stripped original to yt-dlp`);
+  return _stripTikTokQueryParams(url);
 }
 
 // ── YouTube multi-method fallback ─────────────────────────────────────────────
