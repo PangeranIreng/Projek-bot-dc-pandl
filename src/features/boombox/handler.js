@@ -34,6 +34,8 @@ import {
   buildResultEmbed,
   buildDurationLimitEmbed,
   buildErrorEmbed,
+  buildUserErrorEmbed,
+  buildUnsupportedPlatformEmbed,
   buildQueueEmbed,
 } from "./embed.js";
 import { storeErrorDetail } from "./errorStore.js";
@@ -360,29 +362,22 @@ export async function handleBoomBoxMessage(message) {
     return;
   }
 
-  const url      = urls[0];
-  const platform = detectPlatform(url);
+  const url         = urls[0];
+  const platform    = detectPlatform(url);
+  const userMention = `<@${message.author.id}>`;
 
   logger.info(`[BoomBox] URL: ${url} | platform: ${platform ?? "UNSUPPORTED"}`);
 
-  // ── Unsupported platform → reject ─────────────────────────────────────────
+  // ── Unsupported platform → reject (reply langsung ke pesan user) ──────────
   if (!platform) {
-    await message.reply(
-      "❌ **Platform tidak didukung.**\n\n" +
-      "BoomBox saat ini mendukung:\n" +
-      "• **YouTube** (youtube.com, youtu.be, YouTube Music)\n" +
-      "• **TikTok** (tiktok.com, m.tiktok.com, vt.tiktok.com, vm.tiktok.com)\n\n" +
-      "Pastikan link yang kamu kirim valid dan coba lagi."
-    ).catch(() => {});
+    await message.reply({ content: userMention, embeds: [buildUnsupportedPlatformEmbed()] }).catch(() => {});
     return;
   }
 
   // ── Dedup guard ───────────────────────────────────────────────────────────
   // Must be the first check before any `await` so a second duplicate event
   // is dropped synchronously — before message.delete(), role lookup, or
-  // db.getUsage() are touched. Previously this sat after `await message.delete()`,
-  // which opened an async gap where both duplicate events could each call
-  // delete/role-check/getUsage before either reached the guard.
+  // db.getUsage() are touched.
   if (processingSet.has(message.id)) {
     logger.warn(`[BoomBox] Duplicate messageCreate for ${message.id} — ignoring`);
     return;
@@ -392,11 +387,9 @@ export async function handleBoomBoxMessage(message) {
     processingSet.delete(processingSet.values().next().value);
   }
 
-  // ── Delete user's original message ───────────────────────────────────────
-  // Requires Manage Messages permission; silently ignored if not granted.
-  try { await message.delete(); } catch { /* no permission — continue */ }
-
-  const userMention = `<@${message.author.id}>`;
+  // CATATAN: message.delete() dipindah ke dalam runBoomBoxJob, SETELAH
+  // message.reply() berhasil dikirim. Ini agar bot benar-benar reply ke
+  // pesan user (bukan kirim pesan baru), dan baru menghapus pesan aslinya.
 
   // ── Role check ────────────────────────────────────────────────────────────
   const member = message.member;
@@ -503,26 +496,31 @@ export async function handleBoomBoxMessage(message) {
  * needs to know about failures.
  */
 async function runBoomBoxJob(message, url, platform, userMention, unlimited, limit) {
-  // ── Send ONE temporary status embed immediately ───────────────────────────
-  // Everything after this point edits this same message — never sends a new
-  // one — so the channel never gets spammed with progress messages.
+  // ── Reply ke pesan user dengan embed status (step 0: Menghubungkan...) ───
+  // Bot REPLY ke pesan user — bukan kirim pesan baru.
+  // Semua edit berikutnya menggunakan pesan reply yang sama (tidak spam).
+  // Setelah reply berhasil, pesan asli user dihapus supaya channel bersih.
   let currentStage = "Send Processing Embed";
   let statusMsg;
   let lastThumbnail = null;
   try {
-    statusMsg = await message.channel.send({ content: userMention, embeds: [buildProcessingEmbed(0, null)] });
+    statusMsg = await message.reply({ content: userMention, embeds: [buildProcessingEmbed(0, null)] });
   } catch (e) {
-    logger.error(`[BoomBox] Failed to send processing embed: ${e.message}`);
-    await logError({ feature: "BoomBox", reason: `Failed to send processing embed: ${e.message}`, stage: currentStage, error: e });
+    logger.error(`[BoomBox] Failed to reply with processing embed: ${e.message}`);
+    await logError({ feature: "BoomBox", reason: `Failed to reply with processing embed: ${e.message}`, stage: currentStage, error: e });
     processingSet.delete(message.id);
     return;
   }
+  // Hapus pesan asli user setelah reply berhasil dikirim.
+  // Requires Manage Messages permission; silently ignored if not granted.
+  try { await message.delete(); } catch { /* no permission — continue */ }
 
   const startedAt = Date.now();
   let   tmpDir    = null;
 
-  // editStep: edit embed sesuai step tanpa delay tambahan.
-  // Step: 0=Processing, 1=Downloading, 2=Finishing
+  // editStep: edit embed ke tahap berikutnya tanpa delay tambahan.
+  // Tahap: 0=Menghubungkan, 1=Mengambil Metadata, 2=Menyiapkan Audio,
+  //        3=Upload BoomBox, 4=Verifikasi Link
   const editStep = async (step, labelOverride = null) => {
     try {
       await statusMsg.edit({ content: userMention, embeds: [buildProcessingEmbed(step, lastThumbnail, labelOverride)], components: [] });
@@ -533,13 +531,11 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
 
   try {
 
-    // ── [3] Fetching video metadata ──────────────────────────────────────
-    // Same URL cached from a recent request? Reuse its metadata + skip the
-    // network fetch too.
-    // ── [2] Metadata (step 0 = "Processing..." sudah tampil) ─────────────
+    // ── Tahap 1: Mengambil Metadata ─────────────────────────────────────────
     // getVideoInfo non-fatal: gagal → null duration → lanjut download.
-    // Timeout dipercepat (10s) agar tidak memblokir pipeline jika yt-dlp lambat.
+    // Timeout 10s agar tidak memblokir pipeline jika yt-dlp lambat.
     currentStage = "Fetch Video Info";
+    await editStep(1); // ⠹ Mengambil Metadata...
     const cachedEarly = getCachedResult(url);
     const info = cachedEarly
       ? cachedEarly.ytResult
@@ -553,7 +549,8 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     // Duration limit — reject BEFORE downloading
     if (info.duration !== null && info.duration > MAX_DURATION_SEC) {
       logger.info(`[BoomBox] Rejected: duration ${info.duration}s > ${MAX_DURATION_SEC}s limit`);
-      await statusMsg.edit({ content: userMention, embeds: [buildDurationLimitEmbed(info.duration, MAX_DURATION_SEC)], components: [] }).catch(() => {});
+      await statusMsg.delete().catch(() => {});
+      await message.channel.send({ content: userMention, embeds: [buildDurationLimitEmbed(info.duration, MAX_DURATION_SEC)], components: [] }).catch(() => {});
       processingSet.delete(message.id);
       return;
     }
@@ -568,18 +565,18 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       ytResult   = cached.ytResult;
       boomboxUrl = cached.boomboxUrl;
     } else {
-      // ── [3] Download audio — step 1 "Downloading..." ─────────────────────
+      // ── Tahap 2: Menyiapkan Audio (download) ─────────────────────────────
       // onProgress: fallback loop mendorong label singkat ("Trying another method...",
       // "Trying alternative API...") ke embed yang sama tanpa mengirim pesan baru.
       currentStage = "Download Audio";
-      await editStep(1); // "⬇ Downloading..."
+      await editStep(2); // ⠼ Menyiapkan Audio...
       logger.info(`[BoomBox] ── Downloading | ${platform} | ${url}`);
       ytResult = await withStageTimeout(
         (signal) => ytdl(
           url,
           BOOMBOX_CONFIG.AUDIO_TYPE,
           BOOMBOX_CONFIG.AUDIO_QUALITY,
-          (label) => editStep(1, label),
+          (label) => editStep(2, label),
           signal,
         ),
         5 * 60_000, // 5 min ceiling — download + seluruh fallback chain
@@ -589,14 +586,15 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       lastThumbnail = ytResult.thumbnail ?? lastThumbnail;
       logger.info(`[BoomBox] ── Download complete | title="${ytResult.title}" duration=${ytResult.duration}s`);
 
-      // ── [4] Upload — tetap di step 1 ("Downloading...") ─────────────────
-      // Spec: embed cukup Processing → Downloading → Finished.
-      // Upload masuk dalam fase "Downloading" — tidak perlu step terpisah.
+      // ── Tahap 3: Upload BoomBox ───────────────────────────────────────────
       currentStage = "Upload to Top4Top";
+      await editStep(3); // ⠦ Upload BoomBox...
       logger.info(`[BoomBox] ── Upload started | file=${ytResult.localFile}`);
       const t4tResult = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
 
+      // ── Tahap 4: Verifikasi Link ──────────────────────────────────────────
       currentStage = "Generate BoomBox URL";
+      await editStep(4); // ⠇ Verifikasi Link...
       boomboxUrl = t4tResult.result;
       logger.info(`[BoomBox] ── Upload finished | BoomBox URL created: ${boomboxUrl}`);
 
@@ -623,24 +621,21 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     db.addHistory(entry);
     db.incrementStats(platform);
 
-    // ── [7] Success — delete the processing embed, send a BRAND NEW message ──
-    // Editing the processing message into the result was the old behavior;
-    // per spec this now deletes it and sends a fresh message that @mentions
-    // the requester, so they get a real notification even if they've
-    // switched to another channel (an edit to an old message does not
-    // re-notify Discord clients the way a new mention does).
+    // ── Sukses — hapus processing embed, kirim pesan result baru ─────────
+    // Processing embed dihapus → channel bersih, tidak ada embed loading tertinggal.
+    // Pesan result baru dikirim dengan mention user agar ada notifikasi Discord.
     currentStage = "Display Result";
     const elapsedMs = Date.now() - startedAt;
     const embed     = buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo);
     const row       = buildButtons(boomboxUrl);
     await statusMsg.delete().catch(() => {});
     await message.channel.send({
-      content: `${userMention} ✅ **BoomBox Ready** — your BoomBox URL has been created successfully.`,
+      content: userMention,
       embeds: [embed],
       components: [row],
     });
 
-    // ── [8] Append to BoomBox Logs ─────────────────────────────────────────
+    // ── Append to BoomBox Logs ─────────────────────────────────────────────
     currentStage = "Update BoomBox Log";
     await appendToLog(message.client, entry);
 
@@ -650,27 +645,28 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
     logger.error(`[BoomBox] ❌ Failed after ${elapsed}s at [${currentStage}]: ${err.message}`);
 
-    // Send to global error logger (full stack trace — error-log channel only)
+    // ── Kirim semua detail error HANYA ke Error Log — bukan ke channel publik ─
+    // Feature, Provider, Stack, Request, Reason, Time — semuanya di sini.
+    const detailId = storeErrorDetail({ message: err.message, stage: currentStage, stack: err.stack });
     await logError({
       feature: `BoomBox — ${platform}`,
       reason:  err.message,
       stage:   currentStage,
       error:   err,
-    });
+    }).catch(() => {});
 
-    // The channel embed itself never carries a stack trace — only the
-    // summarized reason/suggestion. Full detail is stashed here and only
-    // revealed ephemerally if someone clicks "🔍 Detail".
-    const detailId = storeErrorDetail({ message: err.message, stage: currentStage, stack: err.stack });
-
+    // ── Hapus processing embed → kirim pesan error bersih ke channel ──────
+    // Jangan tampilkan: Stack Trace, Provider, API, Internal Error.
+    // Hanya tampilkan pesan ramah + tombol "🔍 Detail" (ephemeral, staff only).
+    await statusMsg.delete().catch(() => {});
     try {
-      await statusMsg.edit({
+      await message.channel.send({
         content:    userMention,
-        embeds:     [buildErrorEmbed(err)],
+        embeds:     [buildUserErrorEmbed()],
         components: [buildErrorDetailButton(detailId)],
       });
-    } catch (editErr) {
-      logger.error(`[BoomBox] Also failed to edit error reply: ${editErr.message}`);
+    } catch (sendErr) {
+      logger.error(`[BoomBox] Failed to send error message to channel: ${sendErr.message}`);
     }
 
   } finally {

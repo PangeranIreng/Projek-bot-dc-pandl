@@ -430,21 +430,48 @@ function _isPermanentFailure(err) {
 // headers, and a retry with a second header set if the first bounces) avoids
 // that failure mode before yt-dlp ever runs.
 
+// Header set yang dirotasi saat resolving TikTok redirect.
+// Set 1: Chrome desktop — paling umum berhasil untuk link biasa.
+// Set 2: Chrome mobile Android — untuk link yang menolak desktop UA.
+// Set 3: iOS Safari — untuk link share terbaru yang cek UA lebih ketat.
+// Set 4: TikTok app (iOS) — untuk link vm./vt. yang butuh app UA.
 const TIKTOK_UA_SETS = [
   {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    Referer: "https://www.tiktok.com/",
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Referer":         "https://www.tiktok.com/",
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
   },
   {
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
-    Referer: "https://www.tiktok.com/",
+    "User-Agent":      "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
+    "Referer":         "https://www.tiktok.com/",
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  },
+  {
+    "User-Agent":      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Referer":         "https://www.tiktok.com/",
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  },
+  {
+    "User-Agent":      "TikTok 29.9.3 rv:299301 (iPhone; iOS 16.6; en_US) Cronet",
+    "Referer":         "https://www.tiktok.com/",
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   },
 ];
 
 function _isTikTokBouncePage(url) {
   try {
-    const { pathname } = new URL(url);
-    return pathname === "" || pathname === "/" || /^\/(in\/about|about|login)/i.test(pathname);
+    const { hostname, pathname } = new URL(url);
+    // Halaman utama tanpa video path
+    if (pathname === "" || pathname === "/") return true;
+    // Bounce ke halaman about / login / foryou / explore
+    if (/^\/(in\/about|about|login|foryou|explore|trending|live)\/?$/i.test(pathname)) return true;
+    // Redirect ke domain non-TikTok (misal: ke halaman login eksternal)
+    if (!hostname.endsWith("tiktok.com")) return true;
+    return false;
   } catch {
     return false;
   }

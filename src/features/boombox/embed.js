@@ -1,10 +1,11 @@
 /**
  * boomboxEmbed.js — Embed builders for BoomBox.
  *
- * Processing embed:  edited at each pipeline step (progress bar).
+ * Processing embed:  spinner + label, diedit setiap tahap pipeline.
  * Result embed:      green, no code blocks, BoomBox URL shown, Free/Premium counter.
  * Duration embed:    orange, shown when video > 25 min.
- * Error embed:       red, with real reason + suggestion.
+ * Error embed (user): red, pesan bersih tanpa detail teknis — hanya untuk channel publik.
+ * Error detail:       red, stack trace — hanya ephemeral saat "🔍 Detail" diklik staff.
  */
 
 import { EmbedBuilder } from "discord.js";
@@ -15,7 +16,7 @@ const COLOR_SUCCESS    = 0x57f287; // Green
 const COLOR_DURATION   = 0xfaa61a; // Orange — limit notice, not an error
 const COLOR_ERROR      = 0xed4245; // Red
 const COLOR_QUEUE      = 0xfee75c; // Yellow — waiting, not an error
-const FOOTER_TEXT      = "Powered by Pangeran Assistant AI";
+const FOOTER_TEXT      = "Powered by PangeranAsisten | BoomBox";
 const SEP14            = "━━━━━━━━━━━━━━";
 
 // BoomBox Logs archive embed — deliberately separate colors/footer/emoji set
@@ -48,33 +49,43 @@ export function truncateTitle(title, maxLen = 40) {
   return title.length > maxLen ? title.slice(0, maxLen - 3) + "..." : title;
 }
 
-// ── Processing Embed (3-stage: Processing → Downloading → Finishing) ─────────
+// ── Processing Embed (5-stage spinner) ────────────────────────────────────────
 //
-// Spec: jangan spam edit. Cukup 3 state: Processing → Downloading → Finished/Failed.
-// labelOverride dipakai saat fallback loop ingin menampilkan status singkat
-// ("Trying another method...", "Trying alternative API...") tanpa menggeser bar.
+// Tahap pipeline:
+//   0 — Menghubungkan...      (job mulai, sebelum metadata)
+//   1 — Mengambil Metadata... (getVideoInfo)
+//   2 — Menyiapkan Audio...   (download)
+//   3 — Upload BoomBox...     (top4top upload)
+//   4 — Verifikasi Link...    (generate URL, sebelum sukses)
+//
+// Tidak ada delay tambahan — pindah ke tahap berikutnya segera saat selesai.
+// labelOverride dipakai saat fallback loop menampilkan status singkat
+// tanpa menggeser level tahap.
 
 const STEPS = [
-  { bar: "██░░░░░░░░", label: "⏳ Processing..."   }, // 0 – awal / metadata
-  { bar: "██████░░░░", label: "⬇ Downloading..."   }, // 1 – download + upload
-  { bar: "██████████", label: "✅ Finishing..."     }, // 2 – finalisasi
+  { spinner: "⠋", label: "Menghubungkan..."      }, // 0
+  { spinner: "⠹", label: "Mengambil Metadata..."  }, // 1
+  { spinner: "⠼", label: "Menyiapkan Audio..."    }, // 2
+  { spinner: "⠦", label: "Upload BoomBox..."      }, // 3
+  { spinner: "⠇", label: "Verifikasi Link..."     }, // 4
 ];
 
 /**
  * Build the processing embed for a given pipeline step.
  * Edit the SAME reply message at each step — never send a new one.
  *
- * @param {0|1|2} stepIndex       0=Processing 1=Downloading 2=Finishing
- * @param {string|null} thumbnail Optional thumbnail URL (shown once known)
- * @param {string|null} labelOverride  Transient status text — replaces step label
- *   while keeping that step's progress bar level (e.g. "Trying another method...").
+ * @param {0|1|2|3|4} stepIndex       Tahap pipeline (lihat STEPS di atas)
+ * @param {string|null} thumbnail     Optional thumbnail URL (shown once known)
+ * @param {string|null} labelOverride Transient status text — mengganti label
+ *   tanpa mengubah level tahap (e.g. "Trying another method...").
  */
 export function buildProcessingEmbed(stepIndex = 0, thumbnail = null, labelOverride = null) {
-  const { bar, label } = STEPS[Math.min(stepIndex, STEPS.length - 1)];
+  const { spinner, label } = STEPS[Math.min(stepIndex, STEPS.length - 1)];
+  const displayLabel = labelOverride ?? label;
   const embed = new EmbedBuilder()
     .setColor(COLOR_PROCESSING)
-    .setTitle("🎵 Processing BoomBox...")
-    .setDescription(`\`${bar}\`\n${labelOverride ?? label}`)
+    .setTitle("🎵 BoomBox")
+    .setDescription(`${spinner} ${displayLabel}`)
     .setFooter({ text: FOOTER_TEXT });
   if (thumbnail) embed.setThumbnail(thumbnail);
   return embed;
@@ -114,7 +125,7 @@ export function buildQueueEmbed(user, position, total, etaSec) {
 // ── Result Embed ──────────────────────────────────────────────────────────────
 
 /**
- * Success embed — replaces the processing embed when done.
+ * Success embed — dikirim sebagai pesan baru (processing embed sudah dihapus).
  *
  * @param {string}  platform     e.g. "YouTube" or "TikTok"
  * @param {object}  ytResult     Result from ytdl()
@@ -178,10 +189,54 @@ export function buildDurationLimitEmbed(detectedSec, maxSec = 25 * 60) {
     .setTimestamp();
 }
 
-// ── Error Embed ───────────────────────────────────────────────────────────────
+// ── Error Embed (User-Facing — BERSIH, tanpa detail teknis) ──────────────────
+//
+// Per spec: jangan tampilkan Stack Trace, Provider, API, Internal Error.
+// Semua detail teknis hanya ke Error Log (errorLogger.js) + ephemeral button.
 
 /**
- * Error embed — always shows real cause, never generic fallback.
+ * Clean user-facing error embed.
+ * Tidak mengandung informasi teknis — hanya pesan ramah untuk channel publik.
+ * Full error detail tetap dikirim ke Error Log channel via logError().
+ */
+export function buildUserErrorEmbed() {
+  return new EmbedBuilder()
+    .setColor(COLOR_ERROR)
+    .setTitle("⚠️ BoomBox sedang mengalami gangguan.")
+    .setDescription(
+      "Laporan otomatis telah dikirim ke Owner & Developer.\n\n" +
+      "Silakan coba beberapa saat lagi."
+    )
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
+}
+
+// ── Unsupported Platform Embed ────────────────────────────────────────────────
+
+/**
+ * Shown when the URL doesn't match any supported platform.
+ */
+export function buildUnsupportedPlatformEmbed() {
+  return new EmbedBuilder()
+    .setColor(COLOR_ERROR)
+    .setTitle("⚠️ Platform belum didukung.")
+    .setDescription(
+      "Saat ini BoomBox hanya mendukung:\n\n" +
+      "• **YouTube**\n" +
+      "• **YouTube Music**\n" +
+      "• **TikTok**"
+    )
+    .setFooter({ text: FOOTER_TEXT });
+}
+
+// ── Error Embed (Legacy — digunakan untuk Duration Limit & kasus non-error) ──
+//
+// Tetap dipertahankan untuk backward-compat dengan buildErrorDetailEmbed.
+
+/**
+ * @deprecated Gunakan buildUserErrorEmbed() untuk error di channel publik.
+ * Fungsi ini masih dipakai untuk embed yang memang perlu classifyError
+ * (misalnya duration limit yang ditampilkan ke user).
  *
  * @param {Error|unknown} err
  */
