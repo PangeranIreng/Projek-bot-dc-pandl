@@ -9,9 +9,9 @@
     }
   },
   "statistics": {
-    "total": 51,
+    "total": 52,
     "byPlatform": {
-      "YouTube": 51
+      "YouTube": 52
     }
   },
   "history": [
@@ -513,11 +513,27 @@
       "duration": 230,
       "limitRemaining": "Unlimited",
       "timestamp": "2026-07-15T18:51:45.643Z"
+    },
+    {
+      "userId": "1462685321262272664",
+      "platform": "YouTube",
+      "title": "Usik - Feby Putri (Official Lyric Video)",
+      "originalUrl": "https://youtu.be/hP6pQ51yIcU?si=l66BADFQPc9N2U4G",
+      "boomboxUrl": "https://g.top4top.io/m_3848juvqt0.mp3",
+      "duration": 311,
+      "limitRemaining": "Unlimited",
+      "timestamp": "2026-07-15T19:23:38.502Z"
     }
   ],
   "logState": {
     "messageId": "1526256015941832776",
     "entries": [
+      {
+        "title": "Usik - Feby Putri (Official Lyric Video)",
+        "duration": 311,
+        "boomboxUrl": "https://g.top4top.io/m_3848juvqt0.mp3",
+        "timestamp": "2026-07-15T19:23:38.502Z"
+      },
       {
         "title": "hate that i made you love me × Sailor Song (Mashup) [slowed ver.]",
         "duration": 230,
