@@ -24,12 +24,12 @@ args = "Keylogger Scanner Bot"
 name = "Keylogger Scanner Bot"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/keylogger-scanner-bot run dev"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm start"
 
 [agent]
 stack = "PNPM_WORKSPACE"
@@ -37,7 +37,7 @@ expertMode = true
 
 [postMerge]
 path = "scripts/post-merge.sh"
-timeoutMs = 20000
+timeoutMs = 60000
 
 [nix]
 channel = "stable-25_05"

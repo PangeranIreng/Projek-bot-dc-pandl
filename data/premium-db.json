@@ -1,0 +1,29 @@
+{
+  "premiumUsers": {
+    "1462685321262272664": {
+      "type": "permanent",
+      "expiresAt": null,
+      "grantedBy": "1462685321262272664",
+      "grantedAt": "2026-07-15T12:41:41.519Z"
+    }
+  },
+  "premiumRoles": {},
+  "customLimitUsers": {
+    "1526499408282390619": {
+      "limit": 1,
+      "type": "permanent",
+      "expiresAt": null
+    }
+  },
+  "customLimitRoles": {},
+  "dashboard": {
+    "messageId": "1526931772124954838",
+    "entryIndex": 8
+  },
+  "premStatsDashboard": {
+    "channelId": "1524810922009432144",
+    "messageId": "1526950572991844595"
+  },
+  "lastPremiumTarget": "<@1462685321262272664>",
+  "lastCustomLimitTarget": "<@1526499408282390619>"
+}

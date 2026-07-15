@@ -7,4 +7,6 @@
 - [Keylogger scanner missing utils](keylogger-scanner-missing-utils.md) — five util files were empty/missing at import time; all fixed; see topic for what each exports.
 - [BoomBox anti-bot vs permanent-failure bug](boombox-anti-bot-permanent-failure.md) — error-string substring matching silently aborted YouTube's multi-client fallback loop; watch for classifier keyword overlap.
 - [Discord thread component visibility & permission limits](discord-thread-component-visibility.md) — buttons can't be hidden per-viewer in a shared thread, and ephemeral replies need an interaction, not a plain message.
-- [Bot source layout](bot-source-layout.md) — all bot code lives in artifacts/keylogger-scanner-bot/; heuristic/ and detectors/ are separate from scanner/ and must both be present.
+- [Bot source layout](bot-source-layout.md) — bot code lives at the repo root (no artifacts/ dir), runs via `pnpm start`/`node src/index.js` on any panel.
+- [Duplicate premium dashboard removed](premium-dashboard-consolidation.md) — two near-identical monitoring panels ran side by side from identical call sites; kept statsDashboard.js only.
+- [BoomBox "Analyzing" stage hang](boombox-analyzing-stage-hang.md) — unbounded https.get in ensureBinary() could freeze jobs forever; layer idle timeouts per-request AND per-stage.
