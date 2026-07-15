@@ -48,28 +48,26 @@ export function truncateTitle(title, maxLen = 40) {
   return title.length > maxLen ? title.slice(0, maxLen - 3) + "..." : title;
 }
 
-// ── Processing Embed (progress bar, edited at each step) ─────────────────────
+// ── Processing Embed (3-stage: Processing → Downloading → Finishing) ─────────
+//
+// Spec: jangan spam edit. Cukup 3 state: Processing → Downloading → Finished/Failed.
+// labelOverride dipakai saat fallback loop ingin menampilkan status singkat
+// ("Trying another method...", "Trying alternative API...") tanpa menggeser bar.
 
 const STEPS = [
-  { bar: "██░░░░░░░░", label: "Please wait..."             },
-  { bar: "████░░░░░░", label: "🔍 Analyzing Link..."        },
-  { bar: "██████░░░░", label: "⬇ Downloading Audio..."      },
-  { bar: "████████░░", label: "🎵 Creating BoomBox URL..."  },
-  { bar: "██████████", label: "📤 Finalizing..."            },
-  { bar: "██████████", label: "Finished."                   },
+  { bar: "██░░░░░░░░", label: "⏳ Processing..."   }, // 0 – awal / metadata
+  { bar: "██████░░░░", label: "⬇ Downloading..."   }, // 1 – download + upload
+  { bar: "██████████", label: "✅ Finishing..."     }, // 2 – finalisasi
 ];
 
 /**
  * Build the processing embed for a given pipeline step.
  * Edit the SAME reply message at each step — never send a new one.
  *
- * @param {0|1|2|3|4|5} stepIndex  0=Please wait 1=Fetching 2=Extracting 3=Uploading 4=URL 5=Finished
- * @param {string|null} thumbnail  Optional thumbnail URL (shown once known)
- * @param {string|null} labelOverride  Transient status text (e.g. "Trying another
- *   method...", "Recovering download...") shown instead of the step's default
- *   label, while keeping that step's progress bar level. Used during the
- *   YouTube/TikTok multi-method retry loop so the user sees real-time status
- *   without the bar jumping around.
+ * @param {0|1|2} stepIndex       0=Processing 1=Downloading 2=Finishing
+ * @param {string|null} thumbnail Optional thumbnail URL (shown once known)
+ * @param {string|null} labelOverride  Transient status text — replaces step label
+ *   while keeping that step's progress bar level (e.g. "Trying another method...").
  */
 export function buildProcessingEmbed(stepIndex = 0, thumbnail = null, labelOverride = null) {
   const { bar, label } = STEPS[Math.min(stepIndex, STEPS.length - 1)];

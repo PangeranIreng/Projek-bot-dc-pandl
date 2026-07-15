@@ -154,14 +154,7 @@ function effectiveDailyLimit(member) {
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
-/** Small delay so status transitions read as a smooth process instead of an
- * instant flicker. Kept short to minimise total processing time. */
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-function smoothDelay() {
-  return sleep(100 + Math.floor(Math.random() * 100)); // 100–200ms
-}
+// smoothDelay() dihapus — animasi tambahan tidak diperlukan.
 
 /**
  * Bounds a stage so it can never hang the job/queue slot forever.
@@ -528,13 +521,11 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
   const startedAt = Date.now();
   let   tmpDir    = null;
 
-  // Awaited (not fire-and-forget) + a small randomized delay so status
-  // transitions read as a smooth, professional-looking process instead of a
-  // flicker, per spec. editStep never throws (catches internally).
+  // editStep: edit embed sesuai step tanpa delay tambahan.
+  // Step: 0=Processing, 1=Downloading, 2=Finishing
   const editStep = async (step, labelOverride = null) => {
     try {
       await statusMsg.edit({ content: userMention, embeds: [buildProcessingEmbed(step, lastThumbnail, labelOverride)], components: [] });
-      await smoothDelay();
     } catch (e) {
       logger.debug(`[BoomBox] Edit step ${step} failed (non-fatal): ${e.message}`);
     }
@@ -545,17 +536,17 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     // ── [3] Fetching video metadata ──────────────────────────────────────
     // Same URL cached from a recent request? Reuse its metadata + skip the
     // network fetch too.
+    // ── [2] Metadata (step 0 = "Processing..." sudah tampil) ─────────────
+    // getVideoInfo non-fatal: gagal → null duration → lanjut download.
+    // Timeout dipercepat (10s) agar tidak memblokir pipeline jika yt-dlp lambat.
     currentStage = "Fetch Video Info";
-    await editStep(1); // "Fetching video..."
     const cachedEarly = getCachedResult(url);
     const info = cachedEarly
       ? cachedEarly.ytResult
-      : await withStageTimeout(getVideoInfo(url), 45_000, "Analisis link (Analyzing)");
+      : await withStageTimeout(getVideoInfo(url), 10_000, "Analisis link (Analyzing)");
     lastThumbnail = info.thumbnail ?? null;
     if (cachedEarly) {
       logger.info(`[BoomBox] Cache hit for ${url} — reusing metadata`);
-    } else {
-      logger.info(`[BoomBox] Fetching video info (simulate)...`);
     }
     logger.info(`[BoomBox] Video info | title="${info.title}" duration=${info.duration}s`);
 
@@ -577,49 +568,35 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       ytResult   = cached.ytResult;
       boomboxUrl = cached.boomboxUrl;
     } else {
-      // ── [4] Downloading / extracting audio ───────────────────────────────
-      // onProgress lets the retry loop inside ytdl() (multi-method YouTube/
-      // TikTok fallback, last-resort recovery engine) push live status text
-      // ("Trying another method...", "Recovering download...") onto this
-      // same message instead of leaving the user staring at a frozen embed.
+      // ── [3] Download audio — step 1 "Downloading..." ─────────────────────
+      // onProgress: fallback loop mendorong label singkat ("Trying another method...",
+      // "Trying alternative API...") ke embed yang sama tanpa mengirim pesan baru.
       currentStage = "Download Audio";
-      await editStep(2); // "Extracting audio..."
+      await editStep(1); // "⬇ Downloading..."
       logger.info(`[BoomBox] ── Downloading | ${platform} | ${url}`);
-      // Outer ceiling above ytdl()'s own worst-case internal fallback chain
-      // (yt-dlp multi-method + ytdl-core + kaizenapi, each already bounded
-      // individually) — belt-and-suspenders so a gap in any one of those
-      // internal timeouts still can't freeze this stage indefinitely.
-      //
-      // FIX (Bug 4): pass a factory fn so withStageTimeout can create an
-      // AbortController and pass its signal into ytdl(). When the 9-min
-      // ceiling fires, abort() kills the yt-dlp child process immediately
-      // instead of letting it run as a zombie until the OS reaps it.
       ytResult = await withStageTimeout(
         (signal) => ytdl(
           url,
           BOOMBOX_CONFIG.AUDIO_TYPE,
           BOOMBOX_CONFIG.AUDIO_QUALITY,
-          (label) => editStep(2, label),
+          (label) => editStep(1, label),
           signal,
         ),
-        9 * 60_000,
+        5 * 60_000, // 5 min ceiling — download + seluruh fallback chain
         "Download audio",
       );
       tmpDir = ytResult.tmpDir;
       lastThumbnail = ytResult.thumbnail ?? lastThumbnail;
       logger.info(`[BoomBox] ── Download complete | title="${ytResult.title}" duration=${ytResult.duration}s`);
 
-      // ── [5] Uploading ───────────────────────────────────────────────────
+      // ── [4] Upload — tetap di step 1 ("Downloading...") ─────────────────
+      // Spec: embed cukup Processing → Downloading → Finished.
+      // Upload masuk dalam fase "Downloading" — tidak perlu step terpisah.
       currentStage = "Upload to Top4Top";
-      await editStep(3);
       logger.info(`[BoomBox] ── Upload started | file=${ytResult.localFile}`);
-      // top4top() already retries internally (3x, 120s axios timeout each);
-      // this is the outer ceiling covering that entire retry budget.
-      const t4tResult = await withStageTimeout(top4top(ytResult.localFile), 7 * 60_000, "Upload ke Top4Top");
+      const t4tResult = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
 
-      // ── [6] BoomBox URL ─────────────────────────────────────────────────
       currentStage = "Generate BoomBox URL";
-      await editStep(4);
       boomboxUrl = t4tResult.result;
       logger.info(`[BoomBox] ── Upload finished | BoomBox URL created: ${boomboxUrl}`);
 

@@ -575,11 +575,11 @@ const YOUTUBE_METHODS = [
   ],
 ];
 
-/** Per-method timeout — early methods fail fast so the retry loop doesn't
- * burn minutes before reaching the client that actually works; the last
- * one gets the full budget in case it just needs more time. */
+/** Per-method timeout — dipercepat agar fallback loop tidak memblok terlalu lama.
+ * Early methods: 30s (cukup untuk download normal, gagal cepat jika terblokir).
+ * Last method: 90s (budget penuh untuk koneksi lambat / file besar). */
 function _methodTimeout(i) {
-  return i < YOUTUBE_METHODS.length - 1 ? 45_000 : 120_000;
+  return i < YOUTUBE_METHODS.length - 1 ? 30_000 : 90_000;
 }
 
 /**
@@ -680,7 +680,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
   // straight to the backups instead of burning time retrying a client we
   // already know is currently blocked/broken.
   if (providerHealth.shouldSkip("yt-dlp-youtube")) {
-    logger.warn(`[ytmp3gg] yt-dlp (YouTube) is OFFLINE (health check) — skipping straight to backups`);
+    logger.warn(`[ytmp3gg] Provider: yt-dlp (YouTube) | Status: OFFLINE | Action: Switch → ytdl-core`);
     lastError = new Error("yt-dlp sedang OFFLINE (5x gagal berturut-turut) — mencoba provider cadangan");
   } else {
     for (let i = 0; i < YOUTUBE_METHODS.length; i++) {
@@ -701,11 +701,14 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
       } catch (err) {
         if (_isAborted(err, signal)) { lastError = err; break; }
         lastError = _translateError(err);
-        logger.warn(`[ytmp3gg] YouTube method ${i + 1} failed: ${lastError.message}`);
+        logger.warn(`[ytmp3gg] Provider: yt-dlp (YouTube) | Method: ${i + 1}/${YOUTUBE_METHODS.length} | Status: FAILED | Reason: ${lastError.message}`);
 
         if (_isPermanentFailure(lastError)) {
           logger.info(`[ytmp3gg] Permanent failure — stopping YouTube fallback`);
           break;
+        }
+        if (i < YOUTUBE_METHODS.length - 1) {
+          logger.info(`[ytmp3gg] Action: Switch → yt-dlp method ${i + 2}/${YOUTUBE_METHODS.length}`);
         }
       }
     }
@@ -739,29 +742,31 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
 
   // ── Backup API 1: @distube/ytdl-core ──────────────────────────────────────
   if (providerHealth.shouldSkip("ytdl-core")) {
-    logger.warn(`[ytmp3gg] ytdl-core is OFFLINE (health check) — skipping to next backup`);
+    logger.warn(`[ytmp3gg] Provider: ytdl-core | Status: OFFLINE | Action: Switch → Kaizen API`);
   } else if (!signal?.aborted) {
+    logger.info(`[ytmp3gg] Provider: yt-dlp (YouTube) | Status: FAILED | Action: Switch → ytdl-core`);
     try {
       const result = await _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signal);
       providerHealth.recordSuccess("ytdl-core");
+      logger.info(`[ytmp3gg] Provider: ytdl-core | Status: SUCCESS | Fallback: YES`);
       return result;
     } catch (err) {
       if (_isAborted(err, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw err; }
-      logger.warn(`[ytmp3gg] Backup API 1 (ytdl-core) also failed: ${err.message}`);
+      logger.warn(`[ytmp3gg] Provider: ytdl-core | Status: FAILED | Reason: ${err.message} | Action: Switch → Kaizen API`);
       providerHealth.recordFailure("ytdl-core", { reason: err.message, isTimeout: err.message.toLowerCase().includes("timeout") });
-      // ytdl-core failed too — fall through to Backup API 2 (kaizenapi)
     }
   }
 
   // ── Backup API 2 (last resort): kaizenapi.my.id ───────────────────────────
-  // Only used when BOTH yt-dlp and ytdl-core have been exhausted.
-  // Never used as primary or secondary — only as final backup.
+  // Menggunakan endpoint baru (kaizenapi.my.id/downloader/youtube) dari file referensi,
+  // dengan fallback ke endpoint lama (api.kaizenapi.my.id/ytmp3).
+  // Hanya dicoba jika SEMUA provider di atas gagal.
   try {
     for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
   } catch {}
 
   if (providerHealth.shouldSkip("kaizenapi")) {
-    logger.warn(`[ytmp3gg] kaizenapi is OFFLINE (health check) — no more backups, giving up`);
+    logger.warn(`[ytmp3gg] Provider: Kaizen API | Status: OFFLINE | Action: Seluruh provider gagal, BoomBox Failed`);
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     throw lastError;
   }
@@ -772,13 +777,14 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
 
   try {
     await onProgress?.("Trying alternative API...");
-    logger.info(`[ytmp3gg] YouTube — trying Backup API 2 (kaizenapi.my.id)`);
+    logger.info(`[ytmp3gg] Provider: Kaizen API | Status: Trying | Endpoint: kaizenapi.my.id/downloader/youtube`);
     const result = await kaizenDownload(input, type, quality, tmpDir, signal);
     providerHealth.recordSuccess("kaizenapi");
+    logger.info(`[ytmp3gg] Provider: Kaizen API | Status: SUCCESS | Fallback: YES`);
     return result;
   } catch (kaizenErr) {
     if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
-    logger.warn(`[ytmp3gg] Backup API 2 (kaizenapi) also failed: ${kaizenErr.message}`);
+    logger.warn(`[ytmp3gg] Provider: Kaizen API | Status: FAILED | Reason: ${kaizenErr.message} | Action: Seluruh provider habis, BoomBox Failed`);
     providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: kaizenErr.message.toLowerCase().includes("timeout") });
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     throw lastError;
@@ -985,7 +991,7 @@ export async function getVideoInfo(url) {
 
     try {
       const { stdout } = await execFileAsync(BIN_PATH, args, {
-        timeout:   20_000,
+        timeout:   8_000, // 8s — metadata fetch harus cepat; gagal cepat → download tetap jalan
         maxBuffer: 1 * 1024 * 1024,
       });
       const line            = stdout.trim().split("\n").find(l => l.includes("|||")) ?? "";
