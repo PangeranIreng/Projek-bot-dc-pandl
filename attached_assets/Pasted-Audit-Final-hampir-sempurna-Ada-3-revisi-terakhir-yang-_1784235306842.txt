@@ -1,0 +1,127 @@
+Audit Final hampir sempurna.
+
+Ada 3 revisi terakhir yang WAJIB diterapkan sebelum implementasi dimulai.
+
+====================================
+
+1. Role Duration
+
+Jangan simpan durasi dalam millisecond.
+
+Database cukup menyimpan dalam MENIT.
+
+Contoh:
+
+"roleLimits": {
+    "<roleId>": 10,
+    "<roleId>": 25,
+    "<roleId>": 30
+}
+
+Artinya:
+
+10 menit
+25 menit
+30 menit
+
+Konversi ke millisecond hanya saat runtime jika memang diperlukan.
+
+Database harus tetap mudah dibaca oleh manusia.
+
+====================================
+
+2. Cleaner
+
+Cleaner diperluas.
+
+Yang BOLEH dibersihkan:
+
+- storage/cache/*
+- storage/downloads/*
+- expired cache
+- orphan files
+- upload cache
+- download cache
+- metadata cache
+- attached_assets yang sudah tidak digunakan
+- temporary logs
+- temporary files
+- junk files
+
+Yang TIDAK BOLEH disentuh:
+
+- data/*.json
+- storage/backup/*
+- config/*
+- premium
+- limit
+- setup
+- history
+- BoomBox Logs
+- URL BoomBox
+- database penting
+
+Cleaner harus benar-benar aman.
+
+====================================
+
+3. Fallback Setup
+
+Tambahkan graceful fallback.
+
+Jika owner belum menjalankan:
+
+/setupboombox
+
+Bot TIDAK BOLEH crash.
+
+Bot cukup membalas:
+
+⚠️ BoomBox belum dikonfigurasi.
+
+Silakan jalankan:
+
+/setupboombox
+
+untuk mengatur BoomBox terlebih dahulu.
+
+Hal ini berlaku untuk:
+
+- Channel YouTube belum di-setup
+- Channel TikTok belum di-setup
+- Channel Spotify belum di-setup
+- BoomBox Logs belum di-setup
+
+Semua harus memiliki fallback yang aman.
+
+====================================
+
+Setelah tiga revisi ini diterapkan ke audit, implementasi boleh dimulai.
+
+Ikuti urutan implementasi yang sudah dibuat.
+
+Jangan menghapus engine lama.
+
+Jangan menghapus fitur lama.
+
+Gunakan migrasi.
+
+Prioritaskan kompatibilitas dengan:
+
+- Pterodactyl
+- Railway
+- Replit
+- VPS Linux
+
+Setelah implementasi selesai:
+
+1. Audit ulang seluruh project.
+2. Jalankan pengecekan syntax.
+3. Jalankan pengecekan import.
+4. Pastikan tidak ada fitur BoomBox lama yang rusak.
+5. Berikan laporan lengkap:
+   - File yang diubah.
+   - File yang ditambahkan.
+   - Database yang berubah.
+   - Hasil pengujian.
+   - Daftar fitur BoomBox V2 yang berhasil diimplementasikan.

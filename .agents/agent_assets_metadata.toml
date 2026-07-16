@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "RlF0Omf7vZ-zTf3Dggbmh"
+uri = "file://boombox_v2.zip"
+type = "unspecified"
+title = "BoomBox V2 — Project ZIP"
