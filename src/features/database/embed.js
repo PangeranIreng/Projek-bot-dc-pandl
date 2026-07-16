@@ -432,69 +432,109 @@ export function buildBotSettingComponents(setup) {
  * @param {import("discord.js").Client} client
  * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
  * @param {{ getNextBackupAt?: Function, SCHEDULE_LABELS?: Object, formatScheduleTime?: Function }} [sched]
+ * @param {ReturnType<import("./backup.js").getStorageStats>|null} [storage]
  */
-export function buildBackupPanelEmbed(client, setup, sched = {}) {
-  const version  = _readVersion();
-  const uptime   = client?.uptime ?? 0;
-  const dbToken  = setup.github?.token || process.env.GITHUB_TOKEN;
-  const dbRepo   = setup.github?.repo  || process.env.GITHUB_REPO;
-  const branch   = setup.github?.branch || "main";
+export function buildBackupPanelEmbed(client, setup, sched = {}, storage = null) {
+  const version    = _readVersion();
+  const uptime     = client?.uptime ?? 0;
+  const dbToken    = setup.github?.token || process.env.GITHUB_TOKEN;
+  const dbRepo     = setup.github?.repo  || process.env.GITHUB_REPO;
   const uploadMode = setup.github?.uploadMode ?? "release";
 
   // ── Backup info ──────────────────────────────────────────────────────────
   const lastBackupStr = setup.lastBackup
-    ? `📁 ${setup.lastBackup.name}\n📏 ${setup.lastBackup.size}\n🕐 ${new Date(setup.lastBackup.at).toLocaleString("id-ID")}`
+    ? `📁 ${setup.lastBackup.name} • 📏 ${setup.lastBackup.size}\n🕐 ${new Date(setup.lastBackup.at).toLocaleString("id-ID")}`
     : "Belum ada backup";
 
-  const schedLabel  = (sched.SCHEDULE_LABELS && setup.backupSchedule)
-    ? sched.SCHEDULE_LABELS[setup.backupSchedule] : null;
-  const nextAt      = (sched.getNextBackupAt) ? sched.getNextBackupAt(setup) : null;
-  const nextStr     = nextAt && sched.formatScheduleTime ? sched.formatScheduleTime(nextAt) : "—";
+  const schedLabel = (sched.SCHEDULE_LABELS && setup.backupSchedule)
+    ? sched.SCHEDULE_LABELS[setup.backupSchedule] : "—";
+  const nextAt  = (sched.getNextBackupAt) ? sched.getNextBackupAt(setup) : null;
+  const nextStr = nextAt && sched.formatScheduleTime ? sched.formatScheduleTime(nextAt) : "—";
 
-  // ── Storage ringkas ──────────────────────────────────────────────────────
-  const dataSize = _readDataDirSize();
+  // ── Storage stats ─────────────────────────────────────────────────────────
+  const s = storage?.strings ?? {};
+  const cacheRaw   = storage?.cache   ?? 0;
+  const tempRaw    = storage?.temp    ?? 0;
+  const logsRaw    = storage?.logs    ?? 0;
+  const backupRaw  = storage?.backup  ?? 0;
+  const cleanStatus = (cacheRaw + tempRaw) > 0 ? "🟡 Ada sampah" : "🟢 Bersih";
 
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("📦 Database & Backup Panel")
+    .setTitle("📊 Database & Backup Panel")
     .setDescription("Sistem manajemen backup, storage, dan monitoring bot secara real-time.")
     .addFields(
       // ── Bot Info ──────────────────────────────────────────────────────────
-      { name: "🤖 Bot",     value: client?.user?.tag ?? "—", inline: true },
-      { name: "📦 Versi",   value: `v${version}`,            inline: true },
-      { name: "🟢 Status",  value: "Online",                  inline: true },
-      { name: "⏱ Uptime",   value: formatUptime(uptime),      inline: true },
-      { name: "\u200b",     value: "\u200b",                  inline: true },
-      { name: "\u200b",     value: "\u200b",                  inline: true },
+      { name: "🤖 Bot",    value: client?.user?.tag ?? "—", inline: true },
+      { name: "📦 Versi",  value: `v${version}`,            inline: true },
+      { name: "🟢 Status", value: "Online",                  inline: true },
+      { name: "⏱ Uptime",  value: formatUptime(uptime),      inline: true },
+      { name: "\u200b",    value: "\u200b",                  inline: true },
+      { name: "\u200b",    value: "\u200b",                  inline: true },
 
-      // ── Database ──────────────────────────────────────────────────────────
-      { name: "━━━ 🗄 DATABASE ━━━",  value: "\u200b",           inline: false },
-      { name: "📂 Database",          value: dataSize,            inline: true  },
-      { name: "📂 Kategori",          value: setup.categoryName ?? "—", inline: true },
-      { name: "📂 Dibuat",            value: setup.createdAt
-          ? new Date(setup.createdAt).toLocaleDateString("id-ID") : "—", inline: true },
+      // ── DATABASE ─────────────────────────────────────────────────────────────
+      {
+        name: "━━━━━━━━━ 🗄 DATABASE ━━━━━━━━━",
+        value:
+          `📂 **Database:** ${s.database ?? _readDataDirSize()}\n` +
+          `📂 **Source:** ${s.source   ?? "—"}\n` +
+          `📂 **Config:** ${s.config   ?? "—"}\n` +
+          `📂 **Assets:** ${s.assets   ?? "—"}\n` +
+          `📂 **Logs:** ${s.logs     ?? "—"}\n` +
+          `📂 **Session:** ${s.session  ?? "—"}`,
+        inline: false,
+      },
 
-      // ── GitHub Backup ─────────────────────────────────────────────────────
-      { name: "━━━ ☁ GITHUB BACKUP ━━━", value: "\u200b",         inline: false },
-      { name: "🐙 Repository", value: dbRepo ? `\`${dbRepo}\`` : "❌ Belum", inline: true },
-      { name: "🌿 Branch",     value: `\`${branch}\``,                       inline: true },
-      { name: "🔑 Token",      value: dbToken ? "✅ Dikonfigurasi" : "❌ Belum", inline: true },
-      { name: "📤 Mode Upload",value: uploadMode === "branch" ? "Branch Commit" : "GitHub Release", inline: true },
-      { name: "\u200b",        value: "\u200b", inline: true },
-      { name: "\u200b",        value: "\u200b", inline: true },
+      // ── GitHub Backup ─────────────────────────────────────────────────────────
+      {
+        name: "━━━━━━━━━ ☁ GitHub Backup ━━━━━━━━━",
+        value:
+          `🐙 **Repository:** ${dbRepo ? `\`${dbRepo}\`` : "❌ Belum dikonfigurasi"}\n` +
+          `🔑 **Token:** ${dbToken ? "✅ Dikonfigurasi" : "❌ Belum dikonfigurasi"}\n` +
+          `📤 **Mode:** ${uploadMode === "branch" ? "📁 Branch Commit" : "🏷 GitHub Release (Default)"}`,
+        inline: false,
+      },
 
-      // ── Auto Backup ───────────────────────────────────────────────────────
-      { name: "━━━ 🔄 AUTO BACKUP ━━━", value: "\u200b",            inline: false },
-      { name: "📋 Status",      value: setup.autoBackup  ? "✅ Aktif" : "❌ Nonaktif",  inline: true },
-      { name: "⏰ Jadwal",      value: schedLabel ?? "—",                               inline: true },
-      { name: "⏭ Berikutnya",  value: nextStr,                                          inline: true },
-      { name: "💾 Terakhir",   value: lastBackupStr,                                    inline: false },
-      { name: "🔢 Total Backup",value: String(setup.backupCount ?? 0),                  inline: true },
+      // ── Auto Backup ──────────────────────────────────────────────────────────
+      {
+        name: "━━━━━━━━━ 🔄 Auto Backup ━━━━━━━━━",
+        value:
+          `🔄 **Status:** ${setup.autoBackup ? "✅ Aktif" : "❌ Nonaktif"}\n` +
+          `📅 **Jadwal:** ${setup.autoBackup ? schedLabel : "—"}\n` +
+          `⏭ **Backup Berikutnya:** ${setup.autoBackup ? nextStr : "—"}\n` +
+          `🕐 **Backup Terakhir:** ${lastBackupStr}\n` +
+          `📦 **Jumlah Backup:** ${setup.backupCount ?? 0} release`,
+        inline: false,
+      },
 
-      // ── Smart Clean ───────────────────────────────────────────────────────
-      { name: "━━━ 🧹 SMART CLEAN ━━━", value: "\u200b",           inline: false },
-      { name: "📋 Status",      value: setup.autoClean ? "✅ Aktif" : "❌ Nonaktif",    inline: true },
-      { name: "🎯 Target",      value: "Cache • Temp • Log >7hr • Backup Lama",        inline: true },
+      // ── Smart Clean ──────────────────────────────────────────────────────────
+      {
+        name: "━━━━━━━━━ 🧹 Smart Clean ━━━━━━━━━",
+        value:
+          `🔄 **Status:** ${cleanStatus}\n` +
+          `🗃 **Cache:** ${s.cache  ?? "—"}\n` +
+          `📁 **Temp:** ${s.temp   ?? "—"}\n` +
+          `📋 **Logs Lama:** ${logsRaw > 0 ? s.logs : "🟢 Bersih"}\n` +
+          `📦 **Backup Lama:** ${backupRaw > 0 ? s.backup : "0 B"}`,
+        inline: false,
+      },
+
+      // ── Storage ──────────────────────────────────────────────────────────────
+      {
+        name: "━━━━━━━━━ 📊 Storage ━━━━━━━━━",
+        value:
+          `💾 **Database:** ${s.database ?? "—"}   ` +
+          `🗃 **Cache:** ${s.cache ?? "—"}   ` +
+          `📁 **Temp:** ${s.temp ?? "—"}\n` +
+          `📋 **Logs:** ${s.logs ?? "—"}   ` +
+          `🖼️ **Assets:** ${s.assets ?? "—"}   ` +
+          `📦 **Backup:** ${s.backup ?? "—"}\n` +
+          `📝 **Source:** ${s.source ?? "—"}`,
+        inline: false,
+      },
+      { name: "📊 Total",     value: `**${s.total    ?? "—"}**`, inline: true },
+      { name: "💽 Disk Total", value: s.diskTotal ?? "N/A",       inline: true },
+      { name: "💿 Sisa Disk",  value: s.diskFree  ?? "N/A",       inline: true },
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -787,13 +827,12 @@ export function buildRestoreConfirmEmbed(releaseName) {
 }
 
 /**
- * @param {string} assetDownloadUrl
+ * @param {string} restoreToken  Short opaque token from storeRestoreToken() — safe for Discord customId
  */
-export function buildRestoreConfirmComponents(assetDownloadUrl) {
-  const safeId = Buffer.from(assetDownloadUrl).toString("base64").slice(0, 80);
+export function buildRestoreConfirmComponents(restoreToken) {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`db:restore:exec:${safeId}`).setLabel("✅ Ya, Restore Sekarang").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`db:restore:exec:${restoreToken}`).setLabel("✅ Ya, Restore Sekarang").setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId("db:restore:cancel").setLabel("❌ Batal").setStyle(ButtonStyle.Secondary),
     ),
   ];

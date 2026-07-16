@@ -92,6 +92,40 @@ function addFileIfExists(zip, localFile, zipDir) {
 // Key: tmpId (string), Value: { filePath, fileName, size, createdAt }
 const _backupTable = new Map();
 
+// ── Tabel restore token ───────────────────────────────────────────────────────
+// Maps a short opaque token → full GitHub asset download URL.
+// Tokens expire after 30 minutes to avoid unbounded memory growth.
+const _restoreTokens = new Map();
+const RESTORE_TOKEN_TTL = 30 * 60 * 1000;
+
+/**
+ * Store a GitHub asset download URL and return a short token safe for Discord customId.
+ * @param {string} downloadUrl
+ * @returns {string} token (alphanumeric, ≤20 chars)
+ */
+export function storeRestoreToken(downloadUrl) {
+  const token = `rst${Date.now().toString(36)}`;
+  _restoreTokens.set(token, { url: downloadUrl, at: Date.now() });
+  // Evict expired entries
+  const cutoff = Date.now() - RESTORE_TOKEN_TTL;
+  for (const [k, v] of _restoreTokens) {
+    if (v.at < cutoff) _restoreTokens.delete(k);
+  }
+  return token;
+}
+
+/**
+ * Look up a restore URL by token.  Returns null if not found or expired.
+ * @param {string} token
+ * @returns {string|null}
+ */
+export function getRestoreUrl(token) {
+  const entry = _restoreTokens.get(token);
+  if (!entry) return null;
+  if (Date.now() - entry.at > RESTORE_TOKEN_TTL) { _restoreTokens.delete(token); return null; }
+  return entry.url;
+}
+
 /**
  * Folder/file yang DILEWATI saat membuat backup.
  * Backup mengambil langsung dari folder project yang sedang berjalan —
@@ -230,22 +264,12 @@ export function getBackupEntry(tmpId) {
  * @param {string} tmpId
  * @returns {Promise<{ url: string }>}
  */
-export async function uploadBackupToGitHub(tmpId) {
-  const entry = getBackupEntry(tmpId);
-  if (!entry) throw new Error("File backup tidak ditemukan atau sudah kedaluwarsa.");
-
-  const settings = databaseDB.get();
-
-  // Prioritas 1: konfigurasi dari panel Discord
-  // Prioritas 2: fallback ke environment variable
-  const token  = settings.github?.token  || process.env.GITHUB_TOKEN;
-  const repo   = settings.github?.repo   || process.env.GITHUB_REPO;
-  const branch = settings.github?.branch || process.env.GITHUB_BRANCH || "main";
-
-  if (!token) throw new Error("GitHub Token belum dikonfigurasi. Gunakan tombol 'Edit Kredensial' di panel Discord atau tambahkan GITHUB_TOKEN ke environment variable.");
-  if (!repo)  throw new Error("GitHub Repository belum dikonfigurasi. Gunakan tombol 'Edit Kredensial' di panel Discord atau tambahkan GITHUB_REPO ke environment variable (format: owner/repo).");
-
-  // 1. Buat GitHub Release baru
+/**
+ * Upload backup ke GitHub Releases (mode default).
+ * @param {string} tmpId
+ * @returns {Promise<{ url: string, mode: "release" }>}
+ */
+async function _uploadToRelease(tmpId, entry, token, repo, branch) {
   const releaseName = `Backup ${new Date(entry.createdAt).toLocaleDateString("id-ID")} [${branch}]`;
   const releaseRes  = await fetch(`https://api.github.com/repos/${repo}/releases`, {
     method: "POST",
@@ -269,10 +293,8 @@ export async function uploadBackupToGitHub(tmpId) {
     throw new Error(`GitHub API error saat membuat release: ${releaseRes.status} — ${txt.slice(0, 200)}`);
   }
 
-  const release = await releaseRes.json();
-
-  // 2. Upload ZIP sebagai release asset
-  const fileData = fs.readFileSync(entry.filePath);
+  const release   = await releaseRes.json();
+  const fileData  = fs.readFileSync(entry.filePath);
   const uploadUrl = release.upload_url.replace(/\{.*\}/, `?name=${encodeURIComponent(entry.fileName)}`);
 
   const uploadRes = await fetch(uploadUrl, {
@@ -291,7 +313,84 @@ export async function uploadBackupToGitHub(tmpId) {
   }
 
   const asset = await uploadRes.json();
-  return { url: asset.browser_download_url ?? release.html_url };
+  return { url: asset.browser_download_url ?? release.html_url, mode: "release" };
+}
+
+/**
+ * Upload backup ke branch repository di folder /backups/.
+ * Menggunakan GitHub Contents API — cocok untuk file ≤50 MB.
+ * @param {string} tmpId
+ * @returns {Promise<{ url: string, mode: "branch" }>}
+ */
+async function _uploadToBranch(entry, token, repo, branch) {
+  const filePath  = `backups/${entry.fileName}`;
+  const fileData  = fs.readFileSync(entry.filePath);
+  const content   = fileData.toString("base64");
+
+  // Cek apakah file sudah ada (untuk mendapatkan SHA kalau file perlu di-update)
+  const checkRes = await fetch(`https://api.github.com/repos/${repo}/contents/${filePath}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept:        "application/vnd.github+json",
+      "User-Agent":  "PangeranAssistantBot",
+    },
+  });
+
+  let sha;
+  if (checkRes.ok) {
+    const existing = await checkRes.json();
+    sha = existing.sha;
+  }
+
+  const body = {
+    message: `Backup ${new Date(entry.createdAt).toLocaleDateString("id-ID")} — ${entry.sizeStr}`,
+    content,
+    branch,
+    ...(sha ? { sha } : {}),
+  };
+
+  const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${filePath}`, {
+    method:  "PUT",
+    headers: {
+      Authorization:  `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "User-Agent":   "PangeranAssistantBot",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!putRes.ok) {
+    const txt = await putRes.text().catch(() => "");
+    throw new Error(`GitHub API error saat branch upload: ${putRes.status} — ${txt.slice(0, 200)}`);
+  }
+
+  const putData = await putRes.json();
+  const fileUrl = putData.content?.html_url ?? `https://github.com/${repo}/blob/${branch}/backups/`;
+  return { url: fileUrl, mode: "branch" };
+}
+
+/**
+ * Upload backup ke GitHub (Release atau Branch, sesuai konfigurasi uploadMode).
+ * @param {string} tmpId
+ * @returns {Promise<{ url: string, mode: string }>}
+ */
+export async function uploadBackupToGitHub(tmpId) {
+  const entry = getBackupEntry(tmpId);
+  if (!entry) throw new Error("File backup tidak ditemukan atau sudah kedaluwarsa.");
+
+  const settings   = databaseDB.get();
+  const token      = settings.github?.token  || process.env.GITHUB_TOKEN;
+  const repo       = settings.github?.repo   || process.env.GITHUB_REPO;
+  const branch     = settings.github?.branch || process.env.GITHUB_BRANCH || "main";
+  const uploadMode = settings.github?.uploadMode ?? "release";
+
+  if (!token) throw new Error("GitHub Token belum dikonfigurasi. Gunakan tombol 'Edit Kredensial' di panel Discord atau tambahkan GITHUB_TOKEN ke environment variable.");
+  if (!repo)  throw new Error("GitHub Repository belum dikonfigurasi. Gunakan tombol 'Edit Kredensial' di panel Discord atau tambahkan GITHUB_REPO ke environment variable (format: owner/repo).");
+
+  if (uploadMode === "branch") {
+    return _uploadToBranch(entry, token, repo, branch);
+  }
+  return _uploadToRelease(tmpId, entry, token, repo, branch);
 }
 
 

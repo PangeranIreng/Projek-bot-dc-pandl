@@ -78,6 +78,8 @@ import {
   executeClean,
   listGitHubReleases,
   restoreFromGitHubRelease,
+  storeRestoreToken,
+  getRestoreUrl,
 } from "./backup.js";
 import {
   startAutoBackupScheduler,
@@ -358,7 +360,8 @@ async function _sendPanels(client, guild, setup) {
   try {
     const ch  = await client.channels.fetch(setup.channels.backup).catch(() => null);
     if (ch?.isTextBased()) {
-      const msg = await ch.send({ embeds: [buildBackupPanelEmbed()], components: buildBackupPanelComponents() });
+      const storage = getStorageStats();
+      const msg = await ch.send({ embeds: [buildBackupPanelEmbed(client, setup, { getNextBackupAt, SCHEDULE_LABELS, formatScheduleTime }, storage)], components: buildBackupPanelComponents(setup) });
       databaseDB.setMessage("backup", msg.id);
     } else errors.push("📦 Backup: channel tidak valid");
   } catch (e) { errors.push(`📦 Backup: ${e.message.slice(0, 80)}`); }
@@ -595,7 +598,8 @@ async function handleManageRepair(interaction) {
         if (def.key === "botSetting") {
           newMsg = await ch.send({ embeds: [buildBotSettingEmbed(client, freshSetup)], components: buildBotSettingComponents(freshSetup) });
         } else if (def.key === "backup") {
-          newMsg = await ch.send({ embeds: [buildBackupPanelEmbed()], components: buildBackupPanelComponents() });
+          const storage = getStorageStats();
+          newMsg = await ch.send({ embeds: [buildBackupPanelEmbed(client, freshSetup, { getNextBackupAt, SCHEDULE_LABELS, formatScheduleTime }, storage)], components: buildBackupPanelComponents(freshSetup) });
         } else {
           const stats = await getMemberStats(guild, premDB);
           newMsg = await ch.send({ embeds: [buildMemberListEmbed(stats)], components: buildMemberListComponents() });
@@ -1088,16 +1092,150 @@ async function handleBackupRefresh(interaction) {
   await interaction.editReply({ content: "🔄 Panel Backup diperbarui." });
 }
 
-async function _refreshBackupPanel(client, lastBackup = null) {
+async function _refreshBackupPanel(client, _lastBackup = null) {
   const setup = databaseDB.get();
   if (!setup.channels.backup || !setup.messages.backup) return;
   try {
     const ch  = await client.channels.fetch(setup.channels.backup).catch(() => null);
     const msg = ch ? await ch.messages.fetch(setup.messages.backup).catch(() => null) : null;
-    if (msg) await msg.edit({ embeds: [buildBackupPanelEmbed(lastBackup)], components: buildBackupPanelComponents() });
+    if (msg) {
+      const storage = getStorageStats();
+      await msg.edit({
+        embeds:     [buildBackupPanelEmbed(client, setup, { getNextBackupAt, SCHEDULE_LABELS, formatScheduleTime }, storage)],
+        components: buildBackupPanelComponents(setup),
+      });
+    }
   } catch (e) {
     logger.warn(`[Database] Gagal refresh Backup: ${e.message}`);
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: RESTORE
+// ════════════════════════════════════════════════════════════════════════════
+
+async function handleRestoreList(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const releases = await listGitHubReleases();
+    await interaction.editReply({
+      embeds:     [buildRestoreListEmbed(releases)],
+      components: buildRestoreListComponents(releases),
+    });
+  } catch (err) {
+    await interaction.editReply({ content: `❌ Gagal memuat daftar backup: ${err.message.slice(0, 300)}` });
+  }
+}
+
+async function handleRestoreSelect(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const downloadUrl = interaction.values[0];
+  const chosen      = interaction.component.options?.find(o => o.value === downloadUrl);
+  const releaseName = chosen?.label ?? "Backup";
+  // Store full URL server-side and pass a short token into the button customId
+  const token = storeRestoreToken(downloadUrl);
+  await interaction.update({
+    embeds:     [buildRestoreConfirmEmbed(releaseName)],
+    components: buildRestoreConfirmComponents(token),
+  });
+}
+
+async function handleRestoreExec(interaction, token) {
+  if (await _denyNotStaff(interaction)) return;
+  await interaction.deferUpdate();
+  try {
+    const downloadUrl = getRestoreUrl(token);
+    if (!downloadUrl) {
+      await interaction.editReply({ content: "❌ Token restore sudah kadaluarsa atau tidak valid. Pilih backup lagi dari daftar.", components: [] });
+      return;
+    }
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xfee75c)
+          .setTitle("⏳ Restore Sedang Berjalan...")
+          .setDescription("📥 Mengunduh backup dari GitHub...\n⏳ Harap tunggu, bot akan restart otomatis setelah restore selesai.")
+          .setFooter({ text: "Pangeran Assistant AI • Restore" })
+          .setTimestamp(),
+      ],
+      components: [],
+    });
+    const result = await restoreFromGitHubRelease(downloadUrl);
+    consoleLog("restore", "♻ Restore", `${result.restored} file dipulihkan. Bot akan restart...`).catch(() => {});
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle("✅ Restore Selesai")
+          .setDescription(`**${result.restored} file** berhasil dipulihkan.\n\n⏳ Bot akan restart dalam 3 detik...`)
+          .setFooter({ text: "Pangeran Assistant AI • Restore" })
+          .setTimestamp(),
+      ],
+      components: [],
+    });
+  } catch (err) {
+    logger.error(`[Database] Restore gagal: ${err.message}`);
+    await interaction.editReply({ content: `❌ Restore gagal: ${err.message.slice(0, 300)}` });
+  }
+}
+
+async function handleRestoreCancel(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const releases = await listGitHubReleases();
+    await interaction.editReply({
+      embeds:     [buildRestoreListEmbed(releases)],
+      components: buildRestoreListComponents(releases),
+    });
+  } catch {
+    await interaction.editReply({ content: "❌ Restore dibatalkan." });
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: JADWAL BACKUP
+// ════════════════════════════════════════════════════════════════════════════
+
+async function handleScheduleMenu(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const setup  = databaseDB.get();
+  const nextAt = getNextBackupAt(setup);
+  await interaction.reply({
+    ephemeral:  true,
+    embeds:     [buildScheduleEmbed(setup, nextAt)],
+    components: buildScheduleComponents(setup.backupSchedule),
+  });
+}
+
+async function handleScheduleSetById(interaction, scheduleId) {
+  if (await _denyNotStaff(interaction)) return;
+  const value = scheduleId === "off" ? null : scheduleId;
+  databaseDB.updateSettings({ backupSchedule: value });
+  const setup  = databaseDB.get();
+  consoleLog("db_setting", "📅 Jadwal Backup", value ? (SCHEDULE_LABELS[value] ?? value) : "Dinonaktifkan").catch(() => {});
+  await _refreshBackupPanel(interaction.client);
+  const nextAt = getNextBackupAt(setup);
+  await interaction.update({
+    embeds:     [buildScheduleEmbed(setup, nextAt)],
+    components: buildScheduleComponents(setup.backupSchedule),
+  });
+}
+
+async function handleScheduleBack(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  await _refreshBackupPanel(interaction.client);
+  await interaction.editReply({ content: "🔄 Panel Backup diperbarui." });
+}
+
+async function handleGitHubPanelFromBackup(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const setup = databaseDB.get();
+  await interaction.reply({
+    ephemeral:  true,
+    embeds:     [buildGitHubManagerEmbed(setup)],
+    components: buildGitHubManagerComponents(setup),
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1386,7 +1524,8 @@ export async function refreshPanelsOnStartup(client, guild) {
       const ch  = await client.channels.fetch(setup.channels.backup).catch(() => null);
       const msg = ch ? await ch.messages.fetch(setup.messages.backup).catch(() => null) : null;
       if (msg) {
-        await msg.edit({ embeds: [buildBackupPanelEmbed()], components: buildBackupPanelComponents() });
+        const storage = getStorageStats();
+        await msg.edit({ embeds: [buildBackupPanelEmbed(client, setup, { getNextBackupAt, SCHEDULE_LABELS, formatScheduleTime }, storage)], components: buildBackupPanelComponents(setup) });
         logger.info("[Database] Panel Backup diperbarui.");
       }
     } catch (e) {
@@ -1427,6 +1566,12 @@ export async function handleDatabaseInteraction(interaction) {
     // ── ChannelSelectMenu ──────────────────────────────────────────────────
     if (interaction.isChannelSelectMenu()) {
       if (id === "db:select:category") return await handleCategorySelect(interaction);
+      return;
+    }
+
+    // ── StringSelectMenu ───────────────────────────────────────────────────
+    if (interaction.isStringSelectMenu()) {
+      if (id === "db:restore:select") return await handleRestoreSelect(interaction);
       return;
     }
 
@@ -1473,10 +1618,21 @@ export async function handleDatabaseInteraction(interaction) {
     if (id === "db:panel:backup:smartclean") return await handleSmartCleanScan(interaction);
     if (id === "db:panel:backup:storage")    return await handleStorageInfo(interaction);
     if (id === "db:panel:backup:refresh")    return await handleBackupRefresh(interaction);
+    if (id === "db:panel:backup:restore")    return await handleRestoreList(interaction);
+    if (id === "db:panel:backup:github")     return await handleGitHubPanelFromBackup(interaction);
+    if (id === "db:panel:backup:schedule")   return await handleScheduleMenu(interaction);
     if (id.startsWith("db:panel:backup:download:"))
       return await handleBackupDownload(interaction, id.slice("db:panel:backup:download:".length));
     if (id.startsWith("db:panel:backup:upload:"))
       return await handleBackupUpload(interaction, id.slice("db:panel:backup:upload:".length));
+
+    // Restore
+    if (id === "db:restore:cancel")          return await handleRestoreCancel(interaction);
+    if (id.startsWith("db:restore:exec:"))   return await handleRestoreExec(interaction, id.slice("db:restore:exec:".length));
+
+    // Schedule
+    if (id === "db:schedule:back")           return await handleScheduleBack(interaction);
+    if (id.startsWith("db:schedule:set:"))   return await handleScheduleSetById(interaction, id.slice("db:schedule:set:".length));
 
     // Smart Clean
     if (id === "db:panel:clean:detail")     return await handleCleanDetail(interaction);

@@ -863,11 +863,207 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
     return result;
   } catch (kaizenErr) {
     if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
-    logger.warn(`[ytmp3gg] Provider: Kaizen API | Status: FAILED | Reason: ${kaizenErr.message} | Action: Seluruh provider habis, BoomBox Failed`);
+    logger.warn(`[ytmp3gg] Provider: Kaizen API | Status: FAILED | Reason: ${kaizenErr.message} | Action: Switch → Piped`);
     providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: kaizenErr.message.toLowerCase().includes("timeout") });
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    throw lastError;
   }
+
+  // ── Backup API 3: Piped (public YouTube frontend API) ─────────────────────
+  // Resolves audio stream URLs without bot detection by using Piped public instances.
+  // The resolved URL is then downloaded directly via yt-dlp to handle format conversion.
+  if (!signal?.aborted) {
+    const pipedTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-piped-"));
+    try {
+      await onProgress?.("Trying Piped API...");
+      logger.info(`[ytmp3gg] Provider: Piped | Status: Trying`);
+      const result = await _pipedFallback(input, type, quality, pipedTmpDir, onProgress, signal);
+      logger.info(`[ytmp3gg] Provider: Piped | Status: SUCCESS | Fallback: YES`);
+      return result;
+    } catch (pipedErr) {
+      if (_isAborted(pipedErr, signal)) { try { fs.rmSync(pipedTmpDir, { recursive: true, force: true }); } catch {} const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae; }
+      logger.warn(`[ytmp3gg] Provider: Piped | Status: FAILED | Reason: ${pipedErr.message} | Action: Switch → Invidious`);
+      try { fs.rmSync(pipedTmpDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  // ── Backup API 4: Invidious (public YouTube alternative API) ──────────────
+  // Another independent implementation that bypasses the main YouTube API entirely.
+  if (!signal?.aborted) {
+    const invTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-inv-"));
+    try {
+      await onProgress?.("Trying Invidious API...");
+      logger.info(`[ytmp3gg] Provider: Invidious | Status: Trying`);
+      const result = await _invidiousFallback(input, type, quality, invTmpDir, onProgress, signal);
+      logger.info(`[ytmp3gg] Provider: Invidious | Status: SUCCESS | Fallback: YES`);
+      return result;
+    } catch (invErr) {
+      if (_isAborted(invErr, signal)) { try { fs.rmSync(invTmpDir, { recursive: true, force: true }); } catch {} const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae; }
+      logger.warn(`[ytmp3gg] Provider: Invidious | Status: FAILED | Reason: ${invErr.message} | Action: Seluruh provider habis, BoomBox Failed`);
+      try { fs.rmSync(invTmpDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  throw lastError;
+}
+
+// ── Piped API fallback ────────────────────────────────────────────────────────
+// Fetches the audio stream URL from public Piped instances (piped.video / kavin.rocks)
+// and downloads with yt-dlp using the resolved URL, bypassing YouTube bot detection.
+
+const PIPED_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://piped-api.garudalinux.org",
+  "https://pipedapi.in",
+];
+
+function _extractYouTubeId(url) {
+  const m = String(url).match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return m?.[1] ?? null;
+}
+
+async function _pipedFallback(input, type, quality, tmpDir, onProgress, signal) {
+  const videoId = _extractYouTubeId(input);
+  if (!videoId) throw new Error("Piped: could not extract YouTube video ID");
+
+  let audioUrl = null;
+  let videoTitle = null;
+
+  for (const instance of PIPED_INSTANCES) {
+    if (signal?.aborted) break;
+    try {
+      const res = await _withTimeout(
+        fetch(`${instance}/streams/${videoId}`, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; BoomBox/1.0)" },
+          signal,
+        }),
+        12_000,
+        "Piped API request timed out",
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      videoTitle = data.title ?? null;
+      const streams = (data.audioStreams ?? [])
+        .filter(s => s.mimeType && (s.mimeType.includes("audio") || s.mimeType.includes("mp4a")))
+        .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+      if (streams[0]?.url) { audioUrl = streams[0].url; break; }
+    } catch (e) {
+      logger.warn(`[ytmp3gg] Piped instance ${instance} failed: ${e.message}`);
+    }
+  }
+
+  if (!audioUrl) throw new Error("Piped: no audio stream URL found on any instance");
+
+  // Download the resolved stream URL directly with yt-dlp
+  const audioFmt = type === "mp4" ? "m4a" : "mp3";
+  const audioQ   = type === "mp3" ? `${quality}K` : "0";
+  const outTpl   = path.join(tmpDir, `audio.%(ext)s`);
+
+  const args = [
+    "--ffmpeg-location", FFMPEG_PATH,
+    "--no-playlist",
+    "--extract-audio",
+    "--audio-format",  audioFmt,
+    "--audio-quality", audioQ,
+    "--no-warnings",
+    "--no-simulate",
+    "-o", outTpl,
+    audioUrl,
+  ];
+
+  const { stdout } = await execFileAsync(BIN_PATH, args, {
+    timeout:   120_000,
+    maxBuffer: 1 * 1024 * 1024,
+  });
+
+  const files = fs.readdirSync(tmpDir).filter(f => /^audio\./.test(f));
+  if (files.length === 0) throw new Error("Piped: no output file produced by yt-dlp");
+
+  return {
+    localFile: path.join(tmpDir, files[0]),
+    tmpDir,
+    title:    videoTitle,
+    thumbnail: null,
+    uploader:  "Piped",
+    duration:  null,
+    type,
+    quality,
+  };
+}
+
+// ── Invidious API fallback ────────────────────────────────────────────────────
+// Fetches audio stream URLs from public Invidious instances.
+
+const INVIDIOUS_INSTANCES = [
+  "https://inv.nadeko.net",
+  "https://invidious.snopyta.org",
+  "https://vid.puffyan.us",
+  "https://invidious.tiekoetter.com",
+];
+
+async function _invidiousFallback(input, type, quality, tmpDir, onProgress, signal) {
+  const videoId = _extractYouTubeId(input);
+  if (!videoId) throw new Error("Invidious: could not extract YouTube video ID");
+
+  let audioUrl = null;
+
+  for (const instance of INVIDIOUS_INSTANCES) {
+    if (signal?.aborted) break;
+    try {
+      const res = await _withTimeout(
+        fetch(`${instance}/api/v1/videos/${videoId}?fields=adaptiveFormats,title`, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; BoomBox/1.0)" },
+          signal,
+        }),
+        12_000,
+        "Invidious API request timed out",
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const formats = (data.adaptiveFormats ?? [])
+        .filter(f => (f.type ?? "").includes("audio"))
+        .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+      if (formats[0]?.url) { audioUrl = formats[0].url; break; }
+    } catch (e) {
+      logger.warn(`[ytmp3gg] Invidious instance ${instance} failed: ${e.message}`);
+    }
+  }
+
+  if (!audioUrl) throw new Error("Invidious: no audio stream URL found on any instance");
+
+  const audioFmt = type === "mp4" ? "m4a" : "mp3";
+  const audioQ   = type === "mp3" ? `${quality}K` : "0";
+  const outTpl   = path.join(tmpDir, `audio.%(ext)s`);
+
+  const args = [
+    "--ffmpeg-location", FFMPEG_PATH,
+    "--no-playlist",
+    "--extract-audio",
+    "--audio-format",  audioFmt,
+    "--audio-quality", audioQ,
+    "--no-warnings",
+    "--no-simulate",
+    "-o", outTpl,
+    audioUrl,
+  ];
+
+  const { stdout } = await execFileAsync(BIN_PATH, args, {
+    timeout:   120_000,
+    maxBuffer: 1 * 1024 * 1024,
+  });
+
+  const files = fs.readdirSync(tmpDir).filter(f => /^audio\./.test(f));
+  if (files.length === 0) throw new Error("Invidious: no output file produced by yt-dlp");
+
+  return {
+    localFile: path.join(tmpDir, files[0]),
+    tmpDir,
+    title:    null,
+    thumbnail: null,
+    uploader:  "Invidious",
+    duration:  null,
+    type,
+    quality,
+  };
 }
 
 // ── TikTok multi-method fallback ──────────────────────────────────────────────
