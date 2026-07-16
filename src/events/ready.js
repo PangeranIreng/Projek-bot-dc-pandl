@@ -13,7 +13,8 @@ import { updateTicketDashboard }      from "../features/ticket/dashboard.js";
 import { ticketDB }           from "../database/ticketDB.js";
 import { IDS }                from "../../config/constants.js";
 import { initBinary }         from "../services/ytmp3gg.js";
-import { initConsole, consoleLog } from "../features/database/console.js";
+import { initConsole, consoleLog }  from "../features/database/console.js";
+import { refreshPanelsOnStartup }   from "../features/database/interaction.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -53,6 +54,15 @@ export async function handleReady(client, secrets, state) {
   }
 
   startPremiumSweep(client);
+
+  // Refresh panel Database yang sudah ada (edit in-place, tidak buat baru).
+  // Harus dipanggil setelah bot online agar client.guilds.cache tersedia.
+  const guild = client.guilds.cache.get(IDS.GUILD_ID);
+  if (guild) {
+    refreshPanelsOnStartup(client, guild).catch((err) => {
+      logger.warn(`[Database] Startup panel refresh gagal (non-fatal): ${err?.message}`);
+    });
+  }
 
   updatePremStatsDashboard(client).catch((err) => {
     logger.warn("PremStats dashboard init failed on startup:", err?.message);

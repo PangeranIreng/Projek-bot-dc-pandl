@@ -172,7 +172,43 @@ async function _validateGitHub(repo, branch, token) {
  * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
  */
 function _effectiveToken(setup) {
-  return process.env.GITHUB_TOKEN || setup.github?.token || null;
+  // Prioritas 1: token dari panel Discord (Edit Kredensial)
+  // Prioritas 2: fallback ke environment variable
+  return setup.github?.token || process.env.GITHUB_TOKEN || null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MODAL INPUT VALIDATOR
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Bersihkan dan potong nilai untuk TextInputBuilder agar tidak pernah
+ * melempar "Invalid string length" ke Discord.
+ *
+ * Discord limits:
+ *   label       — 1–45 chars  (required)
+ *   placeholder — 1–100 chars (optional)
+ *   value       — 0–maxLength chars (mengikuti setMaxLength yang dipasang)
+ *
+ * @param {object} opts
+ * @param {string}        opts.label        Label wajib diisi
+ * @param {string}        [opts.defaultLabel] Fallback jika label kosong setelah trim
+ * @param {string|null}   [opts.placeholder]
+ * @param {string|null}   [opts.value]
+ * @param {number}        [opts.maxValueLength=4000] Maks panjang value
+ * @returns {{ label: string, placeholder: string|null, value: string|null }}
+ */
+function validateModalInput({
+  label,
+  defaultLabel = "Input",
+  placeholder  = null,
+  value        = null,
+  maxValueLength = 4000,
+}) {
+  const safeLabel = (String(label ?? "").trim() || defaultLabel).slice(0, 45);
+  const safePh    = placeholder != null ? String(placeholder).trim().slice(0, 100) || null : null;
+  const safeVal   = value       != null ? String(value).slice(0, maxValueLength) : null;
+  return { label: safeLabel, placeholder: safePh, value: safeVal };
 }
 
 // ── In-memory session stores ──────────────────────────────────────────────────
@@ -224,21 +260,45 @@ async function _createChannels(guild, categoryId) {
     { key: "memberList", name: "member-list" },
   ];
 
+  // Ambil ID yang sudah tersimpan di DB (hasil setup sebelumnya).
+  const stored = databaseDB.get().channels;
+
+  // Refresh cache channel guild agar pencarian berdasarkan nama akurat.
+  await guild.channels.fetch().catch(() => {});
+
   const ids = {};
   for (const def of defs) {
-    const existing = guild.channels.cache.find(
+    // ── Prioritas 1: Gunakan ID tersimpan jika channel masih ada ─────────────
+    const storedId = stored[def.key];
+    if (storedId) {
+      const ch = guild.channels.cache.get(storedId)
+        ?? await guild.client.channels.fetch(storedId).catch(() => null);
+      if (ch?.isTextBased()) {
+        ids[def.key] = ch.id;
+        // Pindahkan ke kategori yang dipilih jika berbeda (edit setup)
+        if (ch.parentId !== categoryId) {
+          await ch.setParent(categoryId, { reason: "Edit Setup Database" }).catch(() => {});
+        }
+        continue;
+      }
+    }
+
+    // ── Prioritas 2: Cari berdasarkan nama di dalam kategori tujuan ───────────
+    const byName = guild.channels.cache.find(
       (ch) => ch.parentId === categoryId && ch.name === def.name && ch.isTextBased(),
     );
-    if (existing) {
-      ids[def.key] = existing.id;
-    } else {
-      const ch = await guild.channels.create({
-        name:   def.name,
-        type:   ChannelType.GuildText,
-        parent: categoryId,
-      });
-      ids[def.key] = ch.id;
+    if (byName) {
+      ids[def.key] = byName.id;
+      continue;
     }
+
+    // ── Prioritas 3: Buat channel baru hanya jika tidak ditemukan ─────────────
+    const newCh = await guild.channels.create({
+      name:   def.name,
+      type:   ChannelType.GuildText,
+      parent: categoryId,
+    });
+    ids[def.key] = newCh.id;
   }
   return ids;
 }
@@ -561,19 +621,51 @@ async function handleManageResetConfirm(interaction) {
   if (await _denyNotStaff(interaction)) return;
   await interaction.deferUpdate();
 
-  // Hapus panel Discord (bukan channel)
-  await _deleteOldPanels(interaction.client);
+  const setup  = databaseDB.get();
+  const guild  = interaction.guild;
+  const client = interaction.client;
 
-  // Reset konfigurasi
+  // 1. Hapus pesan panel (bot-setting, backup, member-list)
+  await _deleteOldPanels(client);
+
+  // 2. Hapus channel DATABASE (bot-setting, backup, console, member-list)
+  const DB_CHANNEL_KEYS = ["botSetting", "backup", "console", "memberList"];
+  for (const key of DB_CHANNEL_KEYS) {
+    const chId = setup.channels[key];
+    if (!chId) continue;
+    try {
+      const ch = await client.channels.fetch(chId).catch(() => null);
+      if (ch) await ch.delete("Hapus Setup Database").catch(() => {});
+    } catch { /* abaikan jika sudah tidak ada */ }
+  }
+
+  // 3. Hapus kategori jika sekarang sudah kosong
+  if (setup.categoryId) {
+    try {
+      const category = await client.channels.fetch(setup.categoryId).catch(() => null);
+      if (category) {
+        // Ambil ulang daftar channel di dalam kategori setelah penghapusan di atas
+        await guild.channels.fetch().catch(() => {});
+        const remaining = guild.channels.cache.filter(
+          (ch) => ch.parentId === setup.categoryId,
+        );
+        if (remaining.size === 0) {
+          await category.delete("Hapus Setup Database — kategori kosong").catch(() => {});
+        }
+      }
+    } catch { /* abaikan */ }
+  }
+
+  // 4. Reset konfigurasi DB
   databaseDB.reset();
 
-  consoleLog("db_reset", "🗑 Reset Setup", `Dilakukan oleh ${interaction.user.username}`).catch(() => {});
+  consoleLog("db_reset", "🗑 Hapus Setup", `Dilakukan oleh ${interaction.user.username}`).catch(() => {});
 
   await interaction.editReply({
     embeds: [
       new EmbedBuilder()
         .setColor(0xed4245)
-        .setTitle("🗑 Setup Direset")
+        .setTitle("🗑 Setup Dihapus")
         .setDescription(
           "✅ Konfigurasi setup Database berhasil dihapus.\n\n" +
           "📌 Status: 🔴 Belum Setup\n\n" +
@@ -612,6 +704,10 @@ async function handleManageGitHubEdit(interaction) {
   // hanya beri placeholder jika sudah ada token.
   const tokenHint  = _effectiveToken(setup) ? "Token sudah dikonfigurasi — isi ulang untuk mengganti" : "";
 
+  const repoInput    = validateModalInput({ label: "Repository (format: owner/repo)", placeholder: "Contoh: PangeranIreng/Discord-Bot-Helper", value: curRepo,    maxValueLength: 100 });
+  const branchInput  = validateModalInput({ label: "Branch",                          placeholder: "Contoh: main",                                 value: curBranch,  maxValueLength: 100 });
+  const tokenInput_  = validateModalInput({ label: "Token GitHub (kosong = tdk ubah)",placeholder: tokenHint || "ghp_xxxxxxxxxxxxxxxxxxxx",         value: null,       maxValueLength: 200 });
+
   const modal = new ModalBuilder()
     .setCustomId("db:modal:github")
     .setTitle("🔑 Kredensial GitHub")
@@ -619,31 +715,31 @@ async function handleManageGitHubEdit(interaction) {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_repo")
-          .setLabel("Repository (format: owner/repo)")
+          .setLabel(repoInput.label)
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(100)
-          .setPlaceholder("Contoh: PangeranIreng/Discord-Bot-Helper")
-          .setValue(curRepo),
+          .setPlaceholder(repoInput.placeholder ?? "owner/repo")
+          .setValue(repoInput.value ?? ""),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_branch")
-          .setLabel("Branch")
+          .setLabel(branchInput.label)
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(100)
-          .setPlaceholder("Contoh: main")
-          .setValue(curBranch),
+          .setPlaceholder(branchInput.placeholder ?? "main")
+          .setValue(branchInput.value ?? ""),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_token")
-          .setLabel("Personal Access Token (kosongkan jika tidak ubah)")
+          .setLabel(tokenInput_.label)
           .setStyle(TextInputStyle.Short)
           .setRequired(false)
           .setMaxLength(200)
-          .setPlaceholder(tokenHint || "ghp_xxxxxxxxxxxxxxxxxxxx"),
+          .setPlaceholder(tokenInput_.placeholder ?? "ghp_xxxxxxxxxxxxxxxxxxxx"),
       ),
     );
 
@@ -754,6 +850,10 @@ async function handleSettingEdit(interaction) {
   const curBranch  = setup.github?.branch || "main";
   const tokenHint  = _effectiveToken(setup) ? "Token sudah dikonfigurasi — isi ulang untuk mengganti" : "";
 
+  const repoInput2   = validateModalInput({ label: "Repository (format: owner/repo)", placeholder: "Contoh: PangeranIreng/Discord-Bot-Helper", value: curRepo,   maxValueLength: 100 });
+  const branchInput2 = validateModalInput({ label: "Branch",                          placeholder: "Contoh: main",                                 value: curBranch, maxValueLength: 100 });
+  const tokenInput2  = validateModalInput({ label: "Token GitHub (kosong = tdk ubah)",placeholder: tokenHint || "ghp_xxxxxxxxxxxxxxxxxxxx",         value: null,      maxValueLength: 200 });
+
   const modal = new ModalBuilder()
     .setCustomId("db:modal:setting")
     .setTitle("🔑 Edit Kredensial GitHub")
@@ -761,31 +861,31 @@ async function handleSettingEdit(interaction) {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_repo")
-          .setLabel("Repository (format: owner/repo)")
+          .setLabel(repoInput2.label)
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(100)
-          .setPlaceholder("Contoh: PangeranIreng/Discord-Bot-Helper")
-          .setValue(curRepo),
+          .setPlaceholder(repoInput2.placeholder ?? "owner/repo")
+          .setValue(repoInput2.value ?? ""),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_branch")
-          .setLabel("Branch")
+          .setLabel(branchInput2.label)
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(100)
-          .setPlaceholder("Contoh: main")
-          .setValue(curBranch),
+          .setPlaceholder(branchInput2.placeholder ?? "main")
+          .setValue(branchInput2.value ?? ""),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_token")
-          .setLabel("Personal Access Token (kosongkan jika tidak ubah)")
+          .setLabel(tokenInput2.label)
           .setStyle(TextInputStyle.Short)
           .setRequired(false)
           .setMaxLength(200)
-          .setPlaceholder(tokenHint || "ghp_xxxxxxxxxxxxxxxxxxxx"),
+          .setPlaceholder(tokenInput2.placeholder ?? "ghp_xxxxxxxxxxxxxxxxxxxx"),
       ),
     );
 
@@ -1237,6 +1337,68 @@ async function handleMemberRefresh(interaction) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// STARTUP — refresh panel tanpa membuat panel baru
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Dipanggil saat bot online (ready.js).
+ * Jika setup sudah ada: edit pesan panel yang ada (bukan kirim baru).
+ * Jika pesan panel sudah tidak ada di Discord, lewati — tidak buat baru.
+ *
+ * @param {import("discord.js").Client} client
+ * @param {import("discord.js").Guild}  guild
+ */
+export async function refreshPanelsOnStartup(client, guild) {
+  const setup = databaseDB.get();
+  if (!databaseDB.isSetup()) return; // belum setup — tidak ada yang perlu di-refresh
+
+  logger.info("[Database] Setup sudah ada — refresh panel tanpa membuat baru.");
+
+  // Bot Setting
+  if (setup.channels.botSetting && setup.messages.botSetting) {
+    try {
+      const ch  = await client.channels.fetch(setup.channels.botSetting).catch(() => null);
+      const msg = ch ? await ch.messages.fetch(setup.messages.botSetting).catch(() => null) : null;
+      if (msg) {
+        await msg.edit({ embeds: [buildBotSettingEmbed(client, setup)], components: buildBotSettingComponents(setup) });
+        logger.info("[Database] Panel Bot Setting diperbarui.");
+      }
+    } catch (e) {
+      logger.warn(`[Database] Gagal refresh Bot Setting on startup: ${e.message}`);
+    }
+  }
+
+  // Backup
+  if (setup.channels.backup && setup.messages.backup) {
+    try {
+      const ch  = await client.channels.fetch(setup.channels.backup).catch(() => null);
+      const msg = ch ? await ch.messages.fetch(setup.messages.backup).catch(() => null) : null;
+      if (msg) {
+        await msg.edit({ embeds: [buildBackupPanelEmbed()], components: buildBackupPanelComponents() });
+        logger.info("[Database] Panel Backup diperbarui.");
+      }
+    } catch (e) {
+      logger.warn(`[Database] Gagal refresh Backup on startup: ${e.message}`);
+    }
+  }
+
+  // Member List
+  if (setup.channels.memberList && setup.messages.memberList) {
+    try {
+      const stats = await getMemberStats(guild, premDB);
+      const ch    = await client.channels.fetch(setup.channels.memberList).catch(() => null);
+      const msg   = ch ? await ch.messages.fetch(setup.messages.memberList).catch(() => null) : null;
+      if (msg) {
+        await msg.edit({ embeds: [buildMemberListEmbed(stats)], components: buildMemberListComponents() });
+        logger.info("[Database] Panel Member List diperbarui.");
+      }
+    } catch (e) {
+      logger.warn(`[Database] Gagal refresh Member List on startup: ${e.message}`);
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // MAIN DISPATCHER
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1277,17 +1439,22 @@ export async function handleDatabaseInteraction(interaction) {
     if (id === "db:setup:wizard:create")   return await handleSetupWizardCreate(interaction);
 
     // Manage
-    if (id === "db:manage:edit")           return await handleManageEdit(interaction);
-    if (id === "db:manage:repair")         return await handleManageRepair(interaction);
-    if (id === "db:manage:reset")          return await handleManageReset(interaction);
-    if (id === "db:manage:reset:confirm")  return await handleManageResetConfirm(interaction);
-    if (id === "db:manage:reset:cancel")   return await handleManageResetCancel(interaction);
-    if (id === "db:manage:github")         return await handleManageGitHub(interaction);
-    if (id === "db:manage:github:edit")    return await handleManageGitHubEdit(interaction);
+    if (id === "db:manage:edit")                  return await handleManageEdit(interaction);
+    if (id === "db:manage:repair")                return await handleManageRepair(interaction);
+    if (id === "db:manage:reset")                 return await handleManageReset(interaction);
+    if (id === "db:manage:reset:confirm")         return await handleManageResetConfirm(interaction);
+    if (id === "db:manage:reset:cancel")          return await handleManageResetCancel(interaction);
+    if (id === "db:manage:github")                return await handleManageGitHub(interaction);
+    if (id === "db:manage:github:edit")           return await handleManageGitHubEdit(interaction);
+    if (id === "db:manage:github:backup:toggle")  return await handleManageGitHubBackupToggle(interaction);
+    if (id === "db:manage:github:clean:toggle")   return await handleManageGitHubCleanToggle(interaction);
+    if (id === "db:manage:github:back")           return await handleManageGitHubBack(interaction);
 
     // Bot Setting
-    if (id === "db:panel:setting:edit")    return await handleSettingEdit(interaction);
-    if (id === "db:panel:setting:refresh") return await handleSettingRefresh(interaction);
+    if (id === "db:panel:setting:edit")           return await handleSettingEdit(interaction);
+    if (id === "db:panel:setting:refresh")        return await handleSettingRefresh(interaction);
+    if (id === "db:panel:setting:backup:toggle")  return await handleSettingBackupToggle(interaction);
+    if (id === "db:panel:setting:clean:toggle")   return await handleSettingCleanToggle(interaction);
 
     // Backup
     if (id === "db:panel:backup:backup")     return await handleBackupCreate(interaction);

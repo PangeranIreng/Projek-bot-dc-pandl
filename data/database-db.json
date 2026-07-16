@@ -1,25 +1,25 @@
 {
   "guildId": "1462696202842931327",
   "createdBy": "1462685321262272664",
-  "createdAt": "2026-07-16T06:42:43.319Z",
+  "createdAt": "2026-07-16T10:09:12.404Z",
   "categoryId": "1524813683325145139",
   "categoryName": "❯ ❯ ❯────・📊 DATABASE・──────➤",
   "channels": {
-    "botSetting": "1527203793933172739",
-    "backup": "1527203807589830676",
-    "console": "1527203810630565968",
-    "memberList": "1527203812765339670"
+    "botSetting": "1527249286402801705",
+    "backup": "1527249288449495050",
+    "console": "1527249290064302142",
+    "memberList": "1527249292195270696"
   },
   "messages": {
-    "botSetting": "1527238073522454591",
-    "backup": "1527238077725147218",
-    "memberList": "1527203819807576075"
+    "botSetting": "1527255778501726309",
+    "backup": "1527255780343152641",
+    "memberList": "1527255783270780961"
   },
   "github": {
-    "repo": null,
+    "repo": "PangeranIreng/Projek-bot-dc-pandl",
     "branch": "main",
-    "token": null
+    "token": "isi token github "
   },
-  "autoBackup": false,
-  "autoClean": false
+  "autoBackup": true,
+  "autoClean": true
 }

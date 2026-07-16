@@ -1,0 +1,436 @@
+Perbaiki seluruh sistem Database, Backup, Restore, Storage, GitHub Backup, Smart Clean, dan BoomBox tanpa menghapus fitur yang sudah ada.
+
+========================
+1. PERBAIKI ERROR STORAGE
+========================
+
+Error:
+
+ReferenceError: formatBytes is not defined
+
+Pastikan formatBytes() tersedia dan diimport sebelum dipakai.
+
+Contoh:
+
+function formatBytes(bytes){
+ if(!bytes||bytes<=0)return "0 B";
+ const units=["B","KB","MB","GB","TB"];
+ const i=Math.floor(Math.log(bytes)/Math.log(1024));
+ return (bytes/Math.pow(1024,i)).toFixed(2)+" "+units[i];
+}
+
+Hilangkan error tersebut sepenuhnya.
+
+========================
+2. PANEL DATABASE BARU
+========================
+
+Buat panel jauh lebih profesional.
+
+Embed berisi:
+
+🤖 Bot
+📦 Versi
+🟢 Status
+⏱ Uptime
+
+━━━━━━━━━━━━━━━━━━
+
+🗄 DATABASE
+
+📂 Database
+📂 Source
+📂 Config
+📂 Assets
+📂 Logs
+📂 Session
+
+━━━━━━━━━━━━━━━━━━
+
+☁ GitHub Backup
+
+Repository
+Token
+
+━━━━━━━━━━━━━━━━━━
+
+🔄 Auto Backup
+
+Status
+Jadwal
+Backup Terakhir
+Jumlah Backup
+
+━━━━━━━━━━━━━━━━━━
+
+🧹 Smart Clean
+
+Status
+Cache
+Temp
+Logs Lama
+Backup Lama
+
+━━━━━━━━━━━━━━━━━━
+
+📊 Storage
+
+Database
+Cache
+Temp
+Logs
+Assets
+Backup
+Source
+
+Total
+
+Sisa Disk
+
+━━━━━━━━━━━━━━━━━━
+
+Gunakan tombol
+
+🔑 Edit GitHub
+💾 Backup
+♻ Restore
+🧹 Smart Clean
+📊 Storage
+⚙ Jadwal Backup
+🔄 Refresh
+
+========================
+3. BACKUP
+========================
+
+Backup harus mencakup:
+
+src/
+config/
+scripts/
+data/
+storage/
+attached_assets/
+logs/
+package.json
+pnpm-lock.yaml
+package-lock.json
+.env.example
+.replit
+
+JANGAN backup
+
+node_modules
+.cache
+temp
+tmp
+*.log lama
+*.tmp
+
+Backup dibuat zip.
+
+========================
+4. RESTORE
+========================
+
+Tambah tombol
+
+♻ Restore
+
+Saat ditekan tampil daftar backup GitHub Release.
+
+Misal
+
+Backup 16 Juli 2026
+Backup 15 Juli 2026
+Backup 14 Juli 2026
+
+Klik salah satu
+
+Bot download otomatis
+
+Extract
+
+Overwrite
+
+Restart otomatis.
+
+Tidak perlu upload manual.
+
+========================
+5. AUTO BACKUP
+========================
+
+Tambahkan scheduler.
+
+Pilihan:
+
+Setiap 6 jam
+
+Setiap 12 jam
+
+Setiap Hari
+
+Setiap Minggu
+
+Custom Cron
+
+Panel menampilkan
+
+Status
+
+Jadwal
+
+Backup berikutnya
+
+Backup terakhir
+
+========================
+6. SMART CLEAN
+========================
+
+Saat dijalankan hanya hapus
+
+cache
+
+temp
+
+tmp
+
+backup lokal lama
+
+logs lama (>7 hari)
+
+file kosong
+
+folder kosong
+
+JANGAN pernah menghapus
+
+database
+
+config
+
+assets
+
+storage
+
+session
+
+plugins
+
+source code
+
+package.json
+
+========================
+7. GITHUB BACKUP
+========================
+
+Backup tetap upload ke GitHub Releases.
+
+Tambahkan opsi
+
+Mode Upload
+
+○ Release (default)
+
+○ Branch Backup
+
+Jika Branch Backup dipilih
+
+otomatis buat folder
+
+/backups/
+
+dan upload zip ke
+
+backups/
+
+sehingga seluruh riwayat backup terlihat di repository tanpa manual.
+
+========================
+8. STORAGE
+========================
+
+Storage harus menampilkan ukuran folder secara real.
+
+Database
+
+Source
+
+Config
+
+Assets
+
+Logs
+
+Cache
+
+Temp
+
+Backup
+
+Session
+
+Plugins
+
+Total
+
+Disk
+
+Sisa Disk
+
+Tanpa error.
+
+========================
+9. BOOMBOX
+========================
+
+Perbaiki total.
+
+Saat ini YouTube selalu
+
+Anti Bot Detection
+
+Jangan berhenti di error tersebut.
+
+Jika metode pertama gagal
+
+otomatis coba metode kedua
+
+lalu ketiga
+
+lalu keempat
+
+sampai berhasil.
+
+Urutan:
+
+yt-dlp
+
+ytdl-core
+
+youtubei
+
+piped
+
+invidious
+
+proxy
+
+mirror
+
+Jika salah satu berhasil
+
+langsung lanjut convert.
+
+========================
+10. BOOMBOX ERROR
+========================
+
+Sekarang
+
+URL BoomBox berhasil dibuat
+
+tetapi malah dihapus
+
+lalu muncul Error.
+
+Perbaiki.
+
+Jika BoomBox sudah berhasil dibuat
+
+JANGAN HAPUS.
+
+Jangan kirim Error.
+
+Error hanya muncul jika seluruh metode gagal.
+
+========================
+11. ERROR LOG
+========================
+
+Jangan spam Error Log.
+
+Gabungkan error yang sama.
+
+Tambahkan
+
+Feature
+
+Stage
+
+Reason
+
+Suggestion
+
+Stack
+
+Timestamp
+
+========================
+12. BACKUP DATABASE
+========================
+
+Backup harus menyimpan seluruh data bot:
+
+Premium permanen
+
+Premium sementara
+
+Limit user
+
+BoomBox
+
+Semua setting
+
+Semua config
+
+Seluruh database
+
+Semua assets
+
+Session
+
+Plugin
+
+Log penting
+
+Source code
+
+Package
+
+Script
+
+Agar jika bot dipindah server cukup klik Restore lalu semua kembali seperti semula.
+
+========================
+13. TAMPILAN
+========================
+
+Semua embed dibuat modern.
+
+Hijau = sukses
+
+Merah = gagal
+
+Biru = informasi
+
+Kuning = peringatan
+
+Tambahkan progress saat Backup, Restore, Upload GitHub, Smart Clean.
+
+========================
+14. JANGAN MERUSAK
+========================
+
+Jangan menghapus fitur yang sudah ada.
+
+Jangan mengubah command.
+
+Jangan mengubah database.
+
+Jangan mengubah struktur bot.
+
+Hanya memperbaiki bug, menambah fitur di atas, dan memastikan seluruh sistem tetap kompatibel dengan project sekarang.

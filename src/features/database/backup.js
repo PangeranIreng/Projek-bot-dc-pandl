@@ -20,7 +20,8 @@ import path    from "node:path";
 import os      from "node:os";
 import AdmZip  from "adm-zip";
 import { fileURLToPath } from "node:url";
-import { logger } from "../../utils/logger.js";
+import { logger }     from "../../utils/logger.js";
+import { databaseDB } from "../../database/databaseDB.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR  = path.join(__dirname, "..", "..", "..");
@@ -92,7 +93,81 @@ function addFileIfExists(zip, localFile, zipDir) {
 const _backupTable = new Map();
 
 /**
- * Buat file backup ZIP.
+ * Folder/file yang DILEWATI saat membuat backup.
+ * Backup mengambil langsung dari folder project yang sedang berjalan —
+ * bukan dari GitHub, bukan dari cache, bukan dari backup sebelumnya.
+ */
+const BACKUP_SKIP_DIRS = new Set([
+  "node_modules",   // dependencies — bisa diinstall ulang via pnpm install
+  ".git",           // git history — tidak diperlukan untuk restore
+  ".cache",         // cache Replit/Node
+  ".local",         // skill/agent Replit, bukan bagian project
+  ".agents",        // memory agent Replit, bukan bagian project
+  "attached_assets",// upload Replit IDE, bukan bagian project
+  "bin",            // binary yt-dlp — didownload ulang otomatis saat dijalankan
+]);
+
+/**
+ * Path relatif root yang DILEWATI saat scan (exact match prefix).
+ * Menghindari memasukkan ZIP backup yang sedang dibuat ke dalam dirinya sendiri.
+ */
+function _isSkippedPath(relPath) {
+  // Lewati temp folder backup itu sendiri agar tidak rekursif
+  if (path.resolve(ROOT_DIR, relPath).startsWith(BACKUP_TMP_DIR)) return true;
+  // Lewati folder-folder di atas
+  const topDir = relPath.split(path.sep)[0];
+  if (BACKUP_SKIP_DIRS.has(topDir)) return true;
+  return false;
+}
+
+/**
+ * Tambahkan seluruh isi ROOT_DIR ke ZIP secara rekursif.
+ * Melewati folder yang ada di BACKUP_SKIP_DIRS dan
+ * file/folder yang dimulai dengan titik selain yang diizinkan.
+ *
+ * @param {AdmZip} zip
+ */
+function _addProjectToZip(zip) {
+  const ALLOWED_DOT = new Set([".env.example", ".gitignore", ".replit"]);
+
+  function walk(dir, zipBase) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+
+    for (const entry of entries) {
+      const abs    = path.join(dir, entry.name);
+      const relAbs = path.relative(ROOT_DIR, abs);
+
+      // Lewati path yang masuk daftar skip
+      if (_isSkippedPath(relAbs)) continue;
+
+      // Lewati dotfile/dotdir kecuali yang diizinkan
+      if (entry.name.startsWith(".") && !ALLOWED_DOT.has(entry.name)) continue;
+
+      const zipPath = zipBase ? `${zipBase}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        walk(abs, zipPath);
+      } else {
+        try {
+          const content = fs.readFileSync(abs);
+          zip.addFile(zipPath, content);
+        } catch (err) {
+          logger.warn(`[Database/Backup] Lewati file ${relAbs}: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  walk(ROOT_DIR, "");
+}
+
+/**
+ * Buat file backup ZIP dari kondisi project yang sedang berjalan saat ini.
+ *
+ * Sumber: folder project di disk (ROOT_DIR) — langsung, real-time.
+ * BUKAN dari GitHub, cache, atau backup sebelumnya.
+ *
  * @returns {Promise<{ tmpId: string, filePath: string, fileName: string, size: number, sizeStr: string }>}
  */
 export async function createBackupZip() {
@@ -108,46 +183,26 @@ export async function createBackupZip() {
 
   const zip = new AdmZip();
 
-  // ── Database (data/*.json) ────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "data"), "database");
+  // ── Seluruh isi project (src, data, config, assets, scripts, dll) ─────────
+  // Membaca langsung dari disk — selalu mencerminkan kondisi terbaru project.
+  _addProjectToZip(zip);
 
-  // ── Config ────────────────────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "config"), "config");
-
-  // ── Assets ────────────────────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "assets"), "assets");
-
-  // ── Logs ──────────────────────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "logs"), "logs");
-
-  // ── Session ───────────────────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "session"), "session");
-
-  // ── Plugins ───────────────────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "plugins"), "plugins");
-
-  // ── Custom Commands ───────────────────────────────────────────────────────
-  addFolderIfExists(zip, path.join(ROOT_DIR, "custom-commands"), "custom-commands");
-
-  // ── Root config files ─────────────────────────────────────────────────────
-  addFileIfExists(zip, path.join(ROOT_DIR, "package.json"), "");
-
-  // ── backup-info.json ──────────────────────────────────────────────────────
+  // ── backup-info.json — metadata backup ────────────────────────────────────
   const info = {
-    createdAt:   now.toISOString(),
-    version:     _readPackageVersion(),
-    contents:    ["database", "config", "assets", "logs", "session", "plugins", "custom-commands"],
-    excludes:    ["node_modules", "npm cache", "temp", "cache sementara", "folder kosong", "file sampah"],
-    note:        "Backup dibuat otomatis oleh Pangeran Assistant AI",
+    createdAt:  now.toISOString(),
+    version:    _readPackageVersion(),
+    source:     ROOT_DIR,
+    excludes:   [...BACKUP_SKIP_DIRS, "dotfiles (kecuali .env.example/.gitignore/.replit)", "backup temp dir"],
+    note:       "Backup langsung dari folder project aktif — bukan dari GitHub/cache/backup lama.",
   };
   zip.addFile("backup-info.json", Buffer.from(JSON.stringify(info, null, 2), "utf8"));
 
   // Tulis ke disk
   zip.writeZip(filePath);
 
-  const stat    = fs.statSync(filePath);
-  const tmpId   = `bkp-${Date.now()}`;
-  const entry   = { filePath, fileName, size: stat.size, sizeStr: formatBytes(stat.size), createdAt: now.toISOString() };
+  const stat  = fs.statSync(filePath);
+  const tmpId = `bkp-${Date.now()}`;
+  const entry = { filePath, fileName, size: stat.size, sizeStr: formatBytes(stat.size), createdAt: now.toISOString() };
   _backupTable.set(tmpId, entry);
 
   // Hapus file temp setelah 30 menit agar tidak menumpuk
@@ -170,8 +225,9 @@ export function getBackupEntry(tmpId) {
 }
 
 /**
- * Upload backup ke GitHub Releases menggunakan token dari env.
- * Membutuhkan env vars: GITHUB_TOKEN dan GITHUB_REPO ("owner/repo").
+ * Upload backup ke GitHub Releases.
+ * Konfigurasi diambil dari panel Discord (Edit Kredensial) terlebih dahulu,
+ * kemudian fallback ke environment variable jika belum diisi.
  * @param {string} tmpId
  * @returns {Promise<{ url: string }>}
  */
@@ -179,13 +235,19 @@ export async function uploadBackupToGitHub(tmpId) {
   const entry = getBackupEntry(tmpId);
   if (!entry) throw new Error("File backup tidak ditemukan atau sudah kedaluwarsa.");
 
-  const token = process.env.GITHUB_TOKEN;
-  const repo  = process.env.GITHUB_REPO || databaseDB_getRepo();
-  if (!token) throw new Error("GITHUB_TOKEN belum dikonfigurasi. Tambahkan ke Replit Secrets.");
-  if (!repo)  throw new Error("GITHUB_REPO belum dikonfigurasi. Format: owner/repo");
+  const settings = databaseDB.get();
+
+  // Prioritas 1: konfigurasi dari panel Discord
+  // Prioritas 2: fallback ke environment variable
+  const token  = settings.github?.token  || process.env.GITHUB_TOKEN;
+  const repo   = settings.github?.repo   || process.env.GITHUB_REPO;
+  const branch = settings.github?.branch || process.env.GITHUB_BRANCH || "main";
+
+  if (!token) throw new Error("GitHub Token belum dikonfigurasi. Gunakan tombol 'Edit Kredensial' di panel Discord atau tambahkan GITHUB_TOKEN ke environment variable.");
+  if (!repo)  throw new Error("GitHub Repository belum dikonfigurasi. Gunakan tombol 'Edit Kredensial' di panel Discord atau tambahkan GITHUB_REPO ke environment variable (format: owner/repo).");
 
   // 1. Buat GitHub Release baru
-  const releaseName = `Backup ${new Date(entry.createdAt).toLocaleDateString("id-ID")}`;
+  const releaseName = `Backup ${new Date(entry.createdAt).toLocaleDateString("id-ID")} [${branch}]`;
   const releaseRes  = await fetch(`https://api.github.com/repos/${repo}/releases`, {
     method: "POST",
     headers: {
@@ -194,11 +256,12 @@ export async function uploadBackupToGitHub(tmpId) {
       "User-Agent":   "PangeranAssistantBot",
     },
     body: JSON.stringify({
-      tag_name:   `backup-${Date.now()}`,
-      name:        releaseName,
-      body:        `Backup otomatis oleh Pangeran Assistant AI\nUkuran: ${entry.sizeStr}`,
-      draft:       false,
-      prerelease:  true,
+      tag_name:         `backup-${Date.now()}`,
+      name:              releaseName,
+      body:              `Backup otomatis oleh Pangeran Assistant AI\nUkuran: ${entry.sizeStr}\nBranch: ${branch}`,
+      draft:             false,
+      prerelease:        true,
+      target_commitish:  branch,
     }),
   });
 
@@ -232,13 +295,6 @@ export async function uploadBackupToGitHub(tmpId) {
   return { url: asset.browser_download_url ?? release.html_url };
 }
 
-/** Ambil GITHUB_REPO dari databaseDB (lazy import untuk hindari circular). */
-function databaseDB_getRepo() {
-  try {
-    // Dynamic import tidak bisa dipakai di non-async context, gunakan env var saja
-    return null;
-  } catch { return null; }
-}
 
 // ── Storage Stats ─────────────────────────────────────────────────────────────
 
@@ -276,6 +332,7 @@ export function getStorageStats() {
     assets,
     logs,
     source:   src,
+    config:   conf,
     total,
     diskTotal,
     diskFree,
@@ -287,6 +344,7 @@ export function getStorageStats() {
       assets:   formatBytes(assets),
       logs:     formatBytes(logs),
       source:   formatBytes(src),
+      config:   formatBytes(conf),
       total:    formatBytes(total),
       diskTotal: diskTotal ? formatBytes(diskTotal) : "N/A",
       diskFree:  diskFree  ? formatBytes(diskFree)  : "N/A",

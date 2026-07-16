@@ -219,17 +219,23 @@ export function buildSetupSuccessComponents(guildId, channels, messages) {
 export function buildSetupManageEmbed(setup) {
   const ch = setup.channels;
 
+  const setupTime = setup.createdAt
+    ? new Date(setup.createdAt).toLocaleString("id-ID")
+    : "—";
+
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("📊 Database")
+    .setTitle("📊 Database Manager")
     .addFields(
-      { name: "📌 Status",      value: "🟢 Aktif",                                                      inline: true  },
-      { name: "📂 Kategori",    value: setup.categoryName ?? "—",                                         inline: true  },
-      { name: "⚙️ Bot Setting", value: ch.botSetting  ? `<#${ch.botSetting}>`  : "❌ Belum dibuat",      inline: true  },
-      { name: "📦 Backup",      value: ch.backup       ? `<#${ch.backup}>`       : "❌ Belum dibuat",     inline: true  },
-      { name: "📄 Console",     value: ch.console      ? `<#${ch.console}>`      : "❌ Belum dibuat",     inline: true  },
-      { name: "👥 Member List", value: ch.memberList   ? `<#${ch.memberList}>`   : "❌ Belum dibuat",     inline: true  },
+      { name: "📌 Status",      value: "🟢 Sudah Dikonfigurasi",                                          inline: true  },
+      { name: "📂 Kategori",    value: setup.categoryName ?? "DATABASE",                                   inline: true  },
+      { name: "🕐 Waktu Setup", value: setupTime,                                                          inline: false },
+      { name: "⚙️ Bot Setting", value: ch.botSetting  ? `✔ <#${ch.botSetting}>`  : "❌ Belum dibuat",    inline: true  },
+      { name: "📦 Backup",      value: ch.backup       ? `✔ <#${ch.backup}>`       : "❌ Belum dibuat",   inline: true  },
+      { name: "📄 Console",     value: ch.console      ? `✔ <#${ch.console}>`      : "❌ Belum dibuat",   inline: true  },
+      { name: "👥 Member List", value: ch.memberList   ? `✔ <#${ch.memberList}>`   : "❌ Belum dibuat",   inline: true  },
     )
+    .setDescription("Silakan pilih menu.")
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
@@ -239,8 +245,8 @@ export function buildSetupManageComponents() {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("db:manage:edit").setLabel("📝 Edit Setup").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("db:manage:repair").setLabel("🔄 Repair Panel").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("db:manage:reset").setLabel("🗑 Reset Setup").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("db:manage:github").setLabel("☁️ GitHub Manager").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("db:manage:reset").setLabel("🗑 Hapus Setup").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("db:manage:github").setLabel("☁ GitHub Manager").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("db:setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Danger),
     ),
   ];
@@ -251,16 +257,30 @@ export function buildSetupManageComponents() {
 export function buildResetConfirmEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR.RED)
-    .setTitle("⚠️ Reset Setup")
+    .setTitle("⚠️ Konfirmasi Hapus Setup")
     .addFields(
       {
         name:  "Yang akan dihapus",
-        value: "✔ Konfigurasi Setup\n✔ Channel ID\n✔ Panel Database",
+        value:
+          "✔ Panel Database\n" +
+          "✔ Konfigurasi Setup\n" +
+          "✔ ID Channel\n" +
+          "✔ Kategori Database (jika kosong)",
         inline: true,
       },
       {
         name:  "Yang TIDAK dihapus",
-        value: "✔ Database User\n✔ Premium\n✔ Backup Lokal\n✔ Backup GitHub\n✔ Data Scanner\n✔ AI",
+        value:
+          "✔ Database User\n" +
+          "✔ Premium\n" +
+          "✔ Backup Lokal\n" +
+          "✔ Backup GitHub\n" +
+          "✔ Scanner\n" +
+          "✔ AI\n" +
+          "✔ Plugin\n" +
+          "✔ Assets\n" +
+          "✔ Session\n" +
+          "✔ Settings",
         inline: true,
       },
     )
@@ -271,7 +291,7 @@ export function buildResetConfirmEmbed() {
 export function buildResetConfirmComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("db:manage:reset:confirm").setLabel("🗑 Ya, Reset").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("db:manage:reset:confirm").setLabel("🗑 Ya, Hapus Setup").setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId("db:manage:reset:cancel").setLabel("❌ Batal").setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -284,10 +304,12 @@ export function buildResetConfirmComponents() {
  * @returns {{ source: "env"|"db"|"none", masked: string }}
  */
 function _resolveTokenDisplay(setup) {
-  if (process.env.GITHUB_TOKEN) return { source: "env", masked: "✅ Dikonfigurasi (Replit Secret)" };
-  const t = setup.github?.token;
-  if (t) return { source: "db", masked: `✅ Tersimpan (\`••••${t.slice(-4)}\`)` };
-  return { source: "none", masked: "❌ Belum dikonfigurasi" };
+  // Prioritas 1: token yang disimpan via panel Discord (Edit Kredensial)
+  const dbToken = setup.github?.token;
+  if (dbToken) return { source: "db", masked: "✅ GitHub Token\nDikonfigurasi" };
+  // Prioritas 2: fallback ke environment variable
+  if (process.env.GITHUB_TOKEN) return { source: "env", masked: "✅ GitHub Token\nDikonfigurasi" };
+  return { source: "none", masked: "❌ GitHub Token\nBelum dikonfigurasi" };
 }
 
 /** @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup */
@@ -344,8 +366,9 @@ export function buildBotSettingEmbed(client, setup) {
   const uptimeMs   = client.uptime ?? 0;
   const version    = _readVersion();
   const dbSize     = _readDataDirSize();
-  const githubRepo = process.env.GITHUB_REPO || setup.github?.repo || "Belum dikonfigurasi";
-  const githubToken = process.env.GITHUB_TOKEN ? "✅ Dikonfigurasi" : "❌ Belum ada";
+  // Prioritas 1: dari panel Discord; Prioritas 2: env var; tidak pernah tampilkan nilai token
+  const githubRepo  = setup.github?.repo   || process.env.GITHUB_REPO  || "Belum dikonfigurasi";
+  const githubToken = (setup.github?.token || process.env.GITHUB_TOKEN) ? "✅ Dikonfigurasi" : "❌ Belum dikonfigurasi";
 
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
@@ -429,23 +452,90 @@ export function buildBackupPanelComponents() {
 
 export function buildStorageEmbed(stats) {
   const s = stats.strings;
-  return new EmbedBuilder()
+
+  // ── Semua kategori dengan label, emoji, dan apakah bisa dibersihkan ────────
+  const ALL_CATS = [
+    { key: "database", label: "Database", emoji: "💾",  cleanable: false },
+    { key: "source",   label: "Source",   emoji: "📝",  cleanable: false },
+    { key: "config",   label: "Config",   emoji: "⚙️",  cleanable: false },
+    { key: "assets",   label: "Assets",   emoji: "🖼",  cleanable: false },
+    { key: "logs",     label: "Logs",     emoji: "📋",  cleanable: false },
+    { key: "backup",   label: "Backup",   emoji: "📦",  cleanable: false },
+    { key: "cache",    label: "Cache",    emoji: "🗃",  cleanable: true  },
+    { key: "temp",     label: "Temp",     emoji: "📁",  cleanable: true  },
+  ];
+
+  // Hanya tampilkan kategori dengan ukuran > 0
+  const active = ALL_CATS.filter((c) => (stats[c.key] ?? 0) > 0);
+
+  // Total hanya dari kategori yang ada
+  const realTotal = active.reduce((sum, c) => sum + (stats[c.key] ?? 0), 0);
+
+  const embed = new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("📊 Storage — Penggunaan Penyimpanan")
-    .addFields(
-      { name: "💾 Database",   value: s.database,         inline: true },
-      { name: "🗃 Cache",      value: s.cache,             inline: true },
-      { name: "📁 Temp",       value: s.temp,              inline: true },
-      { name: "📦 Backup",     value: s.backup,            inline: true },
-      { name: "🖼 Assets",     value: s.assets,            inline: true },
-      { name: "📋 Logs",       value: s.logs,              inline: true },
-      { name: "📝 Source",     value: s.source,            inline: true },
-      { name: "📊 Total",      value: `**${s.total}**`,    inline: true },
-      { name: "💽 Disk Total", value: s.diskTotal,         inline: true },
-      { name: "💿 Sisa Disk",  value: s.diskFree,          inline: true },
-    )
-    .setFooter({ text: FOOTER })
-    .setTimestamp();
+    .setTitle("📊 Storage — Penggunaan Penyimpanan");
+
+  // ── Field per kategori aktif ────────────────────────────────────────────────
+  if (active.length === 0) {
+    embed.setDescription("Tidak ada data penyimpanan yang terdeteksi.");
+  } else {
+    for (const cat of active) {
+      embed.addFields({ name: `${cat.emoji} ${cat.label}`, value: s[cat.key], inline: true });
+    }
+
+    // Padding agar baris terakhir rapi di Discord (3 kolom per baris)
+    const rem = active.length % 3;
+    if (rem === 1) embed.addFields({ name: "\u200b", value: "\u200b", inline: true }, { name: "\u200b", value: "\u200b", inline: true });
+    if (rem === 2) embed.addFields({ name: "\u200b", value: "\u200b", inline: true });
+
+    embed.addFields({ name: "📊 Total", value: `**${formatBytes(realTotal)}**`, inline: false });
+  }
+
+  // ── Info disk (jika tersedia) ────────────────────────────────────────────────
+  if (stats.diskTotal > 0) {
+    embed.addFields(
+      { name: "💽 Disk Total", value: s.diskTotal, inline: true },
+      { name: "💿 Sisa Disk",  value: s.diskFree,  inline: true },
+    );
+  }
+
+  // ── Bisa Dibersihkan ────────────────────────────────────────────────────────
+  const cleanable = active.filter((c) => c.cleanable);
+  if (cleanable.length > 0) {
+    embed.addFields({
+      name:  "🟢 Bisa Dibersihkan",
+      value: cleanable.map((c) => `• ${c.label}`).join("\n"),
+      inline: true,
+    });
+  } else {
+    embed.addFields({
+      name:  "🟢 Bisa Dibersihkan",
+      value: "🧹 Tidak ada file sampah.\nStorage dalam kondisi bersih.",
+      inline: false,
+    });
+  }
+
+  // ── Jangan Dibersihkan ──────────────────────────────────────────────────────
+  const protected_ = active.filter((c) => !c.cleanable);
+  if (protected_.length > 0) {
+    embed.addFields({
+      name:  "🔴 Jangan Dibersihkan",
+      value: [
+        ...protected_.map((c) => `• ${c.label}`),
+        "• Environment",
+        "• Secrets",
+      ].join("\n"),
+      inline: true,
+    });
+  } else {
+    embed.addFields({
+      name:  "🔴 Jangan Dibersihkan",
+      value: "• Environment\n• Secrets",
+      inline: true,
+    });
+  }
+
+  return embed.setFooter({ text: FOOTER }).setTimestamp();
 }
 
 // ════════════════════════════════════════════════════════════════════════════

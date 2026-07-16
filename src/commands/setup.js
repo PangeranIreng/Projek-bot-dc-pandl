@@ -1,9 +1,8 @@
 /**
  * commands/setup.js — /setup slash command.
  *
- * Menampilkan menu admin (ephemeral) dengan pilihan:
- *   📊 Database  — Setup panel DATABASE
- *   ❌ Tutup     — Tutup menu
+ * Jika setup BELUM ADA → tampilkan Wizard Setup.
+ * Jika sudah ada       → tampilkan Database Manager.
  *
  * Seluruh logika setup ada di src/features/database/interaction.js
  * yang menangani interaksi lanjutan dengan prefix "db:".
@@ -13,9 +12,12 @@
 
 import { SlashCommandBuilder } from "discord.js";
 import { denyIfNotStaff }      from "../middleware/permissions.js";
+import { databaseDB }          from "../database/databaseDB.js";
 import {
-  buildSetupMainEmbed,
-  buildSetupMainComponents,
+  buildSetupWizardEmbed,
+  buildSetupWizardComponents,
+  buildSetupManageEmbed,
+  buildSetupManageComponents,
 } from "../features/database/embed.js";
 
 export const data = new SlashCommandBuilder()
@@ -29,9 +31,19 @@ export async function execute(interaction) {
   // Hanya Owner / Developer yang dapat menggunakan command ini
   if (await denyIfNotStaff(interaction)) return;
 
-  await interaction.reply({
-    embeds:     [buildSetupMainEmbed()],
-    components: buildSetupMainComponents(),
-    ephemeral:  true,
-  });
+  if (databaseDB.isSetup()) {
+    // Sudah setup — langsung tampilkan Database Manager
+    await interaction.reply({
+      embeds:     [buildSetupManageEmbed(databaseDB.get())],
+      components: buildSetupManageComponents(),
+      ephemeral:  true,
+    });
+  } else {
+    // Belum setup — tampilkan Wizard Setup
+    await interaction.reply({
+      embeds:     [buildSetupWizardEmbed()],
+      components: buildSetupWizardComponents(),
+      ephemeral:  true,
+    });
+  }
 }
