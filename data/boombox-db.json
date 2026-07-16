@@ -6,12 +6,15 @@
     "2026-07-13": {},
     "2026-07-14": {
       "1526499408282390619": 2
+    },
+    "2026-07-16": {
+      "1117039401718001734": 1
     }
   },
   "statistics": {
-    "total": 56,
+    "total": 58,
     "byPlatform": {
-      "YouTube": 56
+      "YouTube": 58
     }
   },
   "history": [
@@ -563,11 +566,43 @@
       "duration": 326,
       "limitRemaining": "Unlimited",
       "timestamp": "2026-07-16T06:26:54.010Z"
+    },
+    {
+      "userId": "1462685321262272664",
+      "platform": "YouTube",
+      "title": "DJ SAY NO STYLE BABAT TRETETET SOUND JEDAG JEDUG VIRAL TIKTOK YANG KALIAN CARI CARI!!!",
+      "originalUrl": "https://youtu.be/ldzcK9kNvLM?si=VNgMbl9VSC76ba8U",
+      "boomboxUrl": "https://d.top4top.io/m_3849tl7um0.mp3",
+      "duration": 480,
+      "limitRemaining": "Unlimited",
+      "timestamp": "2026-07-16T12:53:17.106Z"
+    },
+    {
+      "userId": "1117039401718001734",
+      "platform": "YouTube",
+      "title": "Noel Gallagher’s High Flying Birds - If I Had A Gun… (Official Video)",
+      "originalUrl": "https://youtu.be/1NMUDb3Ewhs?si=Bv5wPlj6JwSRmV-r",
+      "boomboxUrl": "https://b.top4top.io/m_3849udkaj0.mp3",
+      "duration": 287,
+      "limitRemaining": "9/10",
+      "timestamp": "2026-07-16T12:58:57.161Z"
     }
   ],
   "logState": {
     "messageId": "1526256015941832776",
     "entries": [
+      {
+        "title": "Noel Gallagher’s High Flying Birds - If I Had A Gun… (Official Video)",
+        "duration": 287,
+        "boomboxUrl": "https://b.top4top.io/m_3849udkaj0.mp3",
+        "timestamp": "2026-07-16T12:58:57.161Z"
+      },
+      {
+        "title": "DJ SAY NO STYLE BABAT TRETETET SOUND JEDAG JEDUG VIRAL TIKTOK YANG KALIAN CARI CARI!!!",
+        "duration": 480,
+        "boomboxUrl": "https://d.top4top.io/m_3849tl7um0.mp3",
+        "timestamp": "2026-07-16T12:53:17.106Z"
+      },
       {
         "title": "Lost Without You Stadium BreakBeat",
         "duration": 326,

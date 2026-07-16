@@ -18,8 +18,12 @@
   "github": {
     "repo": "PangeranIreng/Projek-bot-dc-pandl",
     "branch": "main",
-    "token": "isi token github "
+    "token": "isi token github ",
+    "uploadMode": "release"
   },
   "autoBackup": true,
-  "autoClean": true
+  "autoClean": true,
+  "backupSchedule": "weekly",
+  "lastBackup": null,
+  "backupCount": 0
 }
