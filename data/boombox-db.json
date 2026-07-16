@@ -9,9 +9,9 @@
     }
   },
   "statistics": {
-    "total": 54,
+    "total": 56,
     "byPlatform": {
-      "YouTube": 54
+      "YouTube": 56
     }
   },
   "history": [
@@ -543,11 +543,43 @@
       "duration": 196,
       "limitRemaining": "Unlimited",
       "timestamp": "2026-07-16T06:22:49.411Z"
+    },
+    {
+      "userId": "1462685321262272664",
+      "platform": "YouTube",
+      "title": "Hank Williams - Hey, Good Lookin' (Lyrics)",
+      "originalUrl": "https://youtu.be/dLKTYAt31ic?si=N6sntJ_Tz_Wg32Rp",
+      "boomboxUrl": "https://i.top4top.io/m_38498b4r10.mp3",
+      "duration": 182,
+      "limitRemaining": "Unlimited",
+      "timestamp": "2026-07-16T06:25:37.282Z"
+    },
+    {
+      "userId": "1462685321262272664",
+      "platform": "YouTube",
+      "title": "Lost Without You Stadium BreakBeat",
+      "originalUrl": "https://youtu.be/KFVScYu0weA?si=NoUmdqlD3vsCYBVt",
+      "boomboxUrl": "https://i.top4top.io/m_384923l050.mp3",
+      "duration": 326,
+      "limitRemaining": "Unlimited",
+      "timestamp": "2026-07-16T06:26:54.010Z"
     }
   ],
   "logState": {
     "messageId": "1526256015941832776",
     "entries": [
+      {
+        "title": "Lost Without You Stadium BreakBeat",
+        "duration": 326,
+        "boomboxUrl": "https://i.top4top.io/m_384923l050.mp3",
+        "timestamp": "2026-07-16T06:26:54.010Z"
+      },
+      {
+        "title": "Hank Williams - Hey, Good Lookin' (Lyrics)",
+        "duration": 182,
+        "boomboxUrl": "https://i.top4top.io/m_38498b4r10.mp3",
+        "timestamp": "2026-07-16T06:25:37.282Z"
+      },
       {
         "title": "Dean Lewis - Be Alright (Lyrics)",
         "duration": 196,

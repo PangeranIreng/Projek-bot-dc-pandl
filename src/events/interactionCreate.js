@@ -46,10 +46,12 @@ export async function handleInteractionCreate(interaction, commands, client) {
       return;
     }
 
-    const isBtn    = interaction.isButton();
-    const isSelect = interaction.isStringSelectMenu();
-    const isModal  = interaction.isModalSubmit();
-    if (!isBtn && !isSelect && !isModal) return;
+    const isBtn       = interaction.isButton();
+    const isSelect    = interaction.isStringSelectMenu();
+    const isChanSel   = interaction.isChannelSelectMenu();
+    const isAnySelect = isSelect || isChanSel;
+    const isModal     = interaction.isModalSubmit();
+    if (!isBtn && !isAnySelect && !isModal) return;
 
     const id = interaction.customId ?? "";
 
@@ -69,6 +71,8 @@ export async function handleInteractionCreate(interaction, commands, client) {
       await handleCpanelInteraction(interaction);
     } else if (id === "help:category") {
       await handleHelpInteraction(interaction);
+    } else if (id.startsWith("db:")) {
+      await handleDatabaseInteraction(interaction);
     }
 
   } catch (err) {
