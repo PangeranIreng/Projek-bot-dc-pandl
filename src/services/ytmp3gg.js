@@ -12,28 +12,94 @@
  *                                (simulate only — no download, fast)
  */
 
-import { execFile }      from "node:child_process";
-import { promisify }     from "node:util";
-import fs                from "node:fs";
-import path              from "node:path";
-import os                from "node:os";
-import https             from "node:https";
-import { fileURLToPath } from "node:url";
-import ytdlCore           from "@distube/ytdl-core";
-import { kaizenDownload } from "./kaizenDownloader.js";
-import { logger }        from "../utils/logger.js";
-import * as providerHealth from "./providerHealth.js";
+import { execFile, execSync } from "node:child_process";
+import { promisify }          from "node:util";
+import fs                     from "node:fs";
+import path                   from "node:path";
+import os                     from "node:os";
+import https                  from "node:https";
+import { fileURLToPath }      from "node:url";
+import ytdlCore                from "@distube/ytdl-core";
+import { kaizenDownload }      from "./kaizenDownloader.js";
+import { logger }              from "../utils/logger.js";
+import * as providerHealth     from "./providerHealth.js";
 import { FFMPEG_PATH, ffmpegAvailable } from "../utils/ffmpegPath.js";
+import { COOKIES_ARGS, hasCookies }     from "../utils/cookiesResolver.js";
+import { ENV_INFO }                     from "../utils/envDetector.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// FIX (root cause): ytmp3gg.js is at src/services/ — two levels up reaches
-// the workspace root, so BIN_DIR resolves to <root>/bin/ where yt-dlp_linux
-// is committed. Previously only one ".." was used → src/bin/ (non-existent),
-// causing every request to attempt a fresh binary download from GitHub and
-// fail with a 30s timeout before any fallback provider was tried.
 const BIN_DIR   = path.join(__dirname, "..", "..", "bin");
-const BIN_PATH  = path.join(BIN_DIR, "yt-dlp_linux");
-const YTDLP_DL  = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+
+// ── Platform-aware yt-dlp binary resolution ───────────────────────────────────
+//
+// Supports Railway, Replit, Pterodactyl/Pyrodele panels, VPS (Ubuntu/Debian),
+// and any standard Linux host — without changing source code between platforms.
+//
+// Resolution order at module load:
+//   1. System yt-dlp in PATH (Pterodactyl panels with pip-installed yt-dlp,
+//      VPS with yt-dlp from apt/pip — most common on managed hosting panels)
+//   2. bin/yt-dlp_{platform}  (committed binary for this exact OS + arch)
+//   3. bin/yt-dlp             (generic committed fallback)
+//   4. Not found yet          (will be downloaded at startup to bin/yt-dlp_{platform})
+//
+// When a SYSTEM binary is detected we set _USE_SYSTEM_YTDLP = true, which:
+//   • Skips the download step entirely (system admin owns the binary)
+//   • Skips the GitHub auto-update check (same reason)
+//   • Still verifies the binary runs and logs its version
+//
+function _detectPlatformSuffix() {
+  const { platform, arch } = process;
+  if (platform === "win32")  return "yt-dlp.exe";
+  if (platform === "darwin") return "yt-dlp_macos";
+  if (arch === "arm64" || arch === "aarch64") return "yt-dlp_linux_aarch64";
+  if (arch === "arm")        return "yt-dlp_linux_armv7l";
+  return "yt-dlp_linux"; // Linux x64 — Railway, Replit, most VPS/panel hosts
+}
+
+const _PLATFORM_SUFFIX = _detectPlatformSuffix();
+const YTDLP_DL         = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${_PLATFORM_SUFFIX}`;
+
+// True when yt-dlp comes from the system PATH (managed by host/admin).
+// Downloads and auto-updates are disabled when this is true.
+let _USE_SYSTEM_YTDLP = false;
+
+// BIN_PATH is `let` so it can be set to the system binary path when found.
+// All callers reference this variable — no code change needed elsewhere.
+let BIN_PATH = (() => {
+  // 1. System yt-dlp in PATH (Pterodactyl, pip-installed VPS, etc.)
+  try {
+    const sys = execSync("which yt-dlp", {
+      encoding: "utf8",
+      stdio:    ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (sys && fs.existsSync(sys)) {
+      _USE_SYSTEM_YTDLP = true;
+      logger.info(`[ytmp3gg] yt-dlp found in system PATH: ${sys} — skipping auto-download/update`);
+      return sys;
+    }
+  } catch { /* not in PATH */ }
+
+  // 2. Platform-specific committed binary (e.g. bin/yt-dlp_linux)
+  const platformBin = path.join(BIN_DIR, _PLATFORM_SUFFIX);
+  if (fs.existsSync(platformBin)) {
+    logger.info(`[ytmp3gg] Using committed binary (${_PLATFORM_SUFFIX}): ${platformBin}`);
+    return platformBin;
+  }
+
+  // 3. Generic committed binary (bin/yt-dlp — works if committed without suffix)
+  const genericBin = path.join(BIN_DIR, "yt-dlp");
+  if (fs.existsSync(genericBin)) {
+    logger.info(`[ytmp3gg] Using generic committed binary: ${genericBin}`);
+    return genericBin;
+  }
+
+  // 4. Binary not found — will be downloaded to this path at startup
+  logger.warn(`[ytmp3gg] yt-dlp not found — will auto-download to: ${platformBin}`);
+  return platformBin;
+})();
+
+// Log startup context once (env name + platform info set by envDetector.js)
+logger.info(`[ytmp3gg] Environment: ${ENV_INFO.name} | ${ENV_INFO.platform}/${ENV_INFO.arch} | Node ${ENV_INFO.node} | cookies=${hasCookies}`);
 
 const execFileAsync = promisify(execFile);
 
@@ -110,6 +176,19 @@ export function initBinary() {
 
 /** The actual one-time init work. @private */
 async function _doInitBinary() {
+  // ── System-managed binary (Pterodactyl, pip-installed VPS) ────────────────
+  // We don't own this binary, so we only verify it runs — no download/update.
+  if (_USE_SYSTEM_YTDLP) {
+    try {
+      const { stdout } = await execFileAsync(BIN_PATH, ["--version"], { timeout: 10_000 });
+      logger.info(`[ytmp3gg] System yt-dlp ready: v${stdout.trim()}`);
+    } catch (e) {
+      logger.warn(`[ytmp3gg] System yt-dlp version check failed: ${e.message} — will still attempt to use it`);
+    }
+    return;
+  }
+
+  // ── Bot-managed binary (downloaded / committed) ───────────────────────────
   if (!fs.existsSync(BIN_PATH)) {
     await _downloadBinary();
     return;
@@ -149,6 +228,9 @@ async function _doInitBinary() {
  * @private
  */
 async function ensureBinary() {
+  // System-managed binary — always present, nothing to download or verify.
+  if (_USE_SYSTEM_YTDLP) return;
+
   // If both yt-dlp providers are already OFFLINE (e.g. from a failed binary
   // download attempt), skip straight to throwing so callers bypass yt-dlp.
   if (providerHealth.shouldSkip("yt-dlp-youtube") && providerHealth.shouldSkip("yt-dlp-tiktok")) {
@@ -191,7 +273,7 @@ async function ensureBinary() {
 
 /** Download (or re-download) the yt-dlp_linux binary from GitHub. */
 async function _downloadBinary() {
-  logger.info("[ytmp3gg] Downloading yt-dlp_linux from GitHub...");
+  logger.info(`[ytmp3gg] Downloading ${_PLATFORM_SUFFIX} from GitHub...`);
   fs.mkdirSync(BIN_DIR, { recursive: true });
 
   // Write to a temp path first; rename on success so a partial download
@@ -274,6 +356,7 @@ async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120
 
   const args = [
     "--ffmpeg-location", FFMPEG_PATH,
+    ...COOKIES_ARGS,      // YouTube cookies for anti-bot bypass ([] when not available)
     "--no-playlist",
     "--extract-audio",
     "--audio-format",  audioFmt,
@@ -1368,6 +1451,7 @@ export async function getVideoInfo(url) {
       "--no-warnings",
       "--extractor-retries", "1",
       "--print", "%(duration)s|||%(title)s|||%(thumbnail)s|||%(uploader)s",
+      ...COOKIES_ARGS,    // cookies for anti-bot bypass ([] when not configured)
       ...infoMethods[i],
       resolvedUrl,
     ];

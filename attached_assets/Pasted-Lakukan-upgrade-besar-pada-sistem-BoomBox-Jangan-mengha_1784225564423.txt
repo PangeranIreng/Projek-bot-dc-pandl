@@ -1,0 +1,319 @@
+Lakukan upgrade besar pada sistem BoomBox. Jangan menghapus atau mengubah fitur yang sudah ada selain bagian internal BoomBox.
+
+TARGET:
+- BoomBox stabil 24/7.
+- URL BoomBox GTA SA-MP selesai dalam 2–3 detik untuk video normal.
+- Error seminimal mungkin.
+- Kompatibel dengan Railway, Replit, VPS Linux, dan Node.js 22.
+
+==================================================
+AMBIL BAGIAN YANG BERGUNA DARI PROJECT REFERENSI
+==================================================
+
+Gunakan bagian yang berguna dari project referensi sebagai dasar.
+
+Gunakan:
+
+✓ lib/ytdlpBinary.js
+- Auto download yt-dlp terbaru.
+- Auto update binary.
+- Jangan hardcode versi yt-dlp.
+
+✓ Wrapper yt-dlp
+- Gunakan sistem spawn/process yang stabil.
+- Jangan menjalankan shell yang rawan error.
+
+✓ Parser metadata
+- Ambil:
+Title
+Duration
+Thumbnail
+Uploader
+Video ID
+
+==================================================
+ENGINE DOWNLOAD BARU
+==================================================
+
+BoomBox harus memakai pipeline baru.
+
+Urutan:
+
+Provider 1
+yt-dlp terbaru
+
+↓
+
+Provider 2
+Provider alternatif yang sudah ada di project
+
+↓
+
+Provider 3
+Provider tambahan yang kompatibel
+
+↓
+
+Provider 4
+Fallback terakhir
+
+Jika Provider 1 gagal,
+langsung lanjut Provider 2.
+
+Jangan berhenti.
+
+Jika Provider 2 gagal,
+langsung lanjut Provider 3.
+
+Jika salah satu berhasil,
+langsung hentikan provider lain.
+
+==================================================
+ANTI BOT
+==================================================
+
+Tambahkan dukungan:
+
+✓ YouTube Cookies
+
+Jika tersedia cookies,
+gunakan otomatis.
+
+Jika tidak tersedia,
+tetap lanjut memakai provider berikutnya.
+
+Jangan langsung gagal.
+
+==================================================
+CACHE DOWNLOAD
+==================================================
+
+Buat cache BoomBox.
+
+Key:
+
+Video ID
+
+Isi cache:
+
+Title
+
+Duration
+
+Thumbnail
+
+BoomBox URL
+
+Upload URL
+
+Expire Time
+
+Jika user mengirim video yang sama:
+
+Jangan download ulang.
+
+Jangan convert ulang.
+
+Jangan upload ulang.
+
+Langsung kirim BoomBox URL.
+
+==================================================
+UPLOAD
+==================================================
+
+Jika provider sudah menghasilkan MP3:
+
+Skip convert.
+
+Langsung upload.
+
+Jika belum MP3:
+
+Convert.
+
+Lalu upload.
+
+==================================================
+FFMPEG
+==================================================
+
+Jangan bergantung pada FFmpeg sistem.
+
+Gunakan:
+
+ffmpeg-static
+
+Jika ffmpeg sistem tidak ada:
+
+pakai ffmpeg-static.
+
+Jangan crash.
+
+==================================================
+ERROR HANDLER
+==================================================
+
+Pisahkan semua error.
+
+Jangan ubah semua menjadi 404.
+
+Bedakan:
+
+Anti Bot
+
+Private Video
+
+Deleted Video
+
+Region Locked
+
+Age Restricted
+
+Live Stream
+
+DRM
+
+Timeout
+
+Network
+
+Provider Down
+
+FFmpeg Missing
+
+Cookies Invalid
+
+Upload Failed
+
+==================================================
+LOG
+==================================================
+
+Buat log seperti ini:
+
+Provider 1
+
+SUCCESS / FAILED
+
+Reason
+
+Time
+
+↓
+
+Provider 2
+
+SUCCESS / FAILED
+
+Reason
+
+Time
+
+↓
+
+Final Result
+
+BoomBox URL
+
+Processing Time
+
+==================================================
+PERFORMA
+==================================================
+
+Optimalkan:
+
+Parallel provider bila aman.
+
+Gunakan cache.
+
+Gunakan timeout maksimal 5 detik per provider.
+
+Jika provider lambat:
+
+langsung pindah.
+
+Target rata-rata:
+
+2–3 detik.
+
+==================================================
+JANGAN UBAH
+==================================================
+
+Jangan mengubah:
+
+Database
+
+Premium
+
+Limit
+
+Role
+
+Ticket
+
+Scanner
+
+Moderation
+
+Music selain BoomBox
+
+AI
+
+Panel
+
+Backup
+
+Restore
+
+Auto Backup
+
+Auto Clean
+
+Admin Panel
+
+Embed
+
+UI
+
+Command BoomBox
+
+==================================================
+KOMPATIBILITAS
+==================================================
+
+Pastikan berjalan di:
+
+Railway
+
+Replit
+
+GitHub Auto Deploy
+
+Linux
+
+Node.js 22
+
+==================================================
+OUTPUT
+==================================================
+
+Setelah selesai:
+
+1. Sebutkan semua file yang diubah.
+
+2. Jelaskan alasan perubahan.
+
+3. Pastikan seluruh fitur BoomBox masih kompatibel.
+
+4. Jalankan pengujian internal agar:
+- Download YouTube berhasil.
+- Upload berhasil.
+- URL BoomBox berhasil dibuat.
+- Cache bekerja.
+- Fallback bekerja.
+- Tidak ada error 404 palsu.
+
+Jangan berhenti sampai seluruh pipeline BoomBox benar-benar stabil dan siap dipakai.
