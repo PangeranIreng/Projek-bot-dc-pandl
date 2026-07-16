@@ -1,0 +1,25 @@
+{
+  "guildId": "1462696202842931327",
+  "createdBy": "1462685321262272664",
+  "createdAt": "2026-07-16T06:42:43.319Z",
+  "categoryId": "1524813683325145139",
+  "categoryName": "❯ ❯ ❯────・📊 DATABASE・──────➤",
+  "channels": {
+    "botSetting": "1527203793933172739",
+    "backup": "1527203807589830676",
+    "console": "1527203810630565968",
+    "memberList": "1527203812765339670"
+  },
+  "messages": {
+    "botSetting": "1527238073522454591",
+    "backup": "1527238077725147218",
+    "memberList": "1527203819807576075"
+  },
+  "github": {
+    "repo": null,
+    "branch": "main",
+    "token": null
+  },
+  "autoBackup": false,
+  "autoClean": false
+}

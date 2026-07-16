@@ -279,37 +279,58 @@ export function buildResetConfirmComponents() {
 
 // ── GitHub Manager ────────────────────────────────────────────────────────────
 
+/**
+ * Resolusi token: env lebih prioritas dari DB.
+ * @returns {{ source: "env"|"db"|"none", masked: string }}
+ */
+function _resolveTokenDisplay(setup) {
+  if (process.env.GITHUB_TOKEN) return { source: "env", masked: "✅ Dikonfigurasi (Replit Secret)" };
+  const t = setup.github?.token;
+  if (t) return { source: "db", masked: `✅ Tersimpan (\`••••${t.slice(-4)}\`)` };
+  return { source: "none", masked: "❌ Belum dikonfigurasi" };
+}
+
 /** @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup */
 export function buildGitHubManagerEmbed(setup) {
-  const repo  = process.env.GITHUB_REPO || setup.github?.repo || null;
-  const token = process.env.GITHUB_TOKEN ? "✅ Dikonfigurasi" : "❌ Belum ada";
+  const repo   = setup.github?.repo   || null;
+  const branch = setup.github?.branch || "main";
+  const token  = _resolveTokenDisplay(setup);
 
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
     .setTitle("☁️ GitHub Manager")
-    .setDescription(
-      "Konfigurasi GitHub untuk upload backup otomatis ke GitHub Releases.",
-    )
+    .setDescription("Konfigurasi GitHub untuk upload backup otomatis ke GitHub Releases.")
     .addFields(
-      { name: "🐙 GitHub Repo",  value: repo ? `\`${repo}\`` : "❌ Belum dikonfigurasi", inline: true },
-      { name: "🔑 GitHub Token", value: token,                                            inline: true },
-      {
-        name: "📌 Cara Mengatur",
-        value:
-          "1. Tambahkan **GITHUB_TOKEN** di Replit Secrets\n" +
-          "2. Klik **✏️ Ubah Konfigurasi** dan masukkan `owner/repo`",
-        inline: false,
-      },
+      { name: "🐙 Repository",   value: repo ? `\`${repo}\``  : "❌ Belum dikonfigurasi", inline: true  },
+      { name: "🌿 Branch",       value: `\`${branch}\``,                                   inline: true  },
+      { name: "🔑 Token",        value: token.masked,                                       inline: false },
+      { name: "🔄 Auto Backup",  value: setup.autoBackup ? "✅ Aktif" : "❌ Nonaktif",     inline: true  },
+      { name: "🧹 Auto Clean",   value: setup.autoClean  ? "✅ Aktif" : "❌ Nonaktif",     inline: true  },
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-export function buildGitHubManagerComponents() {
+/** @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup */
+export function buildGitHubManagerComponents(setup) {
+  const backupLabel = setup?.autoBackup ? "🔄 Auto Backup: ✅ ON" : "🔄 Auto Backup: ❌ OFF";
+  const cleanLabel  = setup?.autoClean  ? "🧹 Auto Clean: ✅ ON"  : "🧹 Auto Clean: ❌ OFF";
+  const backupStyle = setup?.autoBackup ? ButtonStyle.Success : ButtonStyle.Secondary;
+  const cleanStyle  = setup?.autoClean  ? ButtonStyle.Success : ButtonStyle.Secondary;
+
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("db:manage:github:edit").setLabel("✏️ Ubah Konfigurasi").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("db:setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId("db:manage:github:edit")
+        .setLabel("🔑 Edit Kredensial (Repo / Branch / Token)")
+        .setStyle(ButtonStyle.Primary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:manage:github:backup:toggle").setLabel(backupLabel).setStyle(backupStyle),
+      new ButtonBuilder().setCustomId("db:manage:github:clean:toggle").setLabel(cleanLabel).setStyle(cleanStyle),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:manage:github:back").setLabel("🔙 Kembali").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -350,11 +371,21 @@ export function buildBotSettingEmbed(client, setup) {
     .setTimestamp();
 }
 
-export function buildBotSettingComponents() {
+/** @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup */
+export function buildBotSettingComponents(setup) {
+  const backupLabel = setup?.autoBackup ? "🔄 Auto Backup: ✅ ON" : "🔄 Auto Backup: ❌ OFF";
+  const cleanLabel  = setup?.autoClean  ? "🧹 Auto Clean: ✅ ON"  : "🧹 Auto Clean: ❌ OFF";
+  const backupStyle = setup?.autoBackup ? ButtonStyle.Success : ButtonStyle.Secondary;
+  const cleanStyle  = setup?.autoClean  ? ButtonStyle.Success : ButtonStyle.Secondary;
+
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("db:panel:setting:edit").setLabel("⚙️ Edit").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("db:panel:setting:edit").setLabel("🔑 Edit Kredensial").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("db:panel:setting:refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:panel:setting:backup:toggle").setLabel(backupLabel).setStyle(backupStyle),
+      new ButtonBuilder().setCustomId("db:panel:setting:clean:toggle").setLabel(cleanLabel).setStyle(cleanStyle),
     ),
   ];
 }

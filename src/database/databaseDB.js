@@ -19,7 +19,7 @@
  *     backup:      string | null,
  *     memberList:  string | null,
  *   },
- *   github: { repo: string | null },
+ *   github: { repo: string | null, branch: string, token: string | null },
  *   autoBackup: boolean,
  *   autoClean:  boolean,
  * }
@@ -49,7 +49,7 @@ const DEFAULT_DB = {
     backup:     null,
     memberList: null,
   },
-  github:     { repo: null },
+  github:     { repo: null, branch: "main", token: null },
   autoBackup: false,
   autoClean:  false,
 };
@@ -136,13 +136,29 @@ export class DatabaseDB {
 
   /**
    * Update pengaturan GitHub / auto backup / auto clean.
-   * @param {{ repo?: string|null, autoBackup?: boolean, autoClean?: boolean }} patch
+   * @param {{ repo?: string|null, branch?: string, token?: string|null, autoBackup?: boolean, autoClean?: boolean }} patch
    */
   updateSettings(patch) {
-    if ("repo"        in patch) this._data.github.repo = patch.repo ?? null;
-    if ("autoBackup"  in patch) this._data.autoBackup  = !!patch.autoBackup;
-    if ("autoClean"   in patch) this._data.autoClean   = !!patch.autoClean;
+    if ("repo"        in patch) this._data.github.repo   = patch.repo   ?? null;
+    if ("branch"      in patch) this._data.github.branch = patch.branch  || "main";
+    if ("token"       in patch) this._data.github.token  = patch.token  ?? null;
+    if ("autoBackup"  in patch) this._data.autoBackup    = !!patch.autoBackup;
+    if ("autoClean"   in patch) this._data.autoClean     = !!patch.autoClean;
     this._save();
+  }
+
+  /** Toggle autoBackup dan simpan. */
+  toggleAutoBackup() {
+    this._data.autoBackup = !this._data.autoBackup;
+    this._save();
+    return this._data.autoBackup;
+  }
+
+  /** Toggle autoClean dan simpan. */
+  toggleAutoClean() {
+    this._data.autoClean = !this._data.autoClean;
+    this._save();
+    return this._data.autoClean;
   }
 
   /** Reset HANYA konfigurasi setup (bukan data user/premium/backup). */

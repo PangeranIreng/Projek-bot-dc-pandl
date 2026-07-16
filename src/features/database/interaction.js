@@ -99,6 +99,82 @@ import {
   buildMemberListEmbed, buildMemberListComponents,
 } from "./embed.js";
 
+// ════════════════════════════════════════════════════════════════════════════
+// GITHUB API VALIDATION
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Validasi repo, branch, dan token ke GitHub API.
+ * Cek: repo ada, branch ada, token valid, izin push (write) ada.
+ *
+ * @param {string|null} repo   format "owner/repo"
+ * @param {string}      branch nama branch
+ * @param {string|null} token  Personal Access Token
+ * @returns {Promise<{ ok: true, fullName: string, private: boolean }|{ ok: false, reason: string }>}
+ */
+async function _validateGitHub(repo, branch, token) {
+  // Validasi format repo
+  if (!repo) return { ok: false, reason: "❌ Repository belum diisi." };
+  if (!/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo)) {
+    return { ok: false, reason: "❌ Format repository salah. Gunakan `owner/repo` (contoh: `PangeranIreng/Discord-Bot-Helper`).\nJangan gunakan URL GitHub." };
+  }
+  if (!token) return { ok: false, reason: "❌ Token belum diisi. Masukkan GitHub Personal Access Token." };
+
+  const headers = {
+    "User-Agent":    "Bawok-Bot/2.0",
+    "Accept":        "application/vnd.github+json",
+    "Authorization": `Bearer ${token}`,
+  };
+  const timeout = AbortSignal.timeout(12_000);
+
+  // ── 1. Cek Repo & Permission ──────────────────────────────────────────────
+  let repoRes;
+  try {
+    repoRes = await fetch(`https://api.github.com/repos/${repo}`, { headers, signal: timeout });
+  } catch (e) {
+    return { ok: false, reason: `❌ Gagal terhubung ke GitHub API: ${e.message}` };
+  }
+
+  if (repoRes.status === 401) return { ok: false, reason: "❌ Token tidak valid atau sudah kedaluwarsa.\nBuat token baru di **GitHub → Settings → Developer settings → Personal access tokens**." };
+  if (repoRes.status === 403) return { ok: false, reason: "❌ Token tidak punya izin akses ke repository ini." };
+  if (repoRes.status === 404) return { ok: false, reason: `❌ Repository \`${repo}\` tidak ditemukan.\nPeriksa format \`owner/repo\` dan pastikan token punya akses.` };
+  if (!repoRes.ok) return { ok: false, reason: `❌ GitHub API error saat cek repo: HTTP ${repoRes.status}.` };
+
+  const repoData = await repoRes.json();
+
+  // ── 2. Cek Izin Write (Push) ──────────────────────────────────────────────
+  if (repoData.permissions) {
+    if (!repoData.permissions.push) {
+      return {
+        ok:     false,
+        reason: "❌ Token **tidak memiliki izin Write (push)** ke repository ini.\n" +
+                "Pastikan scope `repo` (full) atau `contents:write` diaktifkan saat membuat token.",
+      };
+    }
+  }
+
+  // ── 3. Cek Branch ─────────────────────────────────────────────────────────
+  let branchRes;
+  try {
+    branchRes = await fetch(`https://api.github.com/repos/${repo}/branches/${branch}`, { headers, signal: AbortSignal.timeout(12_000) });
+  } catch (e) {
+    return { ok: false, reason: `❌ Gagal cek branch: ${e.message}` };
+  }
+
+  if (branchRes.status === 404) return { ok: false, reason: `❌ Branch \`${branch}\` tidak ditemukan di \`${repo}\`.\nPeriksa nama branch (biasanya \`main\` atau \`master\`).` };
+  if (!branchRes.ok) return { ok: false, reason: `❌ Gagal verifikasi branch: HTTP ${branchRes.status}.` };
+
+  return { ok: true, fullName: repoData.full_name, private: repoData.private };
+}
+
+/**
+ * Ambil token efektif: env var lebih prioritas dari DB (lebih aman).
+ * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
+ */
+function _effectiveToken(setup) {
+  return process.env.GITHUB_TOKEN || setup.github?.token || null;
+}
+
 // ── In-memory session stores ──────────────────────────────────────────────────
 
 /**
@@ -201,7 +277,7 @@ async function _sendPanels(client, guild, setup) {
   try {
     const ch  = await client.channels.fetch(setup.channels.botSetting).catch(() => null);
     if (ch?.isTextBased()) {
-      const msg = await ch.send({ embeds: [buildBotSettingEmbed(client, setup)], components: buildBotSettingComponents() });
+      const msg = await ch.send({ embeds: [buildBotSettingEmbed(client, setup)], components: buildBotSettingComponents(setup) });
       databaseDB.setMessage("botSetting", msg.id);
     } else errors.push("⚙️ Bot Setting: channel tidak valid");
   } catch (e) { errors.push(`⚙️ Bot Setting: ${e.message.slice(0, 80)}`); }
@@ -445,7 +521,7 @@ async function handleManageRepair(interaction) {
       try {
         let newMsg;
         if (def.key === "botSetting") {
-          newMsg = await ch.send({ embeds: [buildBotSettingEmbed(client, freshSetup)], components: buildBotSettingComponents() });
+          newMsg = await ch.send({ embeds: [buildBotSettingEmbed(client, freshSetup)], components: buildBotSettingComponents(freshSetup) });
         } else if (def.key === "backup") {
           newMsg = await ch.send({ embeds: [buildBackupPanelEmbed()], components: buildBackupPanelComponents() });
         } else {
@@ -519,73 +595,150 @@ async function handleManageResetCancel(interaction) {
 
 async function handleManageGitHub(interaction) {
   if (await _denyNotStaff(interaction)) return;
+  const setup = databaseDB.get();
   await interaction.update({
-    embeds:     [buildGitHubManagerEmbed(databaseDB.get())],
-    components: buildGitHubManagerComponents(),
+    embeds:     [buildGitHubManagerEmbed(setup)],
+    components: buildGitHubManagerComponents(setup),
   });
 }
 
 async function handleManageGitHubEdit(interaction) {
   if (await _denyNotStaff(interaction)) return;
 
-  const setup   = databaseDB.get();
-  const curRepo = process.env.GITHUB_REPO || setup.github?.repo || "";
+  const setup      = databaseDB.get();
+  const curRepo    = setup.github?.repo   || "";
+  const curBranch  = setup.github?.branch || "main";
+  // Jangan pre-fill token yang tersimpan di DB demi keamanan;
+  // hanya beri placeholder jika sudah ada token.
+  const tokenHint  = _effectiveToken(setup) ? "Token sudah dikonfigurasi — isi ulang untuk mengganti" : "";
 
   const modal = new ModalBuilder()
     .setCustomId("db:modal:github")
-    .setTitle("☁️ Konfigurasi GitHub")
+    .setTitle("🔑 Kredensial GitHub")
     .addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_repo")
-          .setLabel("GitHub Repo (owner/repo)")
+          .setLabel("Repository (format: owner/repo)")
           .setStyle(TextInputStyle.Short)
-          .setRequired(false)
+          .setRequired(true)
           .setMaxLength(100)
-          .setPlaceholder("contoh: namaowner/namarepository")
+          .setPlaceholder("Contoh: PangeranIreng/Discord-Bot-Helper")
           .setValue(curRepo),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId("auto_backup")
-          .setLabel("Auto Backup? (ya / tidak)")
+          .setCustomId("github_branch")
+          .setLabel("Branch")
           .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(10)
-          .setValue(setup.autoBackup ? "ya" : "tidak"),
+          .setRequired(true)
+          .setMaxLength(100)
+          .setPlaceholder("Contoh: main")
+          .setValue(curBranch),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId("auto_clean")
-          .setLabel("Auto Clean? (ya / tidak)")
+          .setCustomId("github_token")
+          .setLabel("Personal Access Token (kosongkan jika tidak ubah)")
           .setStyle(TextInputStyle.Short)
           .setRequired(false)
-          .setMaxLength(10)
-          .setValue(setup.autoClean ? "ya" : "tidak"),
+          .setMaxLength(200)
+          .setPlaceholder(tokenHint || "ghp_xxxxxxxxxxxxxxxxxxxx"),
       ),
     );
 
   await interaction.showModal(modal);
 }
 
+async function handleManageGitHubBackupToggle(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const newVal = databaseDB.toggleAutoBackup();
+  const setup  = databaseDB.get();
+  consoleLog("db_setting", "🔄 Auto Backup", newVal ? "Diaktifkan" : "Dinonaktifkan").catch(() => {});
+  await _refreshBotSettingPanel(interaction.client, setup);
+  await interaction.update({
+    embeds:     [buildGitHubManagerEmbed(setup)],
+    components: buildGitHubManagerComponents(setup),
+  });
+}
+
+async function handleManageGitHubCleanToggle(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const newVal = databaseDB.toggleAutoClean();
+  const setup  = databaseDB.get();
+  consoleLog("db_setting", "🧹 Auto Clean", newVal ? "Diaktifkan" : "Dinonaktifkan").catch(() => {});
+  await _refreshBotSettingPanel(interaction.client, setup);
+  await interaction.update({
+    embeds:     [buildGitHubManagerEmbed(setup)],
+    components: buildGitHubManagerComponents(setup),
+  });
+}
+
+async function handleManageGitHubBack(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  await interaction.update({
+    embeds:     [buildSetupManageEmbed(databaseDB.get())],
+    components: buildSetupManageComponents(),
+  });
+}
+
 async function handleGitHubModalSubmit(interaction) {
   if (await _denyNotStaff(interaction)) return;
   await interaction.deferUpdate();
 
-  const repo       = interaction.fields.getTextInputValue("github_repo").trim() || null;
-  const autoBackup = /^ya$/i.test(interaction.fields.getTextInputValue("auto_backup").trim());
-  const autoClean  = /^ya$/i.test(interaction.fields.getTextInputValue("auto_clean").trim());
+  const repo       = interaction.fields.getTextInputValue("github_repo").trim();
+  const branch     = interaction.fields.getTextInputValue("github_branch").trim() || "main";
+  const tokenInput = interaction.fields.getTextInputValue("github_token").trim();
 
-  databaseDB.updateSettings({ repo, autoBackup, autoClean });
+  // Gunakan token baru jika diisi; jika tidak, gunakan token yang sudah ada
+  const setup          = databaseDB.get();
+  const effectiveToken = tokenInput || _effectiveToken(setup);
 
-  consoleLog("db_github", "☁️ GitHub Connected", `Repo: ${repo ?? "—"}`).catch(() => {});
+  // ── Validasi ke GitHub API ─────────────────────────────────────────────────
+  const result = await _validateGitHub(repo, branch, effectiveToken);
 
-  // Refresh panel Bot Setting dengan setting terbaru
-  await _refreshBotSettingPanel(interaction.client, databaseDB.get());
+  if (!result.ok) {
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle("❌ Validasi GitHub Gagal")
+          .setDescription(result.reason)
+          .addFields({ name: "📌 Input", value: `Repo: \`${repo}\`\nBranch: \`${branch}\`\nToken: ${effectiveToken ? "diisi" : "kosong"}`, inline: false })
+          .setFooter({ text: "Pangeran Assistant AI • GitHub Manager" })
+          .setTimestamp(),
+      ],
+      components: buildGitHubManagerComponents(setup),
+    });
+    return;
+  }
+
+  // ── Simpan konfigurasi ─────────────────────────────────────────────────────
+  const patch = { repo, branch };
+  if (tokenInput) patch.token = tokenInput;           // hanya simpan jika diisi ulang
+  databaseDB.updateSettings(patch);
+
+  const freshSetup = databaseDB.get();
+  consoleLog("db_github", "☁️ GitHub Connected", `Repo: ${result.fullName} | Branch: ${branch}`).catch(() => {});
+  await _refreshBotSettingPanel(interaction.client, freshSetup);
 
   await interaction.editReply({
-    embeds:     [buildGitHubManagerEmbed(databaseDB.get())],
-    components: buildGitHubManagerComponents(),
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle("✅ Validasi GitHub Berhasil")
+        .setDescription(
+          `Konfigurasi GitHub berhasil disimpan dan diverifikasi.\n\n` +
+          `🐙 **Repo:** \`${result.fullName}\`\n` +
+          `🌿 **Branch:** \`${branch}\`\n` +
+          `🔒 **Akses:** ${result.private ? "Private" : "Public"}\n` +
+          `✅ **Read:** OK\n` +
+          `✅ **Write (push):** OK`,
+        )
+        .setFooter({ text: "Pangeran Assistant AI • GitHub Manager" })
+        .setTimestamp(),
+    ],
+    components: buildGitHubManagerComponents(freshSetup),
   });
 }
 
@@ -596,40 +749,43 @@ async function handleGitHubModalSubmit(interaction) {
 async function handleSettingEdit(interaction) {
   if (await _denyNotStaff(interaction)) return;
 
-  const setup   = databaseDB.get();
-  const curRepo = process.env.GITHUB_REPO || setup.github?.repo || "";
+  const setup      = databaseDB.get();
+  const curRepo    = setup.github?.repo   || "";
+  const curBranch  = setup.github?.branch || "main";
+  const tokenHint  = _effectiveToken(setup) ? "Token sudah dikonfigurasi — isi ulang untuk mengganti" : "";
 
   const modal = new ModalBuilder()
     .setCustomId("db:modal:setting")
-    .setTitle("⚙️ Edit Bot Setting")
+    .setTitle("🔑 Edit Kredensial GitHub")
     .addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("github_repo")
-          .setLabel("GitHub Repo (owner/repo)")
+          .setLabel("Repository (format: owner/repo)")
           .setStyle(TextInputStyle.Short)
-          .setRequired(false)
+          .setRequired(true)
           .setMaxLength(100)
-          .setPlaceholder("contoh: namaowner/namarepository")
+          .setPlaceholder("Contoh: PangeranIreng/Discord-Bot-Helper")
           .setValue(curRepo),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId("auto_backup")
-          .setLabel("Auto Backup? (ya / tidak)")
+          .setCustomId("github_branch")
+          .setLabel("Branch")
           .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(10)
-          .setValue(setup.autoBackup ? "ya" : "tidak"),
+          .setRequired(true)
+          .setMaxLength(100)
+          .setPlaceholder("Contoh: main")
+          .setValue(curBranch),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId("auto_clean")
-          .setLabel("Auto Clean? (ya / tidak)")
+          .setCustomId("github_token")
+          .setLabel("Personal Access Token (kosongkan jika tidak ubah)")
           .setStyle(TextInputStyle.Short)
           .setRequired(false)
-          .setMaxLength(10)
-          .setValue(setup.autoClean ? "ya" : "tidak"),
+          .setMaxLength(200)
+          .setPlaceholder(tokenHint || "ghp_xxxxxxxxxxxxxxxxxxxx"),
       ),
     );
 
@@ -640,14 +796,81 @@ async function handleSettingModalSubmit(interaction) {
   if (await _denyNotStaff(interaction)) return;
   await interaction.deferReply({ ephemeral: true });
 
-  const repo       = interaction.fields.getTextInputValue("github_repo").trim() || null;
-  const autoBackup = /^ya$/i.test(interaction.fields.getTextInputValue("auto_backup").trim());
-  const autoClean  = /^ya$/i.test(interaction.fields.getTextInputValue("auto_clean").trim());
+  const repo       = interaction.fields.getTextInputValue("github_repo").trim();
+  const branch     = interaction.fields.getTextInputValue("github_branch").trim() || "main";
+  const tokenInput = interaction.fields.getTextInputValue("github_token").trim();
 
-  databaseDB.updateSettings({ repo, autoBackup, autoClean });
-  await _refreshBotSettingPanel(interaction.client, databaseDB.get());
-  consoleLog("db_save", "📝 Edit Setup", `Setting diperbarui oleh ${interaction.user.username}`).catch(() => {});
-  await interaction.editReply({ content: "✅ Pengaturan disimpan dan panel diperbarui." });
+  const setup          = databaseDB.get();
+  const effectiveToken = tokenInput || _effectiveToken(setup);
+
+  // ── Validasi ke GitHub API ─────────────────────────────────────────────────
+  const result = await _validateGitHub(repo, branch, effectiveToken);
+
+  if (!result.ok) {
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle("❌ Validasi GitHub Gagal")
+          .setDescription(result.reason)
+          .addFields({ name: "📌 Input", value: `Repo: \`${repo}\`\nBranch: \`${branch}\`\nToken: ${effectiveToken ? "diisi" : "kosong"}`, inline: false })
+          .setFooter({ text: "Pangeran Assistant AI • Bot Setting" })
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  // ── Simpan konfigurasi ─────────────────────────────────────────────────────
+  const patch = { repo, branch };
+  if (tokenInput) patch.token = tokenInput;
+  databaseDB.updateSettings(patch);
+
+  const freshSetup = databaseDB.get();
+  await _refreshBotSettingPanel(interaction.client, freshSetup);
+  consoleLog("db_save", "📝 Edit Setting", `Diperbarui oleh ${interaction.user.username} — Repo: ${result.fullName}`).catch(() => {});
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle("✅ Validasi Berhasil — Setting Disimpan")
+        .setDescription(
+          `🐙 **Repo:** \`${result.fullName}\`\n` +
+          `🌿 **Branch:** \`${branch}\`\n` +
+          `🔒 **Akses:** ${result.private ? "Private" : "Public"}\n` +
+          `✅ **Read & Write:** OK\n\n` +
+          "Panel Bot Setting diperbarui.",
+        )
+        .setFooter({ text: "Pangeran Assistant AI • Bot Setting" })
+        .setTimestamp(),
+    ],
+  });
+}
+
+async function handleSettingBackupToggle(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const newVal = databaseDB.toggleAutoBackup();
+  const setup  = databaseDB.get();
+  consoleLog("db_setting", "🔄 Auto Backup", newVal ? "Diaktifkan" : "Dinonaktifkan").catch(() => {});
+  await _refreshBotSettingPanel(interaction.client, setup);
+  // Respon ephemeral agar panel channel tidak perlu di-refresh manual
+  await interaction.reply({
+    content:   `🔄 Auto Backup sekarang **${newVal ? "✅ ON" : "❌ OFF"}**.`,
+    ephemeral: true,
+  });
+}
+
+async function handleSettingCleanToggle(interaction) {
+  if (await _denyNotStaff(interaction)) return;
+  const newVal = databaseDB.toggleAutoClean();
+  const setup  = databaseDB.get();
+  consoleLog("db_setting", "🧹 Auto Clean", newVal ? "Diaktifkan" : "Dinonaktifkan").catch(() => {});
+  await _refreshBotSettingPanel(interaction.client, setup);
+  await interaction.reply({
+    content:   `🧹 Auto Clean sekarang **${newVal ? "✅ ON" : "❌ OFF"}**.`,
+    ephemeral: true,
+  });
 }
 
 async function handleSettingRefresh(interaction) {
@@ -662,7 +885,7 @@ async function _refreshBotSettingPanel(client, setup) {
   try {
     const ch  = await client.channels.fetch(setup.channels.botSetting).catch(() => null);
     const msg = ch ? await ch.messages.fetch(setup.messages.botSetting).catch(() => null) : null;
-    if (msg) await msg.edit({ embeds: [buildBotSettingEmbed(client, setup)], components: buildBotSettingComponents() });
+    if (msg) await msg.edit({ embeds: [buildBotSettingEmbed(client, setup)], components: buildBotSettingComponents(setup) });
   } catch (e) {
     logger.warn(`[Database] Gagal refresh Bot Setting: ${e.message}`);
   }
