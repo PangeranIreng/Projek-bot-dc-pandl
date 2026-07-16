@@ -15,10 +15,11 @@ import {
   StringSelectMenuBuilder,
 } from "discord.js";
 
-import { BOOMBOX_CONFIG }  from "../boombox/config.js";
-import { db }              from "../../database/db.js";
-import { LOG_SEP }         from "../boombox/embed.js";
-import { logger }          from "../../utils/logger.js";
+import { BOOMBOX_CONFIG }     from "../boombox/config.js";
+import { db }                 from "../../database/db.js";
+import { LOG_SEP }            from "../boombox/embed.js";
+import { logger }             from "../../utils/logger.js";
+import { buildPublicLogPanel } from "../boombox/logs/viewer.js";
 
 /** Format an ISO timestamp to WIB (UTC+7) display string. */
 function formatWIB(iso) {
@@ -193,6 +194,15 @@ export function buildViewAllSelectRow(totalPages) {
 
 // ── Auto-update dashboard (called after each successful BoomBox) ───────────────
 
+/**
+ * Pastikan panel BoomBox Logs V2 (3 button platform) ada di log channel.
+ * Dipanggil setiap kali BoomBox berhasil melakukan konversi.
+ *
+ * Logic:
+ *   - Jika messageId tersimpan dan pesan masih ada → edit ke format V2 (idempoten).
+ *   - Jika pesan tidak ditemukan → buat baru, simpan messageId baru.
+ *   - Panel V2 bersifat statis (3 tombol platform) — user klik untuk buka viewer ephemeral.
+ */
 export async function updateBoomBoxLogDashboard(client, { resetToFirstPage = true } = {}) {
   try {
     // V2: baca log channel dari DB, fallback ke hardcode jika belum di-setup
@@ -207,30 +217,25 @@ export async function updateBoomBoxLogDashboard(client, { resetToFirstPage = tru
       return;
     }
 
+    // V2: panel statis dengan 3 tombol platform (bukan nav-panel lama)
     const state   = db.getLogState();
-    const entries = state.entries ?? [];
-    const page    = resetToFirstPage ? 1 : 1;
-    const payload = {
-      content:    "",
-      embeds:     [buildLogDashboardEmbed(entries, page)],
-      components: buildLogDashboardComponents(entries, page),
-    };
+    const payload = buildPublicLogPanel();
 
     if (state.messageId) {
       try {
         const msg = await ch.messages.fetch(state.messageId);
         await msg.edit(payload);
-        logger.debug("[BoomBox] Log dashboard updated");
+        logger.debug("[BoomBox] Log panel V2 ensured");
         return;
       } catch {
-        logger.info("[BoomBox] Previous BoomBox Log message is gone — creating a new one");
+        logger.info("[BoomBox] Previous panel message gone — creating new one");
       }
     }
 
     const newMsg = await ch.send(payload);
     db.setLogState({ messageId: newMsg.id });
-    logger.info(`[BoomBox] BoomBox Log dashboard created: ${newMsg.id}`);
+    logger.info(`[BoomBox] BoomBox Logs panel V2 created: ${newMsg.id}`);
   } catch (e) {
-    logger.error(`[BoomBox] Failed to update log dashboard: ${e.message}`);
+    logger.error(`[BoomBox] Failed to update log panel: ${e.message}`);
   }
 }

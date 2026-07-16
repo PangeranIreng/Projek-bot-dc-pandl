@@ -1,0 +1,143 @@
+BoomBox Logs V2 masih belum sesuai konsep. Jangan mengubah fitur lain. Fokus hanya pada BoomBox Logs.
+
+WAJIB:
+
+1. Saat admin menjalankan /setupboombox → Setup Logs → Pilih Channel Logs:
+- Bot mengecek apakah sudah ada pesan BoomBox Logs lama.
+- Jika ada, EDIT pesan BoomBox Logs lama menjadi tampilan V2.
+- JANGAN membuat pesan baru jika messageId lama masih valid.
+- Jika messageId tidak ditemukan, baru buat panel baru lalu simpan messageId.
+
+2. Semua URL BoomBox lama WAJIB dipertahankan.
+- JANGAN menghapus history.
+- JANGAN reset database.
+- JANGAN migrasi database.
+- JANGAN menghapus URL BoomBox lama.
+
+3. Semua history lama otomatis dianggap sebagai Platform YouTube karena BoomBox lama hanya mendukung YouTube.
+
+Contoh:
+
+history[]
+
+↓
+
+BoomBox Logs
+
+🔴 YouTube
+
+Semua URL lama muncul di sini.
+
+4. Setelah update:
+
+YouTube → masuk ke Logs YouTube
+
+TikTok → masuk ke Logs TikTok
+
+Spotify → masuk ke Logs Spotify
+
+5. Tetap menggunakan SATU channel BoomBox Logs.
+
+6. Tampilan panel BoomBox Logs lama diganti menjadi panel baru.
+
+Contoh:
+
+📼 BoomBox Logs
+
+Pilih platform untuk melihat riwayat BoomBox.
+
+Button:
+
+🔴 YouTube
+⚫ TikTok
+🟢 Spotify
+
+Footer:
+
+ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴘᴀɴɢᴇʀᴀɴ ᴀꜱꜱɪꜱᴛᴀɴᴛ
+
+7. Saat tombol YouTube ditekan:
+
+📼 BoomBox Logs
+
+🔴 YouTube • Page 1/12
+
+━━━━━━━━━━━━━━━━━━
+
+① 🎵 Judul Lagu
+
+🔗 BoomBox URL
+
+🕒 Tanggal • Jam
+
+━━━━━━━━━━━━━━━━━━
+
+maksimal 5 log per halaman.
+
+Button:
+
+⏮️ First
+◀️ Prev
+🔄 Refresh
+▶️ Next
+⏭️ Last
+
+Dropdown:
+
+📄 Pilih Halaman
+
+Dropdown kedua:
+
+🎵 Ganti Platform
+
+🔴 YouTube
+⚫ TikTok
+🟢 Spotify
+
+8. TikTok dan Spotify tampilannya IDENTIK.
+
+Bedanya hanya:
+
+🔴 YouTube
+
+⚫ TikTok
+
+🟢 Spotify
+
+Semua wajib menampilkan:
+
+- Judul lagu
+- BoomBox URL
+- Tanggal
+- Jam
+
+9. Semua viewer menggunakan interaction ephemeral (viewer per-user).
+
+User A membuka YouTube tidak boleh mengubah viewer User B.
+
+User B membuka TikTok tidak boleh mengubah viewer User A.
+
+User C membuka Spotify tidak boleh mengubah viewer user lain.
+
+Jangan gunakan state global.
+
+10. Jangan mengubah:
+
+- Engine downloader
+- History lama
+- Database lama
+- Setup lain
+- Embed BoomBox hasil convert
+
+Fokus hanya BoomBox Logs.
+
+11. Setelah selesai:
+
+- Audit ulang.
+- Pastikan semua URL BoomBox lama masih ada.
+- Pastikan panel BoomBox Logs lama berhasil di-edit menjadi V2.
+- Pastikan history lama otomatis muncul di kategori YouTube.
+- Pastikan URL baru masuk sesuai platform (YouTube, TikTok, Spotify).
+- Pastikan tidak ada data yang hilang.
+
+Jangan mengatakan selesai sebelum semua poin di atas benar-benar diterapkan.

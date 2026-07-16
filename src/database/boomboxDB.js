@@ -191,7 +191,13 @@ export class BoomBoxDB {
   getHistoryByPlatform(platform = null) {
     const h = this._data.history ?? [];
     const filtered = platform
-      ? h.filter(e => e.platform === platform)
+      ? h.filter(e => {
+          if (platform === "YouTube") {
+            // Entries lama (tanpa field platform) dianggap YouTube
+            return !e.platform || e.platform === "YouTube";
+          }
+          return e.platform === platform;
+        })
       : h;
     return [...filtered].reverse(); // newest-first, non-destructive
   }
