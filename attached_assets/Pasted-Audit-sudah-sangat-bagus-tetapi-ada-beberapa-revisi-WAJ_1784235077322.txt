@@ -1,0 +1,278 @@
+Audit sudah sangat bagus, tetapi ada beberapa revisi WAJIB yang harus diikuti sebelum implementasi. Jangan mulai menulis kode sampai seluruh revisi di bawah ini dipahami.
+
+==========================
+REVISI WAJIB
+==========================
+
+1. History BoomBox
+
+Jangan membuat migrasi besar history[] menjadi logs.youtube[].
+
+Gunakan history[] sebagai sumber data utama.
+
+BoomBox Logs Viewer cukup memfilter berdasarkan platform:
+
+- YouTube
+- TikTok
+- Spotify
+
+Dengan begitu semua log lama otomatis tetap terbaca tanpa perlu memindahkan data.
+
+Jika nanti diperlukan logs terpisah, tetap harus backward compatible dengan history lama.
+
+==========================
+
+2. Cache
+
+Jangan memindahkan seluruh cache ke database.
+
+Tetap gunakan:
+
+- Memory Cache
+- Metadata Cache
+
+karena jauh lebih cepat.
+
+Database hanya boleh digunakan untuk data cache yang memang perlu dipertahankan setelah restart apabila benar-benar diperlukan.
+
+Prioritaskan performa.
+
+==========================
+
+3. setup.js
+
+Jangan rename.
+
+Jangan redirect.
+
+Jangan ubah command /setup yang sudah ada.
+
+BoomBox mempunyai command sendiri:
+
+/setupboombox
+
+Keduanya harus tetap bisa digunakan.
+
+==========================
+
+4. Role Duration
+
+Jangan menyimpan nama role secara permanen di database.
+
+Bot harus membaca role Discord secara otomatis setiap kali panel dibuka.
+
+Database cukup menyimpan:
+
+Role ID
+↓
+
+Durasi Maksimal
+
+Nama role selalu diambil langsung dari Discord.
+
+Jika owner membuat role baru maka otomatis muncul.
+
+Jika role dihapus maka otomatis hilang.
+
+Tidak boleh hardcode.
+
+==========================
+
+5. TikTok
+
+Jangan membuat pipeline downloader baru.
+
+Perluas pipeline BoomBox yang sudah ada.
+
+Gunakan engine yang sama:
+
+Handler
+
+↓
+
+Platform Detection
+
+↓
+
+YouTube
+TikTok
+Spotify
+
+↓
+
+yt-dlp
+
+↓
+
+Top4Top
+
+↓
+
+BoomBox URL
+
+Satu pipeline.
+
+==========================
+
+6. Cleaner
+
+Cleaner harus diperluas.
+
+Yang boleh dibersihkan:
+
+- Temporary Files
+- Metadata Cache
+- Upload Cache
+- Download Cache
+- Expired Cache
+- Orphan Files
+- Junk Files
+- Attached Assets yang sudah tidak digunakan
+- Temporary Logs
+
+Yang TIDAK BOLEH dihapus:
+
+- Database
+- Premium
+- Limit
+- Setup BoomBox
+- History
+- BoomBox Logs
+- Backup
+- Config
+- URL BoomBox
+
+Cleaner harus aman.
+
+==========================
+
+7. Setup Channel
+
+Tetap sesuai konsep.
+
+Owner memilih:
+
+Setup Channel
+
+↓
+
+Platform
+
+↓
+
+YouTube
+
+↓
+
+Pilih Channel
+
+↓
+
+Simpan
+
+Lalu sama untuk:
+
+TikTok
+
+Spotify
+
+Jangan langsung menampilkan semua channel sekaligus.
+
+==========================
+
+8. BoomBox Logs
+
+BoomBox Logs tetap menggunakan SATU CHANNEL.
+
+Contoh:
+
+#boombox-logs
+
+Jangan membuat:
+
+#logs-youtube
+
+#logs-tiktok
+
+#logs-spotify
+
+Semua berada pada satu channel.
+
+Viewer dipisahkan menggunakan:
+
+📺 YouTube
+
+🎵 TikTok
+
+🎧 Spotify
+
+==========================
+
+9. BoomBox Logs Viewer
+
+Konsep yang sudah disepakati WAJIB dipakai.
+
+Saat membuka BoomBox Logs.
+
+Pertama tampil:
+
+Pilih Platform
+
+↓
+
+YouTube
+
+TikTok
+
+Spotify
+
+Setelah memilih platform.
+
+Tampilkan maksimal 5 log setiap halaman.
+
+Di bawah embed harus ada:
+
+Buttons
+
+First
+
+Prev
+
+Refresh
+
+Next
+
+Last
+
+Dropdown
+
+Pilih Halaman
+
+Dropdown
+
+Ganti Platform
+
+Jangan mengubah konsep ini.
+
+==========================
+
+10. Implementasi
+
+Setelah seluruh revisi ini dipahami.
+
+Baru mulai implementasi.
+
+Jangan mengubah engine lama.
+
+Jangan menghapus fitur lama.
+
+Gunakan migrasi.
+
+Prioritaskan kompatibilitas dengan:
+
+- Pterodactyl
+- Railway
+- Replit
+- VPS Linux
+
+Setelah selesai implementasi, lakukan audit ulang dan pastikan seluruh fitur lama tetap berjalan dengan baik.
