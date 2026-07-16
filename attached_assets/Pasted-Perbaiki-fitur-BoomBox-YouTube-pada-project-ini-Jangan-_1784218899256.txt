@@ -1,0 +1,87 @@
+Perbaiki fitur BoomBox YouTube pada project ini. Jangan menghapus fitur yang sudah ada, hanya perbaiki downloader dan error handling.
+
+Masalah saat ini:
+- yt-dlp terkena Anti-Bot YouTube ("Sign in to confirm you're not a bot").
+- Fallback terakhir gagal karena ffmpeg tidak ditemukan.
+- Bot akhirnya mengirim "Video tidak ditemukan (404)" padahal penyebab sebenarnya bukan 404.
+- URL BoomBox tidak jadi dibuat.
+
+Yang harus diperbaiki:
+
+1. Jangan ubah command BoomBox dan sistem limit/premium.
+
+2. Perbaiki downloader YouTube agar:
+   - Coba provider 1.
+   - Jika gagal anti-bot, otomatis lanjut provider 2.
+   - Jika gagal lagi, lanjut provider 3.
+   - Jangan langsung mengubah semua error menjadi 404.
+
+3. Tambahkan deteksi error:
+   - Anti Bot
+   - DRM Protected
+   - Video Private
+   - Video Deleted
+   - Region Locked
+   - Age Restricted
+   - Live Stream
+   - FFmpeg Missing
+   - Network Error
+   - Timeout
+
+4. Jika penyebab FFmpeg belum ada:
+   - Install otomatis jika environment mendukung.
+   - Atau tampilkan pesan:
+     "FFmpeg belum tersedia pada server."
+
+5. Jika penyebab Anti Bot:
+   jangan ubah menjadi 404.
+   tampilkan:
+   "YouTube meminta verifikasi bot."
+
+6. Jika provider pertama gagal karena Anti Bot,
+   langsung lanjut provider berikutnya tanpa menghentikan proses.
+
+7. Jika seluruh provider gagal:
+   kirim error sesuai penyebab terakhir.
+   Jangan pernah mengubah semuanya menjadi:
+   Video tidak ditemukan (404).
+
+8. Tambahkan logging seperti:
+
+[Provider 1]
+Status:
+Reason:
+
+[Provider 2]
+Status:
+Reason:
+
+[Provider 3]
+Status:
+Reason:
+
+Final Reason:
+
+9. Pastikan Video Info tetap bisa diambil bila memungkinkan.
+
+10. Jika berhasil download:
+- upload audio ke Top4Top (atau uploader yang sudah digunakan project)
+- buat URL BoomBox GTA SA-MP seperti sebelumnya.
+- Jangan ubah format URL BoomBox.
+
+11. Jangan mengubah:
+- sistem premium
+- sistem limit
+- scanner
+- ticket
+- command lain
+- database
+- log channel
+
+12. Pastikan project tetap kompatibel dengan:
+- Railway
+- Node.js 22
+- pnpm
+- GitHub Auto Deploy
+
+13. Setelah selesai, tampilkan daftar file yang diubah beserta alasan perubahan pada tiap file.

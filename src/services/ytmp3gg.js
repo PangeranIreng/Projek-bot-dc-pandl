@@ -346,6 +346,9 @@ function _parseOutput(stdout, tmpDir, type, quality) {
 
 /**
  * Translate a raw yt-dlp error into a user-friendly Error.
+ * Each returned Error carries a `.priority` property (1–9, higher = more
+ * informative/specific) so the caller can pick the best error to surface to
+ * the user when multiple providers all fail.
  * @private
  */
 function _translateError(err) {
@@ -362,38 +365,82 @@ function _translateError(err) {
   if (!origStderr && !origStdout) origParts.push(`message:\n${err.message ?? ""}`);
   logger.error(`[ytmp3gg] Original Error:\n${origParts.join("\n\n")}`);
 
-  if (err.killed || lower.includes("timed out") || err.code === "ETIMEDOUT")
-    return new Error("Network timeout — download timed out (>120s), coba lagi nanti");
-  if (lower.includes("unsupported url"))
-    return new Error("Unsupported URL — link tidak dikenali oleh downloader, pastikan link valid dan publik");
-  if (lower.includes("has been removed") || lower.includes("video_removed") || lower.includes("telah dihapus"))
-    return new Error("Deleted Video — video ini telah dihapus oleh pembuatnya");
-  if (lower.includes("video unavailable"))
-    return new Error("Video tidak tersedia atau telah dihapus");
-  if (lower.includes("private video") || lower.includes("this account is private"))
-    return new Error("Private Video — video ini bersifat privat, tidak dapat diakses");
-  // Anti-bot detection ("Sign in to confirm you're not a bot/robot") is
-  // IP/client-fingerprint based, NOT a real login requirement — must be
-  // checked BEFORE the generic "sign in" branch below and must NOT be
-  // classified as a permanent failure, or the multi-method fallback loop
-  // aborts after the very first player-client attempt instead of trying
-  // the remaining ones (this was the root cause of most YouTube failures).
-  if (lower.includes("not a bot") || lower.includes("not a robot") || lower.includes("confirm you're not"))
-    return new Error("Anti-Bot Detection — YouTube meminta verifikasi bot pada client ini, mencoba metode lain...");
-  if (lower.includes("sign in") || lower.includes("age-restricted"))
-    return new Error("Video memerlukan login atau dibatasi usia");
-  if (lower.includes("not found") || lower.includes("no such video"))
-    return new Error("Video tidak ditemukan (404)");
-  if (lower.includes("403") || lower.includes("forbidden"))
-    return new Error("HTTP 403 — akses ditolak oleh server sumber");
-  if (lower.includes("429") || lower.includes("too many requests"))
-    return new Error("Rate limited (HTTP 429) — tunggu beberapa menit");
-  if (lower.includes("not available in your country") || lower.includes("unavailable in your country") || lower.includes("blocked it in your country"))
-    return new Error("Region Blocked — video tidak tersedia di wilayah server");
-  if (lower.includes("copyright"))
-    return new Error("Region Blocked — video diblokir karena klaim copyright");
+  const make = (msg, priority) => Object.assign(new Error(msg), { priority });
 
-  return new Error(`Download gagal: ${raw.slice(0, 200)}`);
+  // ── Timeout / network ── priority 4 (transient, informative)
+  if (err.killed || err.code === "ETIMEDOUT" ||
+      lower.includes("timed out") || lower.includes("etimedout") ||
+      lower.includes("connection reset") || lower.includes("econnreset"))
+    return make("Network timeout — download timed out, coba lagi nanti", 4);
+
+  // ── ffmpeg missing — priority 8 (specific, actionable)
+  // yt-dlp exits with a clear message when it can't find ffmpeg.
+  if (lower.includes("ffmpeg") && (lower.includes("not found") || lower.includes("no such file") || lower.includes("not installed") || lower.includes("couldn't find")))
+    return make("FFmpeg belum tersedia pada server — audio conversion tidak dapat dilakukan", 8);
+
+  // ── DRM protected — priority 8
+  if (lower.includes("drm") || lower.includes("widevine") || lower.includes("encrypted") || lower.includes("protection system"))
+    return make("DRM Protected — video ini dilindungi DRM dan tidak dapat diunduh", 8);
+
+  // ── Live stream — priority 8
+  if (lower.includes("is a live event") || lower.includes("live stream") || lower.includes("is currently live") ||
+      lower.includes("live_broadcast") || lower.includes("is live") || lower.includes("premieres"))
+    return make("Live Stream — video ini adalah siaran langsung dan tidak dapat diunduh", 8);
+
+  // ── Truly deleted — priority 9
+  if (lower.includes("has been removed") || lower.includes("video_removed") || lower.includes("telah dihapus"))
+    return make("Deleted Video — video ini telah dihapus oleh pembuatnya", 9);
+
+  // ── Private video — priority 9
+  if (lower.includes("private video") || lower.includes("this account is private") || lower.includes("this video is private"))
+    return make("Private Video — video ini bersifat privat, tidak dapat diakses", 9);
+
+  // ── Anti-bot detection — priority 7
+  // MUST be checked BEFORE the generic "sign in" branch below.
+  // "Sign in to confirm you're not a bot" is an IP/client-fingerprint challenge —
+  // NOT a real login requirement. Translating it as "needs login" would classify
+  // it as a permanent failure and abort the entire multi-method fallback chain.
+  if (lower.includes("not a bot") || lower.includes("not a robot") ||
+      lower.includes("confirm you're not") || lower.includes("confirm that you're not"))
+    return make("Anti-Bot Detection — YouTube meminta verifikasi bot pada client ini, mencoba metode lain...", 7);
+
+  // ── Age-restricted / sign-in required — priority 8
+  if (lower.includes("age-restricted") || lower.includes("age restricted"))
+    return make("Age Restricted — video ini dibatasi usia dan memerlukan login", 8);
+
+  if (lower.includes("sign in") || lower.includes("log in") || lower.includes("login required"))
+    return make("Video memerlukan login — tidak dapat diakses tanpa akun", 8);
+
+  // ── Unsupported URL — priority 6
+  if (lower.includes("unsupported url"))
+    return make("Unsupported URL — link tidak dikenali oleh downloader, pastikan link valid dan publik", 6);
+
+  // ── "Video unavailable" — priority 3 (ambiguous: could be PO-token rejection)
+  // Kept LOW priority so anti-bot / specific errors win when multiple providers fail.
+  if (lower.includes("video unavailable"))
+    return make("Video tidak tersedia — mungkin karena pembatasan akses oleh YouTube", 3);
+
+  // ── HTTP 403 — priority 5
+  if (lower.includes("403") || lower.includes("forbidden"))
+    return make("HTTP 403 — akses ditolak oleh server sumber", 5);
+
+  // ── Rate limited — priority 6
+  if (lower.includes("429") || lower.includes("too many requests"))
+    return make("Rate limited (HTTP 429) — tunggu beberapa menit", 6);
+
+  // ── Region blocked — priority 8
+  if (lower.includes("not available in your country") || lower.includes("unavailable in your country") ||
+      lower.includes("blocked it in your country"))
+    return make("Region Blocked — video tidak tersedia di wilayah server", 8);
+  if (lower.includes("copyright"))
+    return make("Region Blocked — video diblokir karena klaim copyright", 8);
+
+  // ── HTTP 404 / not found — priority 2 (very low: might be client rejection, not real 404)
+  if (lower.includes("not found") || lower.includes("no such video") || lower.includes("http error 404"))
+    return make("Video tidak dapat ditemukan — pastikan link valid dan video masih tersedia", 2);
+
+  // ── Generic — priority 1 (lowest)
+  return make(`Download gagal: ${raw.slice(0, 200)}`, 1);
 }
 
 /**
@@ -408,23 +455,37 @@ function _translateError(err) {
 function _isPermanentFailure(err) {
   const m = err.message.toLowerCase();
   return (
-    // NOTE: "tidak tersedia" (video unavailable) is intentionally EXCLUDED here.
-    // YouTube returns "Video unavailable" when a yt-dlp player-client is rejected
-    // due to missing PO-tokens — this is a CLIENT auth failure, not a real video
-    // being gone. Classifying it as permanent aborted the entire fallback chain
-    // (ytdl-core, KaizenAPI, Piped, Invidious were never tried) even when the video
-    // was perfectly accessible via those independent providers.
-    // Only include failures that NO alternate provider can recover:
+    // Only include failures that NO alternate provider can recover.
+    // The video itself must be inaccessible regardless of HOW it is downloaded.
+    //
+    // "tidak tersedia" (video unavailable) is EXCLUDED: YouTube returns this for
+    // PO-token client rejections — a CLIENT auth failure, not a deleted video.
+    //
+    // "tidak ditemukan" / HTTP 404 is EXCLUDED: YouTube returns HTTP 404 for
+    // some API endpoints when a player-client isn't authorised — that's a client
+    // rejection, not a real missing video. Let all fallback providers try first.
     m.includes("dihapus")          ||  // truly deleted video
-    m.includes("privat")           ||  // private video — no provider can access it
-    m.includes("usia")             ||  // age-restricted requiring login
-    m.includes("login")            ||  // needs actual account login
-    m.includes("region blocked")   ||  // truly geo-blocked
-    m.includes("tidak ditemukan")      // 404 / video not found
-    // "tidak tersedia" REMOVED — see note above.
-    // "timed out" / "network timeout" intentionally excluded:
-    // timeouts are transient and must trigger fallback to the next provider.
+    m.includes("privat")           ||  // private — no provider can access it
+    m.includes("live stream")      ||  // live streams can't be extracted as audio
+    m.includes("siaran langsung")  ||  // same, in translated form
+    m.includes("drm protected")    ||  // DRM — no provider can decrypt it
+    m.includes("dibatasi usia")    ||  // age-restricted + login required
+    m.includes("region blocked")      // truly geo-blocked
+    // "usia" / "login" / "tidak tersedia" / "tidak ditemukan" intentionally removed.
+    // "timed out" / "network timeout" intentionally excluded.
   );
+}
+
+/**
+ * Return the higher-priority of two errors.
+ * Errors from _translateError carry a numeric `.priority` (1–9, higher = more
+ * informative). Falls back to comparing message length if no priority set.
+ * @private
+ */
+function _betterError(a, b) {
+  const pa = a?.priority ?? 0;
+  const pb = b?.priority ?? 0;
+  return pa >= pb ? a : b;
 }
 
 // ── TikTok short-URL resolution ───────────────────────────────────────────────
@@ -771,159 +832,170 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signa
 }
 
 async function _ytdlYouTube(input, type, quality, onProgress, signal) {
-  const tmpDir    = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-"));
-  let   lastError = new Error("YouTube download gagal setelah semua metode dicoba");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-"));
 
-  // ── Provider 1: yt-dlp (Utama) ────────────────────────────────────────────
-  // Health-checked: if this provider has failed 5x in a row recently, skip
-  // straight to the backups instead of burning time retrying a client we
-  // already know is currently blocked/broken.
+  // bestError tracks the MOST INFORMATIVE error seen so far across all providers.
+  // Each translated error carries a `.priority` (1–9); we keep the highest.
+  // This ensures the final user-facing message reflects the real root cause
+  // (e.g. "Anti-Bot Detection") rather than whichever generic error happened last.
+  let bestError = Object.assign(
+    new Error("YouTube download gagal setelah semua metode dicoba"), { priority: 0 }
+  );
+
+  // providerNum is a sequential counter for structured [Provider N] log lines.
+  let providerNum = 0;
+
+  // ── Provider 1: yt-dlp multi-method ──────────────────────────────────────
+  providerNum++;
   if (providerHealth.shouldSkip("yt-dlp-youtube")) {
-    logger.warn(`[ytmp3gg] Provider: yt-dlp (YouTube) | Status: OFFLINE | Action: Switch → ytdl-core`);
-    lastError = new Error("yt-dlp sedang OFFLINE (5x gagal berturut-turut) — mencoba provider cadangan");
+    logger.warn(`[ytmp3gg] [Provider ${providerNum}] yt-dlp (YouTube) | Status: OFFLINE | Reason: 5x consecutive failure — switch to backup providers`);
+    bestError = _betterError(bestError,
+      Object.assign(new Error("yt-dlp OFFLINE — mencoba provider cadangan"), { priority: 2 }));
   } else {
+    let ytdlpFailed = false;
     for (let i = 0; i < YOUTUBE_METHODS.length; i++) {
-      if (signal?.aborted) { lastError = new Error("Dibatalkan (timeout tahap)"); lastError.name = "AbortError"; break; }
+      if (signal?.aborted) {
+        const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError";
+        bestError = ae;
+        ytdlpFailed = true;
+        break;
+      }
       if (i > 0) {
-        try {
-          for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
-        } catch {}
+        try { for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f)); } catch {}
         await onProgress?.("Trying another method...");
       }
 
-      logger.info(`[ytmp3gg] YouTube — trying method ${i + 1}/${YOUTUBE_METHODS.length}`);
+      logger.info(`[ytmp3gg] [Provider ${providerNum}] yt-dlp (YouTube) method ${i + 1}/${YOUTUBE_METHODS.length} | Status: Trying`);
       try {
         const stdout = await _attempt(input, type, quality, YOUTUBE_METHODS[i], tmpDir, _methodTimeout(i), signal);
-        logger.info(`[ytmp3gg] YouTube method ${i + 1} succeeded — stopping fallback loop`);
+        logger.info(`[ytmp3gg] [Provider ${providerNum}] yt-dlp (YouTube) method ${i + 1}/${YOUTUBE_METHODS.length} | Status: SUCCESS`);
         providerHealth.recordSuccess("yt-dlp-youtube");
         return _parseOutput(stdout, tmpDir, type, quality);
       } catch (err) {
-        if (_isAborted(err, signal)) { lastError = err; break; }
-        lastError = _translateError(err);
-        logger.warn(`[ytmp3gg] Provider: yt-dlp (YouTube) | Method: ${i + 1}/${YOUTUBE_METHODS.length} | Status: FAILED | Reason: ${lastError.message}`);
+        if (_isAborted(err, signal)) { bestError = err; ytdlpFailed = true; break; }
+        const translated = _translateError(err);
+        logger.warn(`[ytmp3gg] [Provider ${providerNum}] yt-dlp (YouTube) method ${i + 1}/${YOUTUBE_METHODS.length} | Status: FAILED | Reason: ${translated.message}`);
+        bestError = _betterError(bestError, translated);
 
-        if (_isPermanentFailure(lastError)) {
-          logger.info(`[ytmp3gg] Permanent failure — stopping YouTube fallback`);
+        // Only stop the yt-dlp loop for truly unrecoverable per-video issues.
+        // 404 / "video unavailable" are NOT permanent here — they may be client-
+        // rejection responses that the next player-client or fallback provider handles.
+        if (_isPermanentFailure(translated)) {
+          logger.info(`[ytmp3gg] [Provider ${providerNum}] Stopping yt-dlp loop — permanent failure: ${translated.message}`);
+          ytdlpFailed = true;
           break;
         }
         if (i < YOUTUBE_METHODS.length - 1) {
-          logger.info(`[ytmp3gg] Action: Switch → yt-dlp method ${i + 2}/${YOUTUBE_METHODS.length}`);
+          logger.info(`[ytmp3gg] [Provider ${providerNum}] Switch → yt-dlp method ${i + 2}/${YOUTUBE_METHODS.length}`);
         }
       }
     }
 
-    // Permanent failures (deleted/private/region-blocked) are a real
-    // per-video outcome, not a provider health problem — don't count them
-    // against yt-dlp's health. Anti-bot/timeout/network-style failures DO
-    // count, since those indicate the provider itself is currently struggling.
-    if (!_isAborted(lastError, signal) && !(_isPermanentFailure(lastError) && !lastError.message.includes("Anti-Bot"))) {
-      providerHealth.recordFailure("yt-dlp-youtube", { reason: lastError.message, isTimeout: lastError.message.toLowerCase().includes("timeout") });
+    // Don't count truly deleted/private videos against yt-dlp health.
+    if (!_isAborted(bestError, signal) && !_isPermanentFailure(bestError)) {
+      providerHealth.recordFailure("yt-dlp-youtube", {
+        reason:    bestError.message,
+        isTimeout: bestError.message.toLowerCase().includes("timeout"),
+      });
     }
   }
 
-  if (_isAborted(lastError, signal)) {
+  if (_isAborted(bestError, signal)) {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    throw lastError;
+    throw bestError;
   }
 
-  // All yt-dlp player-client variants failed (or hit a permanent failure) —
-  // try the independent ytdl-core engine before giving up entirely, unless
-  // the failure is a real permanent one (deleted/private/region-blocked),
-  // where a different engine won't change the outcome.
-  if (_isPermanentFailure(lastError) && !lastError.message.includes("Anti-Bot")) {
+  // If the best error so far is truly permanent (deleted/private/live/DRM),
+  // no alternate provider will help — skip the entire backup chain.
+  if (_isPermanentFailure(bestError)) {
+    logger.info(`[ytmp3gg] Permanent failure confirmed — skipping all backup providers | Reason: ${bestError.message}`);
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    throw lastError;
+    throw bestError;
   }
 
-  try {
-    for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
-  } catch {}
+  try { for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f)); } catch {}
 
-  // ── Backup API 1: @distube/ytdl-core ──────────────────────────────────────
+  // ── Provider 2: @distube/ytdl-core ───────────────────────────────────────
+  providerNum++;
   if (providerHealth.shouldSkip("ytdl-core")) {
-    logger.warn(`[ytmp3gg] Provider: ytdl-core | Status: OFFLINE | Action: Switch → Kaizen API`);
+    logger.warn(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: OFFLINE | Reason: 5x consecutive failure — switch to next`);
   } else if (!signal?.aborted) {
-    logger.info(`[ytmp3gg] Provider: yt-dlp (YouTube) | Status: FAILED | Action: Switch → ytdl-core`);
+    logger.info(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: Trying`);
     try {
       const result = await _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signal);
       providerHealth.recordSuccess("ytdl-core");
-      logger.info(`[ytmp3gg] Provider: ytdl-core | Status: SUCCESS | Fallback: YES`);
+      logger.info(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: SUCCESS`);
       return result;
     } catch (err) {
       if (_isAborted(err, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw err; }
-      logger.warn(`[ytmp3gg] Provider: ytdl-core | Status: FAILED | Reason: ${err.message} | Action: Switch → Kaizen API`);
+      logger.warn(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: FAILED | Reason: ${err.message}`);
+      bestError = _betterError(bestError, Object.assign(err, { priority: err.priority ?? 2 }));
       providerHealth.recordFailure("ytdl-core", { reason: err.message, isTimeout: err.message.toLowerCase().includes("timeout") });
     }
   }
 
-  // ── Backup API 2 (last resort): kaizenapi.my.id ───────────────────────────
-  // Menggunakan endpoint baru (kaizenapi.my.id/downloader/youtube) dari file referensi,
-  // dengan fallback ke endpoint lama (api.kaizenapi.my.id/ytmp3).
-  // Hanya dicoba jika SEMUA provider di atas gagal.
-  try {
-    for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f));
-  } catch {}
+  // ── Provider 3: Kaizen API ────────────────────────────────────────────────
+  providerNum++;
+  try { for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f)); } catch {}
 
   if (providerHealth.shouldSkip("kaizenapi")) {
-    logger.warn(`[ytmp3gg] Provider: Kaizen API | Status: OFFLINE | Action: Seluruh provider gagal, BoomBox Failed`);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    throw lastError;
-  }
-  if (signal?.aborted) {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    const abortErr = new Error("Dibatalkan (timeout tahap)"); abortErr.name = "AbortError"; throw abortErr;
-  }
-
-  try {
+    logger.warn(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: OFFLINE | Reason: 5x consecutive failure — switch to next`);
+  } else if (!signal?.aborted) {
     await onProgress?.("Trying alternative API...");
-    logger.info(`[ytmp3gg] Provider: Kaizen API | Status: Trying | Endpoint: kaizenapi.my.id/downloader/youtube`);
-    const result = await kaizenDownload(input, type, quality, tmpDir, signal);
-    providerHealth.recordSuccess("kaizenapi");
-    logger.info(`[ytmp3gg] Provider: Kaizen API | Status: SUCCESS | Fallback: YES`);
-    return result;
-  } catch (kaizenErr) {
-    if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
-    logger.warn(`[ytmp3gg] Provider: Kaizen API | Status: FAILED | Reason: ${kaizenErr.message} | Action: Switch → Piped`);
-    providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: kaizenErr.message.toLowerCase().includes("timeout") });
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    logger.info(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: Trying | Endpoint: kaizenapi.my.id/downloader/youtube`);
+    try {
+      const result = await kaizenDownload(input, type, quality, tmpDir, signal);
+      providerHealth.recordSuccess("kaizenapi");
+      logger.info(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: SUCCESS`);
+      return result;
+    } catch (kaizenErr) {
+      if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
+      logger.warn(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: FAILED | Reason: ${kaizenErr.message}`);
+      bestError = _betterError(bestError, Object.assign(kaizenErr, { priority: kaizenErr.priority ?? 2 }));
+      providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: kaizenErr.message.toLowerCase().includes("timeout") });
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    }
   }
 
-  // ── Backup API 3: Piped (public YouTube frontend API) ─────────────────────
-  // Resolves audio stream URLs without bot detection by using Piped public instances.
-  // The resolved URL is then downloaded directly via yt-dlp to handle format conversion.
+  // ── Provider 4: Piped (public YouTube frontend) ───────────────────────────
+  providerNum++;
   if (!signal?.aborted) {
     const pipedTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-piped-"));
+    await onProgress?.("Trying Piped API...");
+    logger.info(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: Trying`);
     try {
-      await onProgress?.("Trying Piped API...");
-      logger.info(`[ytmp3gg] Provider: Piped | Status: Trying`);
       const result = await _pipedFallback(input, type, quality, pipedTmpDir, onProgress, signal);
-      logger.info(`[ytmp3gg] Provider: Piped | Status: SUCCESS | Fallback: YES`);
+      logger.info(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: SUCCESS`);
       return result;
     } catch (pipedErr) {
       if (_isAborted(pipedErr, signal)) { try { fs.rmSync(pipedTmpDir, { recursive: true, force: true }); } catch {} const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae; }
-      logger.warn(`[ytmp3gg] Provider: Piped | Status: FAILED | Reason: ${pipedErr.message} | Action: Switch → Invidious`);
+      logger.warn(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: FAILED | Reason: ${pipedErr.message}`);
+      bestError = _betterError(bestError, Object.assign(pipedErr, { priority: pipedErr.priority ?? 2 }));
       try { fs.rmSync(pipedTmpDir, { recursive: true, force: true }); } catch {}
     }
   }
 
-  // ── Backup API 4: Invidious (public YouTube alternative API) ──────────────
-  // Another independent implementation that bypasses the main YouTube API entirely.
+  // ── Provider 5: Invidious (public YouTube alternative API) ────────────────
+  providerNum++;
   if (!signal?.aborted) {
     const invTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-inv-"));
+    await onProgress?.("Trying Invidious API...");
+    logger.info(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: Trying`);
     try {
-      await onProgress?.("Trying Invidious API...");
-      logger.info(`[ytmp3gg] Provider: Invidious | Status: Trying`);
       const result = await _invidiousFallback(input, type, quality, invTmpDir, onProgress, signal);
-      logger.info(`[ytmp3gg] Provider: Invidious | Status: SUCCESS | Fallback: YES`);
+      logger.info(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: SUCCESS`);
       return result;
     } catch (invErr) {
       if (_isAborted(invErr, signal)) { try { fs.rmSync(invTmpDir, { recursive: true, force: true }); } catch {} const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae; }
-      logger.warn(`[ytmp3gg] Provider: Invidious | Status: FAILED | Reason: ${invErr.message} | Action: Seluruh provider habis, BoomBox Failed`);
+      logger.warn(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: FAILED | Reason: ${invErr.message}`);
+      bestError = _betterError(bestError, Object.assign(invErr, { priority: invErr.priority ?? 2 }));
       try { fs.rmSync(invTmpDir, { recursive: true, force: true }); } catch {}
     }
   }
 
-  throw lastError;
+  // ── All providers exhausted — throw the most informative error ────────────
+  logger.error(`[ytmp3gg] Final Reason: ${bestError.message}`);
+  throw bestError;
 }
 
 // ── Piped API fallback ────────────────────────────────────────────────────────
