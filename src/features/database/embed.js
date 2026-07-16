@@ -30,6 +30,8 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   ChannelSelectMenuBuilder,
   ChannelType,
 } from "discord.js";
@@ -45,6 +47,14 @@ const COLOR  = {
   RED:    0xed4245,
   GRAY:   0x2f3136,
 };
+
+/** Konversi bytes ke string yang mudah dibaca. Diperlukan untuk buildStorageEmbed. */
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+}
 
 function formatUptime(ms) {
   const s = Math.floor(ms / 1000);
@@ -417,30 +427,95 @@ export function buildBotSettingComponents(setup) {
 // PANEL: BACKUP
 // ════════════════════════════════════════════════════════════════════════════
 
-export function buildBackupPanelEmbed(lastBackup = null) {
-  const lastInfo = lastBackup?.lastAt
-    ? `${lastBackup.lastName ?? "backup.zip"}\n${lastBackup.lastSize ?? ""} • ${new Date(lastBackup.lastAt).toLocaleString("id-ID")}`
+/**
+ * Panel Backup profesional dengan semua informasi sistem.
+ * @param {import("discord.js").Client} client
+ * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
+ * @param {{ getNextBackupAt?: Function, SCHEDULE_LABELS?: Object, formatScheduleTime?: Function }} [sched]
+ */
+export function buildBackupPanelEmbed(client, setup, sched = {}) {
+  const version  = _readVersion();
+  const uptime   = client?.uptime ?? 0;
+  const dbToken  = setup.github?.token || process.env.GITHUB_TOKEN;
+  const dbRepo   = setup.github?.repo  || process.env.GITHUB_REPO;
+  const branch   = setup.github?.branch || "main";
+  const uploadMode = setup.github?.uploadMode ?? "release";
+
+  // ── Backup info ──────────────────────────────────────────────────────────
+  const lastBackupStr = setup.lastBackup
+    ? `📁 ${setup.lastBackup.name}\n📏 ${setup.lastBackup.size}\n🕐 ${new Date(setup.lastBackup.at).toLocaleString("id-ID")}`
     : "Belum ada backup";
+
+  const schedLabel  = (sched.SCHEDULE_LABELS && setup.backupSchedule)
+    ? sched.SCHEDULE_LABELS[setup.backupSchedule] : null;
+  const nextAt      = (sched.getNextBackupAt) ? sched.getNextBackupAt(setup) : null;
+  const nextStr     = nextAt && sched.formatScheduleTime ? sched.formatScheduleTime(nextAt) : "—";
+
+  // ── Storage ringkas ──────────────────────────────────────────────────────
+  const dataSize = _readDataDirSize();
 
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("📦 Backup Panel")
-    .setDescription(
-      "Buat backup database dan data penting bot.\n\n" +
-      "Backup berisi: database, config, assets, logs, session, plugins.\n" +
-      "Tidak termasuk: node_modules, cache, temp, file sampah.",
+    .setTitle("📦 Database & Backup Panel")
+    .setDescription("Sistem manajemen backup, storage, dan monitoring bot secara real-time.")
+    .addFields(
+      // ── Bot Info ──────────────────────────────────────────────────────────
+      { name: "🤖 Bot",     value: client?.user?.tag ?? "—", inline: true },
+      { name: "📦 Versi",   value: `v${version}`,            inline: true },
+      { name: "🟢 Status",  value: "Online",                  inline: true },
+      { name: "⏱ Uptime",   value: formatUptime(uptime),      inline: true },
+      { name: "\u200b",     value: "\u200b",                  inline: true },
+      { name: "\u200b",     value: "\u200b",                  inline: true },
+
+      // ── Database ──────────────────────────────────────────────────────────
+      { name: "━━━ 🗄 DATABASE ━━━",  value: "\u200b",           inline: false },
+      { name: "📂 Database",          value: dataSize,            inline: true  },
+      { name: "📂 Kategori",          value: setup.categoryName ?? "—", inline: true },
+      { name: "📂 Dibuat",            value: setup.createdAt
+          ? new Date(setup.createdAt).toLocaleDateString("id-ID") : "—", inline: true },
+
+      // ── GitHub Backup ─────────────────────────────────────────────────────
+      { name: "━━━ ☁ GITHUB BACKUP ━━━", value: "\u200b",         inline: false },
+      { name: "🐙 Repository", value: dbRepo ? `\`${dbRepo}\`` : "❌ Belum", inline: true },
+      { name: "🌿 Branch",     value: `\`${branch}\``,                       inline: true },
+      { name: "🔑 Token",      value: dbToken ? "✅ Dikonfigurasi" : "❌ Belum", inline: true },
+      { name: "📤 Mode Upload",value: uploadMode === "branch" ? "Branch Commit" : "GitHub Release", inline: true },
+      { name: "\u200b",        value: "\u200b", inline: true },
+      { name: "\u200b",        value: "\u200b", inline: true },
+
+      // ── Auto Backup ───────────────────────────────────────────────────────
+      { name: "━━━ 🔄 AUTO BACKUP ━━━", value: "\u200b",            inline: false },
+      { name: "📋 Status",      value: setup.autoBackup  ? "✅ Aktif" : "❌ Nonaktif",  inline: true },
+      { name: "⏰ Jadwal",      value: schedLabel ?? "—",                               inline: true },
+      { name: "⏭ Berikutnya",  value: nextStr,                                          inline: true },
+      { name: "💾 Terakhir",   value: lastBackupStr,                                    inline: false },
+      { name: "🔢 Total Backup",value: String(setup.backupCount ?? 0),                  inline: true },
+
+      // ── Smart Clean ───────────────────────────────────────────────────────
+      { name: "━━━ 🧹 SMART CLEAN ━━━", value: "\u200b",           inline: false },
+      { name: "📋 Status",      value: setup.autoClean ? "✅ Aktif" : "❌ Nonaktif",    inline: true },
+      { name: "🎯 Target",      value: "Cache • Temp • Log >7hr • Backup Lama",        inline: true },
     )
-    .addFields({ name: "💾 Backup Terakhir", value: lastInfo, inline: false })
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-export function buildBackupPanelComponents() {
+export function buildBackupPanelComponents(setup = {}) {
+  const autoLabel  = setup.autoBackup ? "🔄 Auto Backup: ✅" : "🔄 Auto Backup: ❌";
+  const autoStyle  = setup.autoBackup ? ButtonStyle.Success : ButtonStyle.Secondary;
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("db:panel:backup:backup").setLabel("💾 Backup").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("db:panel:backup:smartclean").setLabel("🔍 Smart Clean").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("db:panel:backup:restore").setLabel("♻ Restore").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("db:panel:backup:storage").setLabel("📊 Storage").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:panel:backup:github").setLabel("🔑 Edit GitHub").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("db:panel:backup:schedule").setLabel("⚙ Jadwal Backup").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("db:panel:backup:smartclean").setLabel("🧹 Smart Clean").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:panel:setting:backup:toggle").setLabel(autoLabel).setStyle(autoStyle),
       new ButtonBuilder().setCustomId("db:panel:backup:refresh").setLabel("🔄 Refresh").setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -461,6 +536,10 @@ export function buildStorageEmbed(stats) {
     { key: "assets",   label: "Assets",   emoji: "🖼",  cleanable: false },
     { key: "logs",     label: "Logs",     emoji: "📋",  cleanable: false },
     { key: "backup",   label: "Backup",   emoji: "📦",  cleanable: false },
+    { key: "session",  label: "Session",  emoji: "🔒",  cleanable: false },
+    { key: "plugins",  label: "Plugins",  emoji: "🔌",  cleanable: false },
+    { key: "storage",  label: "Storage",  emoji: "🗂",  cleanable: false },
+    { key: "scripts",  label: "Scripts",  emoji: "📜",  cleanable: false },
     { key: "cache",    label: "Cache",    emoji: "🗃",  cleanable: true  },
     { key: "temp",     label: "Temp",     emoji: "📁",  cleanable: true  },
   ];
@@ -633,6 +712,147 @@ export function buildCleanConfirmComponents() {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("db:panel:clean:confirmyes").setLabel("✅ Ya, Hapus").setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId("db:panel:clean:confirmno").setLabel("❌ Batal").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: RESTORE
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Embed daftar GitHub Releases yang tersedia untuk dipilih sebagai restore point.
+ * @param {Array<{id,name,tag,createdAt,assets}>} releases
+ */
+export function buildRestoreListEmbed(releases) {
+  return new EmbedBuilder()
+    .setColor(COLOR.YELLOW)
+    .setTitle("♻ Restore — Pilih Backup")
+    .setDescription(
+      releases.length > 0
+        ? `Pilih backup yang ingin di-restore dari dropdown di bawah.\n\n` +
+          `⚠️ **Perhatian:** File project akan di-overwrite. Bot akan restart otomatis setelah restore selesai.`
+        : "❌ Tidak ada backup tersedia di GitHub Releases.\n\nBuat backup terlebih dahulu menggunakan tombol **💾 Backup**.",
+    )
+    .addFields(
+      releases.slice(0, 5).map((r, i) => ({
+        name:   `${i + 1}. ${r.name}`,
+        value:  `📅 ${new Date(r.createdAt).toLocaleString("id-ID")}\n📦 ${r.assets.length} file (${r.assets[0]?.sizeStr ?? "—"})`,
+        inline: false,
+      })),
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+/**
+ * Komponen dropdown untuk memilih release yang akan di-restore.
+ * @param {Array<{id,name,createdAt,assets}>} releases
+ */
+export function buildRestoreListComponents(releases) {
+  if (releases.length === 0) return [];
+  const options = releases.slice(0, 25).map(r =>
+    new StringSelectMenuOptionBuilder()
+      .setValue(r.assets[0]?.downloadUrl ?? r.id)
+      .setLabel(r.name.slice(0, 100))
+      .setDescription(`${new Date(r.createdAt).toLocaleDateString("id-ID")} • ${r.assets[0]?.sizeStr ?? "—"}`)
+      .setEmoji("📦"),
+  );
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("db:restore:select")
+        .setPlaceholder("Pilih backup untuk di-restore...")
+        .addOptions(options),
+    ),
+  ];
+}
+
+/**
+ * Embed konfirmasi sebelum eksekusi restore.
+ * @param {string} releaseName
+ */
+export function buildRestoreConfirmEmbed(releaseName) {
+  return new EmbedBuilder()
+    .setColor(COLOR.RED)
+    .setTitle("⚠️ Konfirmasi Restore")
+    .setDescription(
+      `Kamu akan me-restore backup:\n\n**📦 ${releaseName}**\n\n` +
+      "Semua file project saat ini akan **di-overwrite** dengan isi backup ini.\n" +
+      "Bot akan **restart otomatis** setelah restore selesai.\n\n" +
+      "**Yakin ingin melanjutkan?**",
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+/**
+ * @param {string} assetDownloadUrl
+ */
+export function buildRestoreConfirmComponents(assetDownloadUrl) {
+  const safeId = Buffer.from(assetDownloadUrl).toString("base64").slice(0, 80);
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`db:restore:exec:${safeId}`).setLabel("✅ Ya, Restore Sekarang").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("db:restore:cancel").setLabel("❌ Batal").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: JADWAL BACKUP
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
+ * @param {string|null} nextAt  ISO string kapan backup berikutnya
+ */
+export function buildScheduleEmbed(setup, nextAt) {
+  const schedLabels = { "6h": "Setiap 6 Jam", "12h": "Setiap 12 Jam", "daily": "Setiap Hari", "weekly": "Setiap Minggu" };
+  const current = setup.backupSchedule ? schedLabels[setup.backupSchedule] : "Tidak Terjadwal";
+
+  const nextStr = nextAt
+    ? new Date(nextAt).toLocaleString("id-ID")
+    : (setup.backupSchedule ? "Setelah backup pertama" : "—");
+
+  return new EmbedBuilder()
+    .setColor(COLOR.BLUE)
+    .setTitle("⚙️ Jadwal Auto Backup")
+    .setDescription("Atur kapan bot membuat backup secara otomatis.")
+    .addFields(
+      { name: "📋 Jadwal Aktif", value: `**${current}**`,                              inline: true },
+      { name: "🔄 Auto Backup",  value: setup.autoBackup ? "✅ Aktif" : "❌ Nonaktif", inline: true },
+      { name: "⏭ Berikutnya",   value: nextStr,                                        inline: true },
+      { name: "💾 Terakhir",    value: setup.lastBackup
+          ? `${setup.lastBackup.name}\n${new Date(setup.lastBackup.at).toLocaleString("id-ID")}`
+          : "Belum ada backup",                                                          inline: false },
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+/**
+ * @param {string|null} currentSchedule
+ */
+export function buildScheduleComponents(currentSchedule) {
+  const opts = [
+    { id: "6h",     label: "Setiap 6 Jam",   style: ButtonStyle.Primary   },
+    { id: "12h",    label: "Setiap 12 Jam",  style: ButtonStyle.Primary   },
+    { id: "daily",  label: "Setiap Hari",    style: ButtonStyle.Primary   },
+    { id: "weekly", label: "Setiap Minggu",  style: ButtonStyle.Primary   },
+  ];
+  return [
+    new ActionRowBuilder().addComponents(
+      ...opts.map(o =>
+        new ButtonBuilder()
+          .setCustomId(`db:schedule:set:${o.id}`)
+          .setLabel(o.label)
+          .setStyle(o.id === currentSchedule ? ButtonStyle.Success : o.style),
+      ),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:schedule:set:off").setLabel("🚫 Matikan Jadwal").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("db:schedule:back").setLabel("🔙 Kembali").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }

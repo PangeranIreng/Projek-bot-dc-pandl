@@ -76,7 +76,16 @@ import {
   getStorageStats,
   runSmartClean,
   executeClean,
+  listGitHubReleases,
+  restoreFromGitHubRelease,
 } from "./backup.js";
+import {
+  startAutoBackupScheduler,
+  getNextBackupAt,
+  SCHEDULE_LABELS,
+  SCHEDULE_INTERVALS,
+  formatScheduleTime,
+} from "./scheduler.js";
 import {
   getMemberStats,
   exportMemberList,
@@ -91,6 +100,9 @@ import {
   buildGitHubManagerEmbed, buildGitHubManagerComponents,
   buildBotSettingEmbed, buildBotSettingComponents,
   buildBackupPanelEmbed, buildBackupPanelComponents,
+  buildRestoreListEmbed, buildRestoreListComponents,
+  buildRestoreConfirmEmbed, buildRestoreConfirmComponents,
+  buildScheduleEmbed, buildScheduleComponents,
   buildStorageEmbed,
   buildSmartCleanResultEmbed, buildSmartCleanResultComponents,
   buildSmartCleanDetailEmbed, buildSmartCleanDetailComponents,

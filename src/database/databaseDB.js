@@ -49,9 +49,12 @@ const DEFAULT_DB = {
     backup:     null,
     memberList: null,
   },
-  github:     { repo: null, branch: "main", token: null },
-  autoBackup: false,
-  autoClean:  false,
+  github:     { repo: null, branch: "main", token: null, uploadMode: "release" },
+  autoBackup:     false,
+  autoClean:      false,
+  backupSchedule: null,       // "6h" | "12h" | "daily" | "weekly" | null
+  lastBackup:     null,       // { at: ISO, name: string, size: string } | null
+  backupCount:    0,
 };
 
 export class DatabaseDB {
@@ -142,8 +145,22 @@ export class DatabaseDB {
     if ("repo"        in patch) this._data.github.repo   = patch.repo   ?? null;
     if ("branch"      in patch) this._data.github.branch = patch.branch  || "main";
     if ("token"       in patch) this._data.github.token  = patch.token  ?? null;
-    if ("autoBackup"  in patch) this._data.autoBackup    = !!patch.autoBackup;
-    if ("autoClean"   in patch) this._data.autoClean     = !!patch.autoClean;
+    if ("autoBackup"     in patch) this._data.autoBackup     = !!patch.autoBackup;
+    if ("autoClean"      in patch) this._data.autoClean      = !!patch.autoClean;
+    if ("uploadMode"     in patch) this._data.github.uploadMode = patch.uploadMode ?? "release";
+    if ("backupSchedule" in patch) this._data.backupSchedule = patch.backupSchedule ?? null;
+    this._save();
+  }
+
+  /**
+   * Catat backup berhasil (update lastBackup + increment backupCount).
+   * @param {string} name   Nama file backup
+   * @param {string} size   Ukuran dalam string (mis. "246 KB")
+   * @param {string} [at]   ISO timestamp (default: sekarang)
+   */
+  recordBackup(name, size, at) {
+    this._data.lastBackup  = { at: at ?? new Date().toISOString(), name, size };
+    this._data.backupCount = (this._data.backupCount ?? 0) + 1;
     this._save();
   }
 

@@ -103,7 +103,6 @@ const BACKUP_SKIP_DIRS = new Set([
   ".cache",         // cache Replit/Node
   ".local",         // skill/agent Replit, bukan bagian project
   ".agents",        // memory agent Replit, bukan bagian project
-  "attached_assets",// upload Replit IDE, bukan bagian project
   "bin",            // binary yt-dlp — didownload ulang otomatis saat dijalankan
 ]);
 
@@ -296,6 +295,112 @@ export async function uploadBackupToGitHub(tmpId) {
 }
 
 
+// ── GitHub Releases List ──────────────────────────────────────────────────────
+
+/**
+ * Ambil daftar GitHub Releases terbaru (maks 10) dari repository yang dikonfigurasi.
+ * @returns {Promise<Array<{id,name,tag,createdAt,assets}>>}
+ */
+export async function listGitHubReleases() {
+  const settings = databaseDB.get();
+  const token    = settings.github?.token || process.env.GITHUB_TOKEN;
+  const repo     = settings.github?.repo  || process.env.GITHUB_REPO;
+
+  if (!token) throw new Error("GitHub Token belum dikonfigurasi.");
+  if (!repo)  throw new Error("GitHub Repository belum dikonfigurasi.");
+
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=10`, {
+    headers: {
+      Authorization:  `Bearer ${token}`,
+      Accept:         "application/vnd.github+json",
+      "User-Agent":   "PangeranAssistantBot",
+    },
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`GitHub API error: ${res.status} — ${txt.slice(0, 200)}`);
+  }
+  const releases = await res.json();
+  return releases.map(r => ({
+    id:        String(r.id),
+    name:      r.name || r.tag_name,
+    tag:       r.tag_name,
+    createdAt: r.created_at,
+    assets:    (r.assets ?? []).map(a => ({
+      id:          String(a.id),
+      name:        a.name,
+      size:        a.size,
+      sizeStr:     formatBytes(a.size),
+      downloadUrl: a.url,  // authenticated download URL (requires token)
+    })),
+  }));
+}
+
+// ── Restore from GitHub Release ───────────────────────────────────────────────
+
+/**
+ * Download sebuah release asset dari GitHub, extract ZIP-nya,
+ * overwrite file project, lalu restart bot otomatis.
+ *
+ * File yang TIDAK di-overwrite: node_modules, .git, .cache, .local, .agents, bin
+ *
+ * @param {string} assetDownloadUrl  URL asset dari GitHub API (api.github.com/…)
+ * @returns {Promise<{ restored: number }>}
+ */
+export async function restoreFromGitHubRelease(assetDownloadUrl) {
+  const settings = databaseDB.get();
+  const token    = settings.github?.token || process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("GitHub Token diperlukan untuk mengunduh release asset.");
+
+  // 1. Download ZIP dari GitHub
+  logger.info(`[Database/Restore] Downloading asset: ${assetDownloadUrl}`);
+  const res = await fetch(assetDownloadUrl, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept:        "application/octet-stream",
+      "User-Agent":  "PangeranAssistantBot",
+    },
+  });
+  if (!res.ok) throw new Error(`Download asset gagal: HTTP ${res.status}`);
+
+  const buffer  = Buffer.from(await res.arrayBuffer());
+  const tmpPath = path.join(os.tmpdir(), `restore-${Date.now()}.zip`);
+  fs.writeFileSync(tmpPath, buffer);
+  logger.info(`[Database/Restore] Downloaded ${formatBytes(buffer.length)}`);
+
+  // 2. Extract dan overwrite
+  const RESTORE_SKIP = new Set(["node_modules", ".git", ".cache", ".local", ".agents", "bin"]);
+  const zip     = new AdmZip(tmpPath);
+  const entries = zip.getEntries();
+
+  let restored = 0;
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+    const entryName = entry.entryName.replace(/\\/g, "/");
+    const topDir    = entryName.split("/")[0];
+    if (RESTORE_SKIP.has(topDir)) continue;
+    if (entryName === "backup-info.json") continue;
+
+    const destPath = path.join(ROOT_DIR, entryName);
+    const destDir  = path.dirname(destPath);
+    try {
+      if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+      fs.writeFileSync(destPath, entry.getData());
+      restored++;
+    } catch (err) {
+      logger.warn(`[Database/Restore] Lewati ${entryName}: ${err.message}`);
+    }
+  }
+
+  try { fs.unlinkSync(tmpPath); } catch {}
+  logger.info(`[Database/Restore] Selesai: ${restored} file dipulihkan. Restart dalam 3 detik...`);
+
+  // 3. Restart otomatis setelah reply berhasil dikirim ke Discord
+  setTimeout(() => process.exit(0), 3_000);
+
+  return { restored };
+}
+
 // ── Storage Stats ─────────────────────────────────────────────────────────────
 
 /**
@@ -303,15 +408,19 @@ export async function uploadBackupToGitHub(tmpId) {
  * @returns {{ database: number, cache: number, temp: number, backup: number, assets: number, logs: number, total: number, strings: Object }}
  */
 export function getStorageStats() {
-  const db     = getDirSize(path.join(ROOT_DIR, "data"));
-  const cache  = getDirSize(path.join(ROOT_DIR, "cache")) + getDirSize(path.join(ROOT_DIR, ".cache"));
-  const tmp    = getDirSize(path.join(ROOT_DIR, "temp"))  + getDirSize(path.join(ROOT_DIR, "tmp"))  + getDirSize(BACKUP_TMP_DIR);
-  const backup = getDirSize(path.join(ROOT_DIR, "backup"));
-  const assets = getDirSize(path.join(ROOT_DIR, "assets"));
-  const logs   = getDirSize(path.join(ROOT_DIR, "logs"));
-  const src    = getDirSize(path.join(ROOT_DIR, "src"));
-  const conf   = getDirSize(path.join(ROOT_DIR, "config"));
-  const total  = db + cache + tmp + backup + assets + logs + src + conf;
+  const db      = getDirSize(path.join(ROOT_DIR, "data"));
+  const cache   = getDirSize(path.join(ROOT_DIR, "cache")) + getDirSize(path.join(ROOT_DIR, ".cache"));
+  const tmp     = getDirSize(path.join(ROOT_DIR, "temp"))  + getDirSize(path.join(ROOT_DIR, "tmp"))  + getDirSize(BACKUP_TMP_DIR);
+  const backup  = getDirSize(path.join(ROOT_DIR, "backup"));
+  const assets  = getDirSize(path.join(ROOT_DIR, "assets"));
+  const logs    = getDirSize(path.join(ROOT_DIR, "logs"));
+  const src     = getDirSize(path.join(ROOT_DIR, "src"));
+  const conf    = getDirSize(path.join(ROOT_DIR, "config"));
+  const session = getDirSize(path.join(ROOT_DIR, "session"));
+  const plugins = getDirSize(path.join(ROOT_DIR, "plugins"));
+  const storage = getDirSize(path.join(ROOT_DIR, "storage"));
+  const scripts = getDirSize(path.join(ROOT_DIR, "scripts"));
+  const total   = db + cache + tmp + backup + assets + logs + src + conf + session + plugins + storage + scripts;
 
   // Coba baca total disk usage dari /proc atau fallback
   let diskTotal = 0;
@@ -333,6 +442,10 @@ export function getStorageStats() {
     logs,
     source:   src,
     config:   conf,
+    session,
+    plugins,
+    storage,
+    scripts,
     total,
     diskTotal,
     diskFree,
@@ -345,6 +458,10 @@ export function getStorageStats() {
       logs:     formatBytes(logs),
       source:   formatBytes(src),
       config:   formatBytes(conf),
+      session:  formatBytes(session),
+      plugins:  formatBytes(plugins),
+      storage:  formatBytes(storage),
+      scripts:  formatBytes(scripts),
       total:    formatBytes(total),
       diskTotal: diskTotal ? formatBytes(diskTotal) : "N/A",
       diskFree:  diskFree  ? formatBytes(diskFree)  : "N/A",

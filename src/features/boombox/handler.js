@@ -516,7 +516,10 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
   try { await message.delete(); } catch { /* no permission — continue */ }
 
   const startedAt = Date.now();
-  let   tmpDir    = null;
+  let   tmpDir      = null;
+  let   boomboxUrl  = null;   // set saat URL berhasil dibuat
+  let   ytResult    = null;   // set saat download selesai
+  let   resultSent  = false;  // true setelah result embed berhasil dikirim ke channel
 
   // editStep: edit embed ke tahap berikutnya tanpa delay tambahan.
   // Tahap: 0=Menghubungkan, 1=Mengambil Metadata, 2=Menyiapkan Audio,
@@ -555,7 +558,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       return;
     }
 
-    let ytResult, boomboxUrl;
+    // ytResult dan boomboxUrl sudah dideklarasikan di atas (outer scope)
     const cached = getCachedResult(url);
 
     if (cached) {
@@ -634,6 +637,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       embeds: [embed],
       components: [row],
     });
+    resultSent = true;  // result berhasil dikirim — jangan kirim error setelah ini
 
     // ── Append to BoomBox Logs ─────────────────────────────────────────────
     currentStage = "Update BoomBox Log";
@@ -654,6 +658,14 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       stage:   currentStage,
       error:   err,
     }).catch(() => {});
+
+    // ── Jika result sudah berhasil dikirim, JANGAN kirim error lagi ──────────
+    // Ini mencegah: "URL BoomBox berhasil dibuat tetapi malah dihapus lalu muncul Error"
+    // yang terjadi bila appendToLog() atau operasi lain setelah channel.send() gagal.
+    if (resultSent) {
+      logger.warn(`[BoomBox] Error after result was delivered (stage: ${currentStage}) — not sending error to channel`);
+      return;
+    }
 
     // ── Hapus processing embed → kirim pesan error bersih ke channel ──────
     // Jangan tampilkan: Stack Trace, Provider, API, Internal Error, tombol Detail.
