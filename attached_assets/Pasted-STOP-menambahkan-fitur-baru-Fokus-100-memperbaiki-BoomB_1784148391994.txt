@@ -1,0 +1,187 @@
+STOP menambahkan fitur baru.
+
+Fokus 100% memperbaiki BoomBox sampai benar-benar stabil.
+
+Lakukan audit seluruh alur BoomBox dari awal sampai akhir.
+
+Periksa:
+
+- handler.js
+- ytmp3gg.js
+- kaizenDownloader.js
+- semua provider
+- upload Top4Top
+- queue
+- progress
+- cleanup
+- editReply
+- deleteReply
+- fallback
+- error handler
+
+========================
+
+PERBAIKI BUG
+
+1.
+BoomBox SUCCESS tidak boleh berubah menjadi FAILED.
+
+Jika audio sudah berhasil dibuat dan URL BoomBox sudah berhasil dibuat maka job dianggap SUCCESS.
+
+Jangan ada proses setelah SUCCESS yang bisa mengubah status menjadi FAILED.
+
+========================
+
+2.
+
+Jangan delete embed SUCCESS.
+
+========================
+
+3.
+
+Jika provider pertama gagal
+
+langsung pindah provider berikutnya
+
+tanpa mengirim pesan error.
+
+========================
+
+4.
+
+YouTube
+
+Periksa kenapa kembali muncul
+
+Anti Bot Detection.
+
+Pastikan provider yang sebelumnya berhasil tetap digunakan.
+
+Jangan selalu jatuh ke yt-dlp.
+
+Jika provider API berhasil
+
+jangan pernah menjalankan yt-dlp lagi.
+
+========================
+
+5.
+
+TikTok
+
+Support semua URL TikTok.
+
+Normalisasi URL.
+
+Follow redirect.
+
+Gunakan provider API terlebih dahulu.
+
+yt-dlp hanya fallback terakhir.
+
+========================
+
+6.
+
+Jika yt-dlp gagal
+
+langsung lanjut provider lain.
+
+Jangan stop.
+
+========================
+
+7.
+
+Jangan tampilkan Stack Trace ke user.
+
+Hanya Error Log.
+
+========================
+
+8.
+
+Hapus tombol Detail.
+
+========================
+
+9.
+
+Periksa semua catch().
+
+Pastikan catch tidak menghapus pesan SUCCESS.
+
+========================
+
+10.
+
+Pastikan upload Top4Top selesai sebelum status SUCCESS.
+
+========================
+
+11.
+
+Periksa race condition.
+
+Jangan ada Promise yang masih berjalan setelah SUCCESS.
+
+========================
+
+12.
+
+Pastikan hanya SATU final state.
+
+SUCCESS
+
+atau
+
+FAILED
+
+Tidak boleh keduanya.
+
+========================
+
+13.
+
+Optimasi performa.
+
+Target
+
+5-10 detik normal.
+
+========================
+
+14.
+
+Testing.
+
+Lakukan test:
+
+✓ YouTube
+
+✓ TikTok
+
+✓ Upload
+
+✓ Top4Top
+
+✓ Success
+
+✓ Failed
+
+✓ Queue
+
+✓ Progress
+
+✓ Error Log
+
+✓ Fallback
+
+========================
+
+Jangan berhenti sampai semua test lulus.
+
+Jika menemukan bug lain selama audit, perbaiki langsung.
+
+Outputkan daftar bug yang ditemukan dan daftar bug yang berhasil diperbaiki.

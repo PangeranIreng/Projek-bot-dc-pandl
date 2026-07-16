@@ -9,9 +9,9 @@
     }
   },
   "statistics": {
-    "total": 52,
+    "total": 53,
     "byPlatform": {
-      "YouTube": 52
+      "YouTube": 53
     }
   },
   "history": [
@@ -523,11 +523,27 @@
       "duration": 311,
       "limitRemaining": "Unlimited",
       "timestamp": "2026-07-15T19:23:38.502Z"
+    },
+    {
+      "userId": "1462685321262272664",
+      "platform": "YouTube",
+      "title": "DJ  MAAF SUNGGUH KU TAK BISA KEMBALI PADAMU DJ DISAAT AKU MENCINTAIMU VIRAL TIKTOK TERBARU 2025",
+      "originalUrl": "https://youtu.be/ji8QvgvMdyI?si=AydCXtN3vcZnz5Rd",
+      "boomboxUrl": "https://b.top4top.io/m_3849c7v530.mp3",
+      "duration": 285,
+      "limitRemaining": "Unlimited",
+      "timestamp": "2026-07-16T05:18:23.424Z"
     }
   ],
   "logState": {
     "messageId": "1526256015941832776",
     "entries": [
+      {
+        "title": "DJ  MAAF SUNGGUH KU TAK BISA KEMBALI PADAMU DJ DISAAT AKU MENCINTAIMU VIRAL TIKTOK TERBARU 2025",
+        "duration": 285,
+        "boomboxUrl": "https://b.top4top.io/m_3849c7v530.mp3",
+        "timestamp": "2026-07-16T05:18:23.424Z"
+      },
       {
         "title": "Usik - Feby Putri (Official Lyric Video)",
         "duration": 311,

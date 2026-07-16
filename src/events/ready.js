@@ -13,6 +13,7 @@ import { updateTicketDashboard }      from "../features/ticket/dashboard.js";
 import { ticketDB }           from "../database/ticketDB.js";
 import { IDS }                from "../../config/constants.js";
 import { initBinary }         from "../services/ytmp3gg.js";
+import { initConsole, consoleLog } from "../features/database/console.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -24,6 +25,10 @@ export async function handleReady(client, secrets, state) {
   logger.info(`Memantau channel scan: ${secrets.scanChannelId}`);
 
   initErrorLogger(client);
+
+  // Inisialisasi console logger DATABASE dan kirim log "Bot Online"
+  initConsole(client);
+  consoleLog("online", "Bot Online", `${client.user.tag} berhasil login dan siap.`).catch(() => {});
 
   // Pre-download / version-check the yt-dlp binary once at startup so the
   // first BoomBox request doesn't pay a GitHub API round-trip, and concurrent

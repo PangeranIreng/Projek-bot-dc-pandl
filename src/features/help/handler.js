@@ -53,6 +53,11 @@ const CATEGORIES = {
     label: "Thread",
     description: "Auto Thread per channel",
   },
+  database: {
+    emoji: "📊",
+    label: "Database",
+    description: "Backup, Monitor, & Kelola Data Bot",
+  },
   admin: {
     emoji: "⚙️",
     label: "Admin",
@@ -165,6 +170,14 @@ const USAGE = {
       "`/cpanel template` → Lihat template tersedia",
       "`/cpanel addbtn <id>` → Tambah button ke panel",
     ],
+  },
+
+  // 📊 Database
+  setup: {
+    category: "database",
+    emoji: "📊",
+    summary: "Buka menu admin untuk mengatur panel Database (Bot Setting, Backup, Console, Member List). Owner/Developer only.",
+    examples: ["`/setup`"],
   },
 
   // ℹ️ General
@@ -307,6 +320,17 @@ function buildCategoryEmbed(categoryKey, commands) {
       "**Template:** Member, BoomBox, Premium, Custom",
       "**Buttons:** Max 5 per panel — klik = toggle/add/remove role otomatis",
       "Semua config tersimpan di database dan survive restart.",
+    ].join("\n"),
+    database: [
+      "Sistem monitoring dan manajemen data bot — Owner/Developer only.",
+      "",
+      "**Panel yang tersedia:**",
+      "• ⚙️ **Bot Setting** — Status bot, GitHub, versi, uptime, auto backup/clean",
+      "• 📦 **Backup** — Buat backup ZIP, Smart Clean, info storage",
+      "• 📄 **Console** — Riwayat aktivitas bot (pesan baru, bukan edit)",
+      "• 👥 **Member List** — Statistik member, premium, CEO",
+      "",
+      "Gunakan `/setup` untuk mengkonfigurasi channel masing-masing panel.",
     ].join("\n"),
     admin: [
       "Perintah konfigurasi sistem — Owner/Developer only.",

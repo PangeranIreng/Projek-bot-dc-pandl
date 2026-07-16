@@ -13,6 +13,7 @@
  *   sk:       Scanner (scan again, full preview, etc.)
  *   cp:       CPanel role-button panels
  *   help:     Help command category select
+ *   db:       Database system (Bot Setting, Backup, Console, Member List)
  */
 
 import { logger }                   from "../utils/logger.js";
@@ -25,6 +26,7 @@ import { handleBoomBoxLogInteraction }  from "../features/logs/logInteraction.js
 import { handleScanButtonInteraction }  from "../handlers/scanInteractionHandler.js";
 import { handleCpanelInteraction }      from "../features/setup/cpanel/interaction.js";
 import { handleHelpInteraction }        from "../features/help/handler.js";
+import { handleDatabaseInteraction }    from "../features/database/interaction.js";
 
 /**
  * @param {import("discord.js").Interaction} interaction
