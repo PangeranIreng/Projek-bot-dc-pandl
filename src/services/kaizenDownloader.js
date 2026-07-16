@@ -20,18 +20,10 @@ import fs          from "node:fs";
 import path        from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { execSync }  from "node:child_process";
 import { logger }   from "../utils/logger.js";
+import { FFMPEG_PATH, ffmpegAvailable } from "../utils/ffmpegPath.js";
 
 const execFileAsync = promisify(execFile);
-
-// Resolve ffmpeg once at module load.
-let FFMPEG_PATH = "ffmpeg";
-try {
-  FFMPEG_PATH = execSync("which ffmpeg", { encoding: "utf8" }).trim();
-} catch {
-  // ffmpeg not in PATH — conversion may fail; caller will surface this
-}
 
 // ── Timeout constants ─────────────────────────────────────────────────────────
 // API call (mendapatkan download URL): 8s — cepat gagal jika API down,
@@ -343,9 +335,14 @@ export async function kaizenDownload(url, type, quality, tmpDir, signal = undefi
   const targetExt = type === "mp4" ? "m4a" : "mp3";
   const finalFile = path.join(tmpDir, `kaizen_final.${targetExt}`);
 
-  if (ext === targetExt && type === "mp3") {
+  // Skip ffmpeg entirely when the CDN already returned the target format.
+  // Kaizen often delivers mp3 directly — no re-encode needed, just rename.
+  if (ext === targetExt) {
     fs.renameSync(rawFile, finalFile);
+    logger.info(`[kaizenDownloader] Skipping ffmpeg — already ${targetExt}`);
   } else {
+    // Transcode using ffmpeg (always available via ffmpeg-static bundle).
+    logger.info(`[kaizenDownloader] Transcoding ${ext} → ${targetExt} with ffmpeg`);
     const ffmpegArgs = ["-y", "-i", rawFile, "-vn"];
     if (type === "mp3") ffmpegArgs.push("-b:a", `${quality}k`);
     ffmpegArgs.push(finalFile);
@@ -354,6 +351,16 @@ export async function kaizenDownload(url, type, quality, tmpDir, signal = undefi
       await execFileAsync(FFMPEG_PATH, ffmpegArgs, { timeout: 60_000 });
     } catch (ffErr) {
       logger.warn(`[kaizenDownloader] ffmpeg transcode gagal: ${ffErr.message}`);
+      // Last resort: if ffmpeg failed but we have a valid raw file, serve it
+      // as-is so the user still gets audio (format may differ from request).
+      if (fs.existsSync(rawFile)) {
+        logger.warn(`[kaizenDownloader] Serving raw file as fallback (ext=${ext})`);
+        fs.renameSync(rawFile, path.join(path.dirname(finalFile), `kaizen_final.${ext}`));
+        const rawFallback = path.join(path.dirname(finalFile), `kaizen_final.${ext}`);
+        const rawSize = (fs.statSync(rawFallback).size / 1024).toFixed(1);
+        logger.info(`[kaizenDownloader] ✅ Kaizen berhasil (raw fallback, ${rawSize} KB)`);
+        return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile: rawFallback, tmpDir };
+      }
       throw new Error(`kaizenapi transcode failed: ${ffErr.message}`);
     }
     try { fs.unlinkSync(rawFile); } catch {}

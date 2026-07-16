@@ -14,7 +14,6 @@
 
 import { execFile }      from "node:child_process";
 import { promisify }     from "node:util";
-import { execSync }      from "node:child_process";
 import fs                from "node:fs";
 import path              from "node:path";
 import os                from "node:os";
@@ -24,6 +23,7 @@ import ytdlCore           from "@distube/ytdl-core";
 import { kaizenDownload } from "./kaizenDownloader.js";
 import { logger }        from "../utils/logger.js";
 import * as providerHealth from "./providerHealth.js";
+import { FFMPEG_PATH, ffmpegAvailable } from "../utils/ffmpegPath.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // FIX (root cause): ytmp3gg.js is at src/services/ — two levels up reaches
@@ -37,14 +37,9 @@ const YTDLP_DL  = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-
 
 const execFileAsync = promisify(execFile);
 
-// Resolve ffmpeg once at startup.
-let FFMPEG_PATH = "ffmpeg";
-try {
-  FFMPEG_PATH = execSync("which ffmpeg", { encoding: "utf8" }).trim();
-  logger.info(`[ytmp3gg] ffmpeg found at: ${FFMPEG_PATH}`);
-} catch {
-  logger.warn("[ytmp3gg] ffmpeg not found in PATH — audio conversion may fail");
-}
+// FFMPEG_PATH and ffmpegAvailable are resolved once at startup by
+// ffmpegPath.js: system ffmpeg → ffmpeg-static bundle → "ffmpeg" fallback.
+// See src/utils/ffmpegPath.js for resolution order.
 
 // Shared keep-alive agent — reused across every outbound HTTPS request this
 // module makes (TikTok redirect resolution) so repeated calls don't pay a
@@ -806,18 +801,29 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signa
 
   await _pipeStreamWithTimeout(stream, outputFile, YTDL_CORE_DOWNLOAD_TIMEOUT_MS, signal);
 
-  // Transcode to the requested output format/quality with ffmpeg, matching
-  // what the yt-dlp path produces, so downstream code (top4top upload,
-  // embeds) sees a consistent file type either way.
-  const audioFmt   = type === "mp4" ? "m4a" : "mp3";
-  const audioQ     = type === "mp3" ? `${quality}k` : undefined;
-  const finalFile  = path.join(tmpDir, `audio_final.${audioFmt}`);
-  const ffmpegArgs = ["-y", "-i", outputFile, "-vn"];
-  if (audioQ) ffmpegArgs.push("-b:a", audioQ);
-  ffmpegArgs.push(finalFile);
+  // ytdl-core always downloads as .m4a (opus/aac audio track from YouTube).
+  // We need to produce the format the caller requested (mp3 or m4a).
+  //
+  // Skip ffmpeg entirely when the downloaded format already matches the
+  // target: m4a→m4a (type === "mp4") is a straight rename with no quality
+  // loss and no external tool needed. mp3 requests still need ffmpeg to
+  // re-encode, but ffmpeg-static guarantees it is always available.
+  const audioFmt  = type === "mp4" ? "m4a" : "mp3";
+  const audioQ    = type === "mp3" ? `${quality}k` : undefined;
+  const finalFile = path.join(tmpDir, `audio_final.${audioFmt}`);
 
-  await execFileAsync(FFMPEG_PATH, ffmpegArgs, { timeout: 60_000, signal });
-  try { fs.unlinkSync(outputFile); } catch {}
+  // "ext" is "m4a" — the format ytdl-core downloads
+  if (audioFmt === "m4a") {
+    // Already m4a — just rename, no conversion needed.
+    fs.renameSync(outputFile, finalFile);
+    logger.info(`[ytmp3gg] ytdl-core — skipping ffmpeg (already m4a)`);
+  } else {
+    // Convert m4a → mp3 using ffmpeg (always available via ffmpeg-static).
+    logger.info(`[ytmp3gg] ytdl-core — transcoding m4a → mp3 with ffmpeg`);
+    const ffmpegArgs = ["-y", "-i", outputFile, "-vn", "-b:a", audioQ, finalFile];
+    await execFileAsync(FFMPEG_PATH, ffmpegArgs, { timeout: 60_000, signal });
+    try { fs.unlinkSync(outputFile); } catch {}
+  }
 
   const details  = info.videoDetails ?? {};
   const title     = details.title || null;
