@@ -401,7 +401,7 @@ function _isAborted(err, signal) {
  * Parse yt-dlp stdout and locate the output file.
  * @private
  */
-function _parseOutput(stdout, tmpDir, type, quality) {
+function _parseOutput(stdout, tmpDir, type, quality, provider = "yt-dlp") {
   const metaLine  = stdout.split("\n").find(l => l.includes("|||")) ?? "";
   const [, rawTitle, rawDuration, rawUploader, rawThumb] = metaLine.split("|||");
 
@@ -419,7 +419,7 @@ function _parseOutput(stdout, tmpDir, type, quality) {
   const sizeKB    = (fs.statSync(localFile).size / 1024).toFixed(1);
   logger.info(`[ytmp3gg] ✅ File siap: ${localFile} (${sizeKB} KB)`);
 
-  return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile, tmpDir };
+  return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile, tmpDir, provider };
 }
 
 /**
@@ -917,7 +917,61 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signa
   const sizeKB = (fs.statSync(finalFile).size / 1024).toFixed(1);
   logger.info(`[ytmp3gg] ✅ Fallback engine succeeded | title="${title}" (${sizeKB} KB)`);
 
-  return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile: finalFile, tmpDir };
+  return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile: finalFile, tmpDir, provider: "ytdl-core" };
+}
+
+// ── Parallel provider race ─────────────────────────────────────────────────────
+//
+// Runs yt-dlp (default method, 30 s) and ytdl-core simultaneously.
+// The first provider to produce a valid audio file wins — the other is
+// cancelled via AbortController and its tmpDir is cleaned up.
+//
+// Health stats are NOT recorded here — only in the sequential fallback loop,
+// so a race failure does not prematurely count against either provider's
+// circuit-breaker.
+//
+// Returns { winner: string, result: object } on success.
+// Throws AggregateError (with .errors array) when both fail.
+//
+async function _runParallelRace(input, type, quality, signal) {
+  const raceTmpA = fs.mkdtempSync(path.join(os.tmpdir(), "bb-race-ytdlp-"));
+  const raceTmpB = fs.mkdtempSync(path.join(os.tmpdir(), "bb-race-ytdlc-"));
+
+  const ctrlA = new AbortController();
+  const ctrlB = new AbortController();
+
+  // Propagate parent abort to both children
+  const onParentAbort = () => { ctrlA.abort(); ctrlB.abort(); };
+  if (signal) signal.addEventListener("abort", onParentAbort, { once: true });
+
+  const cleanupA = () => { try { fs.rmSync(raceTmpA, { recursive: true, force: true }); } catch {} };
+  const cleanupB = () => { try { fs.rmSync(raceTmpB, { recursive: true, force: true }); } catch {} };
+
+  const pA = _attempt(input, type, quality, YOUTUBE_METHODS[0], raceTmpA, 30_000, ctrlA.signal)
+    .then((stdout) => {
+      ctrlB.abort();
+      const result = _parseOutput(stdout, raceTmpA, type, quality, "yt-dlp (race)");
+      setTimeout(cleanupB, 500); // let ytdl-core settle before cleanup
+      return { winner: "yt-dlp", result };
+    });
+
+  const pB = _ytdlCoreFallback(input, type, quality, raceTmpB, null, ctrlB.signal)
+    .then((result) => {
+      ctrlA.abort();
+      result = { ...result, provider: "ytdl-core (race)" };
+      setTimeout(cleanupA, 500);
+      return { winner: "ytdl-core", result };
+    });
+
+  try {
+    return await Promise.any([pA, pB]);
+  } catch (aggErr) {
+    // Both failed — clean up both tmpDirs
+    cleanupA(); cleanupB();
+    throw aggErr;
+  } finally {
+    if (signal) signal.removeEventListener("abort", onParentAbort);
+  }
 }
 
 async function _ytdlYouTube(input, type, quality, onProgress, signal) {
@@ -933,6 +987,32 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
 
   // providerNum is a sequential counter for structured [Provider N] log lines.
   let providerNum = 0;
+
+  // ── ⚡ Parallel race — yt-dlp default vs ytdl-core (fast path) ──────────────
+  // Both providers start simultaneously with a 30s window.
+  // Winner returns immediately; the other is cancelled and cleaned up.
+  // On failure, the sequential fallback chain below handles recovery.
+  // Health tracking is deliberately skipped here to avoid false OFFLINE marks.
+  if (!providerHealth.shouldSkip("yt-dlp-youtube") && !providerHealth.shouldSkip("ytdl-core") && !signal?.aborted) {
+    logger.info(`[ytmp3gg] ⚡ Parallel race: yt-dlp vs ytdl-core`);
+    try {
+      const { winner, result } = await _runParallelRace(input, type, quality, signal);
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      logger.info(`[ytmp3gg] ⚡ Race winner: ${winner} | provider=${result.provider}`);
+      if (winner === "yt-dlp")    providerHealth.recordSuccess("yt-dlp-youtube");
+      if (winner === "ytdl-core") providerHealth.recordSuccess("ytdl-core");
+      return result;
+    } catch (aggErr) {
+      // Both failed — record best error from either, then fall through
+      if (_isAborted(aggErr?.errors?.[0] ?? aggErr, signal)) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae;
+      }
+      const raceErrors = aggErr.errors ?? [aggErr];
+      for (const e of raceErrors) bestError = _betterError(bestError, _translateError(e));
+      logger.warn(`[ytmp3gg] ⚡ Race failed — falling back to sequential chain`);
+    }
+  }
 
   // ── Provider 1: yt-dlp multi-method ──────────────────────────────────────
   providerNum++;
@@ -959,7 +1039,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
         const stdout = await _attempt(input, type, quality, YOUTUBE_METHODS[i], tmpDir, _methodTimeout(i), signal);
         logger.info(`[ytmp3gg] [Provider ${providerNum}] yt-dlp (YouTube) method ${i + 1}/${YOUTUBE_METHODS.length} | Status: SUCCESS`);
         providerHealth.recordSuccess("yt-dlp-youtube");
-        return _parseOutput(stdout, tmpDir, type, quality);
+        return _parseOutput(stdout, tmpDir, type, quality, `yt-dlp/method${i + 1}`);
       } catch (err) {
         if (_isAborted(err, signal)) { bestError = err; ytdlpFailed = true; break; }
         const translated = _translateError(err);
@@ -1014,7 +1094,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
       const result = await _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signal);
       providerHealth.recordSuccess("ytdl-core");
       logger.info(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: SUCCESS`);
-      return result;
+      return { ...result, provider: "ytdl-core" };
     } catch (err) {
       if (_isAborted(err, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw err; }
       logger.warn(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: FAILED | Reason: ${err.message}`);
@@ -1036,7 +1116,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
       const result = await kaizenDownload(input, type, quality, tmpDir, signal);
       providerHealth.recordSuccess("kaizenapi");
       logger.info(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: SUCCESS`);
-      return result;
+      return { ...result, provider: "kaizen" };
     } catch (kaizenErr) {
       if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
       logger.warn(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: FAILED | Reason: ${kaizenErr.message}`);
@@ -1055,7 +1135,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
     try {
       const result = await _pipedFallback(input, type, quality, pipedTmpDir, onProgress, signal);
       logger.info(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: SUCCESS`);
-      return result;
+      return { ...result, provider: "piped" };
     } catch (pipedErr) {
       if (_isAborted(pipedErr, signal)) { try { fs.rmSync(pipedTmpDir, { recursive: true, force: true }); } catch {} const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae; }
       logger.warn(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: FAILED | Reason: ${pipedErr.message}`);
@@ -1073,7 +1153,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
     try {
       const result = await _invidiousFallback(input, type, quality, invTmpDir, onProgress, signal);
       logger.info(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: SUCCESS`);
-      return result;
+      return { ...result, provider: "invidious" };
     } catch (invErr) {
       if (_isAborted(invErr, signal)) { try { fs.rmSync(invTmpDir, { recursive: true, force: true }); } catch {} const ae = new Error("Dibatalkan (timeout tahap)"); ae.name = "AbortError"; throw ae; }
       logger.warn(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: FAILED | Reason: ${invErr.message}`);

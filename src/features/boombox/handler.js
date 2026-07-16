@@ -26,9 +26,12 @@ import {
 } from "discord.js";
 
 import { BOOMBOX_CONFIG, ALLOWED_ROLES, UNLIMITED_ROLES } from "./config.js";
-import { ytdl, getVideoInfo } from "../../services/ytmp3gg.js";
-import { top4top }            from "../../services/top4top.js";
-import { db, premDB }         from "../../database/db.js";
+import { ytdl, getVideoInfo }  from "../../services/ytmp3gg.js";
+import { top4top }             from "../../services/top4top.js";
+import { db, premDB }          from "../../database/db.js";
+import * as boomboxCache       from "../../services/boomboxCache.js";
+import { extractVideoId }      from "../../services/boomboxCache.js";
+import { resolveSpotify, isSpotifyUrl } from "../../services/spotifyResolver.js";
 import {
   buildProcessingEmbed,
   buildResultEmbed,
@@ -57,29 +60,12 @@ const MAX_DEDUP     = 200;
 const MAX_DURATION_SEC = 25 * 60; // 25 minutes
 
 // ── Result cache ──────────────────────────────────────────────────────────────
-// Same source URL requested again within the TTL skips download+upload
-// entirely and reuses the previous BoomBox URL -- avoids duplicate downloads
-// and makes repeat requests near-instant.
-const RESULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MAX_RESULT_CACHE    = 300;
-const resultCache = new Map(); // url -> { ytResult, boomboxUrl, timestamp }
-
-function getCachedResult(url) {
-  const hit = resultCache.get(url);
-  if (!hit) return null;
-  if (Date.now() - hit.timestamp > RESULT_CACHE_TTL_MS) {
-    resultCache.delete(url);
-    return null;
-  }
-  return hit;
-}
-
-function setCachedResult(url, ytResult, boomboxUrl) {
-  resultCache.set(url, { ytResult, boomboxUrl, timestamp: Date.now() });
-  if (resultCache.size > MAX_RESULT_CACHE) {
-    resultCache.delete(resultCache.keys().next().value);
-  }
-}
+// Moved to src/services/boomboxCache.js:
+//   • VideoID-keyed (not URL-keyed) — same video via different URL formats hits cache
+//   • Tracks hitCount, lastUsed, expire per entry
+//   • Auto-clean timer: evicts entries unused for > 90 days
+//   • Metadata cache: caches title/duration/thumbnail/uploader for 24h
+// Import: `boomboxCache.*` and `extractVideoId` above.
 
 // ── URL helpers ───────────────────────────────────────────────────────────────
 
@@ -94,6 +80,11 @@ const PLATFORM_PATTERNS = [
     name:  "TikTok",
     // Covers any tiktok.com subdomain: tiktok.com, www., m., vt., vm., music., etc.
     regex: /^https?:\/\/([a-z0-9-]+\.)?tiktok\.com\//i,
+  },
+  {
+    name:  "Spotify",
+    // Spotify track links only — albums and playlists are not downloadable as a single file.
+    regex: /^https?:\/\/open\.spotify\.com\/track\//i,
   },
 ];
 
@@ -535,73 +526,127 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
   try {
 
     // ── Tahap 1: Mengambil Metadata ─────────────────────────────────────────
-    // getVideoInfo non-fatal: gagal → null duration → lanjut download.
-    // Timeout 10s agar tidak memblokir pipeline jika yt-dlp lambat.
     currentStage = "Fetch Video Info";
     await editStep(1); // ⠹ Mengambil Metadata...
-    const cachedEarly = getCachedResult(url);
-    const info = cachedEarly
-      ? cachedEarly.ytResult
-      : await withStageTimeout(getVideoInfo(url), 10_000, "Analisis link (Analyzing)");
-    lastThumbnail = info.thumbnail ?? null;
-    if (cachedEarly) {
-      logger.info(`[BoomBox] Cache hit for ${url} — reusing metadata`);
-    }
-    logger.info(`[BoomBox] Video info | title="${info.title}" duration=${info.duration}s`);
 
-    // Duration limit — reject BEFORE downloading
-    if (info.duration !== null && info.duration > MAX_DURATION_SEC) {
-      logger.info(`[BoomBox] Rejected: duration ${info.duration}s > ${MAX_DURATION_SEC}s limit`);
-      await statusMsg.delete().catch(() => {});
-      await message.channel.send({ content: userMention, embeds: [buildDurationLimitEmbed(info.duration, MAX_DURATION_SEC)], components: [] }).catch(() => {});
-      processingSet.delete(message.id);
-      return;
+    // Spotify: resolve to a yt-dlp ytsearch query BEFORE touching any cache or
+    // getVideoInfo — Spotify URLs cannot be queried by yt-dlp's --simulate.
+    let downloadUrl = url;  // URL actually passed to ytdl() — may differ for Spotify
+    let spotifyMeta = null;
+    if (platform === "Spotify") {
+      currentStage = "Resolve Spotify";
+      spotifyMeta  = await withStageTimeout(resolveSpotify(url), 12_000, "Resolve Spotify track");
+      downloadUrl  = spotifyMeta.ytdlInput; // "ytsearch1:<artist> - <title> official audio"
     }
 
-    // ytResult dan boomboxUrl sudah dideklarasikan di atas (outer scope)
-    const cached = getCachedResult(url);
+    // Stable VideoID for cache keying: yt:{11-char id} | tt:{numeric id} | sp:{track id}
+    const videoId = extractVideoId(url, platform);
+
+    // ── Cache check (by VideoID) ────────────────────────────────────────────
+    const cached = boomboxCache.getCachedResult(videoId);
 
     if (cached) {
-      // ── Cache hit — skip download + upload entirely ──────────────────────
+      // ── ⚡ Cache HIT — skip getVideoInfo + download + upload entirely ─────
       currentStage = "Reuse Cached Result";
-      logger.info(`[BoomBox] ── Reusing cached BoomBox URL for ${url} (no download/upload needed)`);
-      ytResult   = cached.ytResult;
-      boomboxUrl = cached.boomboxUrl;
+      ytResult      = cached.ytResult;
+      boomboxUrl    = cached.boomboxUrl;
+      lastThumbnail = ytResult?.thumbnail ?? null;
+      // Record hit in persistent DB (non-blocking; fire-and-forget)
+      try { db.updateVideoCacheHit(videoId); } catch {}
+      logger.info(`[BoomBox] ⚡ Cache HIT | videoId=${videoId} | hitCount=${cached.hitCount} | url=${boomboxUrl}`);
+
     } else {
-      // ── Tahap 2: Menyiapkan Audio (download) ─────────────────────────────
+      // ── Cache MISS — fetch metadata, download, upload ────────────────────
+
+      // Metadata cache: avoid redundant getVideoInfo() API calls for repeat misses.
+      let info = boomboxCache.getCachedMeta(videoId);
+      if (info) {
+        logger.info(`[BoomBox] Meta cache HIT | videoId=${videoId} | title="${info.title}"`);
+      } else if (platform !== "Spotify") {
+        // getVideoInfo is non-fatal — failure → null duration → proceed anyway.
+        info = await withStageTimeout(getVideoInfo(url), 10_000, "Analisis link (Analyzing)");
+        if (info?.title || info?.duration) boomboxCache.setCachedMeta(videoId, info);
+      } else {
+        // Spotify: build a pseudo-info object from the oEmbed metadata we already have.
+        // Duration is not available from oEmbed — skip the duration limit check.
+        info = { title: spotifyMeta.title, duration: null, thumbnail: spotifyMeta.thumbnail, uploader: spotifyMeta.artist };
+      }
+
+      lastThumbnail = (spotifyMeta?.thumbnail ?? info?.thumbnail) ?? null;
+      logger.info(`[BoomBox] Meta | title="${spotifyMeta?.title ?? info?.title}" duration=${info?.duration ?? "?"}s | cache=MISS`);
+
+      // Duration limit — reject BEFORE downloading
+      if (info?.duration !== null && info?.duration > MAX_DURATION_SEC) {
+        logger.info(`[BoomBox] Rejected: duration ${info.duration}s > ${MAX_DURATION_SEC}s limit`);
+        await statusMsg.delete().catch(() => {});
+        await message.channel.send({ content: userMention, embeds: [buildDurationLimitEmbed(info.duration, MAX_DURATION_SEC)], components: [] }).catch(() => {});
+        processingSet.delete(message.id);
+        return;
+      }
+
+      // ── Tahap 2: Download ─────────────────────────────────────────────────
       // onProgress: fallback loop mendorong label singkat ("Trying another method...",
       // "Trying alternative API...") ke embed yang sama tanpa mengirim pesan baru.
       currentStage = "Download Audio";
       await editStep(2); // ⠼ Menyiapkan Audio...
-      logger.info(`[BoomBox] ── Downloading | ${platform} | ${url}`);
+      logger.info(`[BoomBox] ── Downloading | ${platform} | ${downloadUrl}`);
+      const downloadStart = Date.now();
       ytResult = await withStageTimeout(
         (signal) => ytdl(
-          url,
+          downloadUrl,
           BOOMBOX_CONFIG.AUDIO_TYPE,
           BOOMBOX_CONFIG.AUDIO_QUALITY,
           (label) => editStep(2, label),
           signal,
         ),
-        5 * 60_000, // 5 min ceiling — download + seluruh fallback chain
+        5 * 60_000, // 5 min ceiling — download + entire fallback chain
         "Download audio",
       );
+      const downloadMs = Date.now() - downloadStart;
       tmpDir = ytResult.tmpDir;
+
+      // Override metadata with Spotify data when applicable (ytResult may have
+      // generic title like "ytsearch..." — replace with the Spotify track name).
+      if (spotifyMeta) {
+        ytResult = { ...ytResult, title: spotifyMeta.title ?? ytResult.title, thumbnail: spotifyMeta.thumbnail ?? ytResult.thumbnail };
+      }
       lastThumbnail = ytResult.thumbnail ?? lastThumbnail;
-      logger.info(`[BoomBox] ── Download complete | title="${ytResult.title}" duration=${ytResult.duration}s`);
+      logger.info(`[BoomBox] ── Download OK | title="${ytResult.title}" duration=${ytResult.duration}s | provider=${ytResult.provider ?? "unknown"} | elapsed=${downloadMs}ms`);
 
       // ── Tahap 3: Upload BoomBox ───────────────────────────────────────────
       currentStage = "Upload to Top4Top";
       await editStep(3); // ⠦ Upload BoomBox...
       logger.info(`[BoomBox] ── Upload started | file=${ytResult.localFile}`);
-      const t4tResult = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
+      const uploadStart = Date.now();
+      const t4tResult   = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
+      const uploadMs    = Date.now() - uploadStart;
 
       // ── Tahap 4: Verifikasi Link ──────────────────────────────────────────
       currentStage = "Generate BoomBox URL";
       await editStep(4); // ⠇ Verifikasi Link...
       boomboxUrl = t4tResult.result;
-      logger.info(`[BoomBox] ── Upload finished | BoomBox URL created: ${boomboxUrl}`);
+      logger.info(`[BoomBox] ── Upload OK | BoomBox URL: ${boomboxUrl}`);
 
-      setCachedResult(url, ytResult, boomboxUrl);
+      // ── Persist to caches ─────────────────────────────────────────────────
+      // 1. In-memory VideoID cache (fast path for next request)
+      boomboxCache.setCachedResult(videoId, { boomboxUrl, ytResult });
+      // 2. Persistent DB video cache (survives restarts)
+      try {
+        db.setVideoCache(videoId, {
+          boomboxUrl,
+          title:     ytResult.title,
+          duration:  ytResult.duration,
+          thumbnail: ytResult.thumbnail,
+        });
+      } catch {}
+
+      // ── Stats log ─────────────────────────────────────────────────────────
+      const totalMs = Date.now() - startedAt;
+      logger.info(
+        `[BoomBox] Stats | cache=MISS | videoId=${videoId} | platform=${platform}` +
+        ` | provider=${ytResult.provider ?? "unknown"}` +
+        ` | download=${downloadMs}ms | upload=${uploadMs}ms | total=${totalMs}ms`
+      );
     }
 
     // ── Bookkeeping ────────────────────────────────────────────────────────

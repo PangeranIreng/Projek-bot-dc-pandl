@@ -35,6 +35,10 @@ const DEFAULT_DB = {
     messageId: null,
     entries:   [],
   },
+  // Persistent video cache — survives restarts.
+  // In-memory cache (boomboxCache.js) is the fast path; this is the durable backup.
+  // { [videoId]: { boomboxUrl, title, duration, thumbnail, createdAt, lastUsed, hitCount } }
+  videoCache: {},
 };
 
 const MAX_HISTORY = 500;
@@ -191,5 +195,80 @@ export class BoomBoxDB {
     if (!this._data.settings) this._data.settings = {};
     this._data.settings[key] = value;
     this._save();
+  }
+
+  // ── Video cache (persistent, survives restarts) ───────────────────────────
+
+  /**
+   * Retrieve a cached video entry by videoId.
+   * @param {string} videoId
+   * @returns {{ boomboxUrl:string, title:string|null, duration:number|null, thumbnail:string|null, createdAt:number, lastUsed:number, hitCount:number } | null}
+   */
+  getVideoCache(videoId) {
+    return this._data.videoCache?.[videoId] ?? null;
+  }
+
+  /**
+   * Store or overwrite a video cache entry.
+   * @param {string} videoId
+   * @param {{ boomboxUrl:string, title?:string|null, duration?:number|null, thumbnail?:string|null }} data
+   */
+  setVideoCache(videoId, data) {
+    if (!this._data.videoCache) this._data.videoCache = {};
+    const existing = this._data.videoCache[videoId];
+    this._data.videoCache[videoId] = {
+      boomboxUrl: data.boomboxUrl,
+      title:      data.title      ?? existing?.title      ?? null,
+      duration:   data.duration   ?? existing?.duration   ?? null,
+      thumbnail:  data.thumbnail  ?? existing?.thumbnail  ?? null,
+      createdAt:  existing?.createdAt ?? Date.now(),
+      lastUsed:   Date.now(),
+      hitCount:   existing?.hitCount  ?? 0,
+    };
+    this._save();
+  }
+
+  /**
+   * Record a cache hit for a videoId — increments hitCount and updates lastUsed.
+   * @param {string} videoId
+   */
+  updateVideoCacheHit(videoId) {
+    const entry = this._data.videoCache?.[videoId];
+    if (!entry) return;
+    entry.hitCount = (entry.hitCount ?? 0) + 1;
+    entry.lastUsed = Date.now();
+    this._save();
+  }
+
+  /**
+   * Remove all video cache entries unused for more than `maxAgeDays` days.
+   * @param {number} [maxAgeDays=90]
+   * @returns {number} Number of entries removed.
+   */
+  cleanVideoCache(maxAgeDays = 90) {
+    if (!this._data.videoCache) return 0;
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    let removed  = 0;
+    for (const [id, entry] of Object.entries(this._data.videoCache)) {
+      const lastActive = entry.lastUsed ?? entry.createdAt ?? 0;
+      if (lastActive < cutoff) {
+        delete this._data.videoCache[id];
+        removed++;
+      }
+    }
+    if (removed > 0) this._save();
+    return removed;
+  }
+
+  /**
+   * Return all video cache entries, newest-first by lastUsed.
+   * @param {number} [limit=100]
+   * @returns {Array<object>}
+   */
+  getVideoCacheList(limit = 100) {
+    const entries = Object.entries(this._data.videoCache ?? {})
+      .map(([id, v]) => ({ videoId: id, ...v }))
+      .sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0));
+    return entries.slice(0, limit);
   }
 }
