@@ -408,14 +408,21 @@ function _translateError(err) {
 function _isPermanentFailure(err) {
   const m = err.message.toLowerCase();
   return (
-    m.includes("tidak tersedia")   ||
-    m.includes("dihapus")          ||
-    m.includes("privat")           ||
-    m.includes("usia")             ||
-    m.includes("login")            ||
-    m.includes("region blocked")   ||
-    m.includes("tidak ditemukan")
-    // "timed out" / "network timeout" intentionally removed:
+    // NOTE: "tidak tersedia" (video unavailable) is intentionally EXCLUDED here.
+    // YouTube returns "Video unavailable" when a yt-dlp player-client is rejected
+    // due to missing PO-tokens — this is a CLIENT auth failure, not a real video
+    // being gone. Classifying it as permanent aborted the entire fallback chain
+    // (ytdl-core, KaizenAPI, Piped, Invidious were never tried) even when the video
+    // was perfectly accessible via those independent providers.
+    // Only include failures that NO alternate provider can recover:
+    m.includes("dihapus")          ||  // truly deleted video
+    m.includes("privat")           ||  // private video — no provider can access it
+    m.includes("usia")             ||  // age-restricted requiring login
+    m.includes("login")            ||  // needs actual account login
+    m.includes("region blocked")   ||  // truly geo-blocked
+    m.includes("tidak ditemukan")      // 404 / video not found
+    // "tidak tersedia" REMOVED — see note above.
+    // "timed out" / "network timeout" intentionally excluded:
     // timeouts are transient and must trigger fallback to the next provider.
   );
 }
@@ -646,17 +653,30 @@ const YOUTUBE_METHODS = [
     "--extractor-args", "youtube:player_client=android_vr",
   ],
 
-  // ── Method 3: android client — verified working fallback, lower quality
+  // ── Method 3: web_creator client — a newer YouTube client that often
+  // bypasses PO-token requirements that block android_vr in 2026.
+  // Returns full audio-only formats (same as default) when android_vr fails.
+  [
+    "--extractor-args", "youtube:player_client=web_creator",
+  ],
+
+  // ── Method 4: android client — verified working fallback, lower quality
   // (single muxed itag 18, ~44kbps) but real audio, not a guaranteed fail.
   [
     "--extractor-args", "youtube:player_client=android",
     "--add-headers", "User-Agent:com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
   ],
+
+  // ── Method 5: web_embedded client — simpler client fingerprint,
+  // sometimes accepted by YouTube when other clients are PO-gated.
+  [
+    "--extractor-args", "youtube:player_client=web_embedded",
+  ],
 ];
 
 /** Per-method timeout — dipercepat agar fallback loop tidak memblok terlalu lama.
- * Early methods: 30s (cukup untuk download normal, gagal cepat jika terblokir).
- * Last method: 90s (budget penuh untuk koneksi lambat / file besar). */
+ * Methods 1–4: 30s each (fail fast if blocked; most real downloads finish < 20s).
+ * Last method:  90s (full budget for slow connections / large files). */
 function _methodTimeout(i) {
   return i < YOUTUBE_METHODS.length - 1 ? 30_000 : 90_000;
 }
@@ -1249,9 +1269,19 @@ export async function getVideoInfo(url) {
         "--add-headers", "Referer:https://www.tiktok.com/",
       ]]
     : [
-        [], // yt-dlp default combo first
-        ["--extractor-args", "youtube:player_client=tv"],
+        [],                                                                        // Method 1: yt-dlp default (android_vr internally)
+        ["--extractor-args", "youtube:player_client=android_vr"],                 // Method 2: android_vr pinned
+        ["--extractor-args", "youtube:player_client=web_creator"],                // Method 3: web_creator — bypasses PO-token gate
+        ["--extractor-args", "youtube:player_client=android",
+         "--add-headers", "User-Agent:com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"],  // Method 4: android
+        // NOTE: player_client=tv is intentionally excluded — it hits YouTube's
+        // SABR-only gate and never returns playable formats without a JS runtime
+        // that can solve the full SABR challenge.  See YOUTUBE_METHODS comment.
       ];
+
+  // Increased from 8s → 20s: Railway has higher latency than a local machine,
+  // and yt-dlp --simulate on YouTube can take 5-10s on first call.
+  const INFO_TIMEOUT_MS = 20_000;
 
   for (let i = 0; i < infoMethods.length; i++) {
     const args = [
@@ -1266,20 +1296,60 @@ export async function getVideoInfo(url) {
 
     try {
       const { stdout } = await execFileAsync(BIN_PATH, args, {
-        timeout:   8_000, // 8s — metadata fetch harus cepat; gagal cepat → download tetap jalan
+        timeout:   INFO_TIMEOUT_MS,
         maxBuffer: 1 * 1024 * 1024,
       });
       const line            = stdout.trim().split("\n").find(l => l.includes("|||")) ?? "";
       const [rawDur, rawTitle, rawThumb, rawUp] = line.split("|||");
       const duration = rawDur && !isNaN(rawDur) ? parseInt(rawDur, 10) : null;
-      return {
-        duration,
-        title:     rawTitle?.trim() || null,
-        thumbnail: rawThumb?.trim() || null,
-        uploader:  rawUp?.trim()    || null,
-      };
+      const title    = rawTitle?.trim() || null;
+      if (title || duration) {
+        // Got at least some metadata — good enough to proceed.
+        logger.info(`[ytmp3gg] getVideoInfo OK (method ${i + 1}) | title="${title}" duration=${duration}s`);
+        return {
+          duration,
+          title,
+          thumbnail: rawThumb?.trim() || null,
+          uploader:  rawUp?.trim()    || null,
+        };
+      }
+      // stdout parsed but both title and duration are empty — try next method.
+      logger.warn(`[ytmp3gg] getVideoInfo method ${i + 1}: yt-dlp ran but returned no metadata (title=null, duration=null) — trying next`);
     } catch (err) {
       logger.warn(`[ytmp3gg] getVideoInfo method ${i + 1}/${infoMethods.length} failed: ${err.message}`);
+    }
+  }
+
+  // ── yt-dlp metadata fallback: ytdl-core ────────────────────────────────────
+  // All yt-dlp simulate attempts failed. Try @distube/ytdl-core as a metadata-
+  // only fallback before giving up — it uses a completely different extraction
+  // path and succeeds in many cases where yt-dlp's player-client is blocked.
+  if (!isTikTok) {
+    try {
+      logger.info(`[ytmp3gg] getVideoInfo: all yt-dlp methods failed — falling back to ytdl-core for metadata`);
+      const info = await _withTimeout(
+        ytdlCore.getInfo(resolvedUrl, {
+          requestOptions: {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" },
+          },
+        }),
+        YTDL_CORE_INFO_TIMEOUT_MS,
+        `ytdl-core getInfo for metadata timed out (>${YTDL_CORE_INFO_TIMEOUT_MS / 1000}s)`,
+      );
+      const details  = info.videoDetails ?? {};
+      const duration = details.lengthSeconds ? parseInt(details.lengthSeconds, 10) : null;
+      const title    = details.title || null;
+      if (title || duration) {
+        logger.info(`[ytmp3gg] getVideoInfo ytdl-core fallback OK | title="${title}" duration=${duration}s`);
+        return {
+          duration,
+          title,
+          thumbnail: details.thumbnails?.at(-1)?.url || null,
+          uploader:  details.author?.name           || null,
+        };
+      }
+    } catch (coreErr) {
+      logger.warn(`[ytmp3gg] getVideoInfo ytdl-core fallback failed: ${coreErr.message}`);
     }
   }
 
