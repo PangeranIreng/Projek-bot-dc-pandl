@@ -222,9 +222,9 @@ export function buildUnsupportedPlatformEmbed() {
     .setTitle("⚠️ Platform belum didukung.")
     .setDescription(
       "Saat ini BoomBox hanya mendukung:\n\n" +
-      "• **YouTube**\n" +
-      "• **YouTube Music**\n" +
-      "• **TikTok**"
+      "• **YouTube** (termasuk YouTube Music & Shorts)\n" +
+      "• **TikTok**\n" +
+      "• **Spotify** (track saja)"
     )
     .setFooter({ text: FOOTER_TEXT });
 }

@@ -104,6 +104,16 @@ function startBot(secrets) {
     }).catch(() => {});
   });
 
+  process.on("uncaughtException", (err) => {
+    logger.error("Uncaught exception — bot akan tetap berjalan", err);
+    logError({
+      feature: "System",
+      reason:  err?.message ?? String(err),
+      stage:   "Uncaught Exception",
+      error:   err,
+    }).catch(() => {});
+  });
+
   client.login(secrets.botToken).catch((err) => {
     logger.error("Gagal login ke Discord. Periksa BOT_TOKEN.", err);
     process.exit(1);

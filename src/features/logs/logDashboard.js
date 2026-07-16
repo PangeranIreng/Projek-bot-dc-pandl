@@ -195,9 +195,15 @@ export function buildViewAllSelectRow(totalPages) {
 
 export async function updateBoomBoxLogDashboard(client, { resetToFirstPage = true } = {}) {
   try {
-    const ch = await client.channels.fetch(BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID).catch(() => null);
+    // V2: baca log channel dari DB, fallback ke hardcode jika belum di-setup
+    const logChannelId = db.getLogChannel?.() ?? BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID;
+    if (!logChannelId) {
+      logger.warn("[BoomBox] Log channel belum dikonfigurasi. Jalankan /setupboombox untuk mengatur.");
+      return;
+    }
+    const ch = await client.channels.fetch(logChannelId).catch(() => null);
     if (!ch?.isTextBased()) {
-      logger.warn(`[BoomBox] Log channel ${BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID} not found or not text-based`);
+      logger.warn(`[BoomBox] Log channel ${logChannelId} not found or not text-based`);
       return;
     }
 

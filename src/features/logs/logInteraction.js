@@ -15,12 +15,19 @@ import {
   buildViewAllSelectRow,
   resolvePage,
 } from "./logDashboard.js";
+import { handleLogViewerInteraction } from "../boombox/logs/viewer.js";
 import { logger } from "../../utils/logger.js";
 
 export async function handleBoomBoxLogInteraction(interaction) {
   const id = interaction.customId ?? "";
 
   try {
+    // ── V2: Platform-filtered log viewer (bblog:v:*) ──────────────────────
+    if (id.startsWith("bblog:v:")) {
+      await handleLogViewerInteraction(interaction);
+      return;
+    }
+
     // ── First / Prev / Refresh / Next / Last ─────────────────────────────
     const navMatch = /^bblog:nav:(first|prev|refresh|next|last):(\d+)$/.exec(id);
     if (navMatch) {

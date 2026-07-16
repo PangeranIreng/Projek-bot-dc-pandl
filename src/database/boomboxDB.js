@@ -1,6 +1,10 @@
 /**
  * boomboxDB.js — Persistent JSON-based storage for BoomBox.
  * Survives restarts. All writes are synchronous for simplicity and safety.
+ *
+ * BoomBox V2: Added fields for channels, logChannel, maintenance, roleLimits.
+ * All existing fields (settings.freeDailyLimit, dailyUsage, statistics,
+ * history, logState, videoCache) are preserved as-is — no migration needed.
  */
 
 import fs   from "node:fs";
@@ -14,6 +18,23 @@ const DB_PATH   = path.join(__dirname, "..", "..", "data", "boombox-db.json");
 const DEFAULT_DB = {
   settings: {
     freeDailyLimit: BOOMBOX_CONFIG.DEFAULT_FREE_DAILY_LIMIT,
+    // V2: Per-platform channel IDs (null = belum di-setup)
+    channels: {
+      youtube: null,
+      tiktok:  null,
+      spotify: null,
+    },
+    // V2: Single log channel ID (null = belum di-setup, fallback ke config hardcode)
+    logChannel: null,
+    // V2: Maintenance per platform (false = aktif/normal)
+    maintenance: {
+      youtube: false,
+      tiktok:  false,
+      spotify: false,
+    },
+    // V2: Duration limit per role in MINUTES { "<roleId>": <minutes> }
+    // Converts to seconds at runtime only. Null/absent = use default 25 min.
+    roleLimits: {},
   },
   // { "YYYY-MM-DD": { userId: count } }
   dailyUsage: {},
@@ -22,21 +43,16 @@ const DEFAULT_DB = {
     total: 0,
     byPlatform: {},
   },
-  // Last 500 entries
+  // Last 500 entries — primary data source for BoomBox Logs Viewer (V2)
   history: [],
-  // BoomBox Logs channel message tracking — the single embed being edited,
-  // plus the (no-user-info) entries currently rendered in it, newest first.
-  // Entries here are intentionally separate from `history` above: `history`
-  // keeps full internal records (including userId) for limit/premium
-  // bookkeeping, while `logState.entries` is the public, user-info-free view
-  // shown in the archive channel.
+  // BoomBox Logs channel message tracking — single embed edited in place,
+  // user-info-free public view of completed conversions.
   // { messageId: string|null, entries: Array<{title, platform, duration, boomboxUrl, timestamp}> }
   logState: {
     messageId: null,
     entries:   [],
   },
   // Persistent video cache — survives restarts.
-  // In-memory cache (boomboxCache.js) is the fast path; this is the durable backup.
   // { [videoId]: { boomboxUrl, title, duration, thumbnail, createdAt, lastUsed, hitCount } }
   videoCache: {},
 };
@@ -63,12 +79,29 @@ export class BoomBoxDB {
     try {
       const raw    = fs.readFileSync(DB_PATH, "utf8");
       const parsed = JSON.parse(raw);
+      const def    = structuredClone(DEFAULT_DB);
       // Deep-merge defaults for any missing keys
       return {
-        ...structuredClone(DEFAULT_DB),
+        ...def,
         ...parsed,
-        settings: { ...structuredClone(DEFAULT_DB.settings), ...(parsed.settings ?? {}) },
-        logState: { ...structuredClone(DEFAULT_DB.logState), ...(parsed.logState ?? {}) },
+        settings: {
+          ...def.settings,
+          ...(parsed.settings ?? {}),
+          // V2 nested defaults — preserve existing while adding new fields
+          channels: {
+            ...def.settings.channels,
+            ...(parsed.settings?.channels ?? {}),
+          },
+          maintenance: {
+            ...def.settings.maintenance,
+            ...(parsed.settings?.maintenance ?? {}),
+          },
+          roleLimits: {
+            ...def.settings.roleLimits,
+            ...(parsed.settings?.roleLimits ?? {}),
+          },
+        },
+        logState: { ...def.logState, ...(parsed.logState ?? {}) },
       };
     } catch {
       return structuredClone(DEFAULT_DB);
@@ -101,11 +134,6 @@ export class BoomBoxDB {
     this._save();
   }
 
-  /**
-   * Restore a user's daily usage counter back to full (0 used today).
-   * Used by /resetlimit.
-   * @param {string} userId
-   */
   resetUsage(userId) {
     const day = todayKey();
     if (this._data.dailyUsage?.[day]) {
@@ -154,12 +182,22 @@ export class BoomBoxDB {
     return h.slice(-limit).reverse();
   }
 
+  /**
+   * V2: Get history filtered by platform, newest-first.
+   * Used by BoomBox Logs Viewer — reads from history[] directly.
+   * @param {"YouTube"|"TikTok"|"Spotify"|null} platform  null = semua platform
+   * @returns {Array<object>}
+   */
+  getHistoryByPlatform(platform = null) {
+    const h = this._data.history ?? [];
+    const filtered = platform
+      ? h.filter(e => e.platform === platform)
+      : h;
+    return [...filtered].reverse(); // newest-first, non-destructive
+  }
+
   // ── Log message state ────────────────────────────────────────────────────
 
-  /**
-   * Get the active log message ID and the entries currently rendered in it.
-   * @returns {{ messageId: string|null, entries: Array<object> }}
-   */
   getLogState() {
     const state = this._data.logState ?? {};
     return {
@@ -168,18 +206,11 @@ export class BoomBoxDB {
     };
   }
 
-  /**
-   * Update the active log message ID and/or its rendered entries.
-   * @param {{ messageId?: string|null, entries?: Array<object> }} patch
-   */
   setLogState(patch) {
     this._data.logState = { ...this._data.logState, ...patch };
     this._save();
   }
 
-  /**
-   * Reset the log state (start a fresh message).
-   */
   resetLogState() {
     this._data.logState = { messageId: null, entries: [] };
     this._save();
@@ -197,22 +228,143 @@ export class BoomBoxDB {
     this._save();
   }
 
-  // ── Video cache (persistent, survives restarts) ───────────────────────────
+  // ── V2: Channel config ───────────────────────────────────────────────────
 
   /**
-   * Retrieve a cached video entry by videoId.
-   * @param {string} videoId
-   * @returns {{ boomboxUrl:string, title:string|null, duration:number|null, thumbnail:string|null, createdAt:number, lastUsed:number, hitCount:number } | null}
+   * Get configured channels per platform.
+   * @returns {{ youtube: string|null, tiktok: string|null, spotify: string|null }}
    */
+  getChannels() {
+    return {
+      youtube: null,
+      tiktok:  null,
+      spotify: null,
+      ...(this._data.settings?.channels ?? {}),
+    };
+  }
+
+  /**
+   * Set the Discord channel for a specific platform.
+   * @param {"youtube"|"tiktok"|"spotify"} platform
+   * @param {string|null} channelId
+   */
+  setChannel(platform, channelId) {
+    if (!this._data.settings.channels) this._data.settings.channels = {};
+    this._data.settings.channels[platform] = channelId;
+    this._save();
+  }
+
+  // ── V2: Log channel ──────────────────────────────────────────────────────
+
+  /** @returns {string|null} */
+  getLogChannel() {
+    return this._data.settings?.logChannel ?? null;
+  }
+
+  /** @param {string|null} channelId */
+  setLogChannel(channelId) {
+    if (!this._data.settings) this._data.settings = {};
+    this._data.settings.logChannel = channelId;
+    this._save();
+  }
+
+  // ── V2: Maintenance ──────────────────────────────────────────────────────
+
+  /**
+   * Get maintenance status per platform.
+   * @returns {{ youtube: boolean, tiktok: boolean, spotify: boolean }}
+   */
+  getMaintenance() {
+    return {
+      youtube: false,
+      tiktok:  false,
+      spotify: false,
+      ...(this._data.settings?.maintenance ?? {}),
+    };
+  }
+
+  /**
+   * Set maintenance for a platform.
+   * @param {"youtube"|"tiktok"|"spotify"} platform
+   * @param {boolean} enabled
+   */
+  setMaintenance(platform, enabled) {
+    if (!this._data.settings.maintenance) this._data.settings.maintenance = {};
+    this._data.settings.maintenance[platform] = enabled;
+    this._save();
+  }
+
+  /**
+   * Toggle maintenance for a platform.
+   * @param {"youtube"|"tiktok"|"spotify"} platform
+   * @returns {boolean} New state
+   */
+  toggleMaintenance(platform) {
+    const current = this.getMaintenance()[platform] ?? false;
+    this.setMaintenance(platform, !current);
+    return !current;
+  }
+
+  // ── V2: Role duration limits ─────────────────────────────────────────────
+
+  /**
+   * Get all role duration limits.
+   * @returns {{ [roleId: string]: number }} roleId → minutes
+   */
+  getRoleLimits() {
+    return { ...(this._data.settings?.roleLimits ?? {}) };
+  }
+
+  /**
+   * Set video duration limit for a role.
+   * @param {string} roleId
+   * @param {number} minutes  Max video duration in minutes (stored as-is in DB)
+   */
+  setRoleLimit(roleId, minutes) {
+    if (!this._data.settings.roleLimits) this._data.settings.roleLimits = {};
+    this._data.settings.roleLimits[roleId] = minutes;
+    this._save();
+  }
+
+  /**
+   * Remove a role's duration limit (will use global default).
+   * @param {string} roleId
+   */
+  deleteRoleLimit(roleId) {
+    if (this._data.settings?.roleLimits?.[roleId] !== undefined) {
+      delete this._data.settings.roleLimits[roleId];
+      this._save();
+    }
+  }
+
+  /**
+   * Get effective max video duration in SECONDS for a GuildMember.
+   * Picks the highest limit among member's roles.
+   * Falls back to defaultSec if no role-specific limit configured.
+   *
+   * @param {import("discord.js").GuildMember} member
+   * @param {number} defaultSec  Default in seconds (e.g. 25 * 60)
+   * @returns {number}  Effective limit in seconds
+   */
+  getEffectiveDurationLimitSec(member, defaultSec = 25 * 60) {
+    const limits = this._data.settings?.roleLimits ?? {};
+    let maxMinutes = null;
+
+    for (const [roleId, minutes] of Object.entries(limits)) {
+      if (member.roles.cache.has(roleId)) {
+        if (maxMinutes === null || minutes > maxMinutes) maxMinutes = minutes;
+      }
+    }
+
+    return maxMinutes !== null ? maxMinutes * 60 : defaultSec;
+  }
+
+  // ── Video cache (persistent, survives restarts) ───────────────────────────
+
   getVideoCache(videoId) {
     return this._data.videoCache?.[videoId] ?? null;
   }
 
-  /**
-   * Store or overwrite a video cache entry.
-   * @param {string} videoId
-   * @param {{ boomboxUrl:string, title?:string|null, duration?:number|null, thumbnail?:string|null }} data
-   */
   setVideoCache(videoId, data) {
     if (!this._data.videoCache) this._data.videoCache = {};
     const existing = this._data.videoCache[videoId];
@@ -228,10 +380,6 @@ export class BoomBoxDB {
     this._save();
   }
 
-  /**
-   * Record a cache hit for a videoId — increments hitCount and updates lastUsed.
-   * @param {string} videoId
-   */
   updateVideoCacheHit(videoId) {
     const entry = this._data.videoCache?.[videoId];
     if (!entry) return;
@@ -240,11 +388,6 @@ export class BoomBoxDB {
     this._save();
   }
 
-  /**
-   * Remove all video cache entries unused for more than `maxAgeDays` days.
-   * @param {number} [maxAgeDays=90]
-   * @returns {number} Number of entries removed.
-   */
   cleanVideoCache(maxAgeDays = 90) {
     if (!this._data.videoCache) return 0;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
@@ -260,11 +403,6 @@ export class BoomBoxDB {
     return removed;
   }
 
-  /**
-   * Return all video cache entries, newest-first by lastUsed.
-   * @param {number} [limit=100]
-   * @returns {Array<object>}
-   */
   getVideoCacheList(limit = 100) {
     const entries = Object.entries(this._data.videoCache ?? {})
       .map(([id, v]) => ({ videoId: id, ...v }))

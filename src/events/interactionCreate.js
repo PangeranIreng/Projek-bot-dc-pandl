@@ -23,6 +23,7 @@ import { handleTicketInteraction }      from "../features/ticket/interaction.js"
 import { handleBugReportInteraction }   from "../features/bugreport/interaction.js";
 import { handleBoomBoxInteraction }     from "../features/boombox/interaction.js";
 import { handleBoomBoxLogInteraction }  from "../features/logs/logInteraction.js";
+import { handleSetupBoomBoxInteraction } from "../features/boombox/setupInteraction.js";
 import { handleScanButtonInteraction }  from "../handlers/scanInteractionHandler.js";
 import { handleCpanelInteraction }      from "../features/setup/cpanel/interaction.js";
 import { handleHelpInteraction }        from "../features/help/handler.js";
@@ -65,6 +66,8 @@ export async function handleInteractionCreate(interaction, commands, client) {
       await handleBoomBoxInteraction(interaction);
     } else if (id.startsWith("bblog:")) {
       await handleBoomBoxLogInteraction(interaction);
+    } else if (id.startsWith("bbsetup:")) {
+      await handleSetupBoomBoxInteraction(interaction);
     } else if (isBtn && id.startsWith("sk:")) {
       await handleScanButtonInteraction(interaction);
     } else if (id.startsWith("cp:")) {
