@@ -1,14 +1,13 @@
 /**
  * databaseDB.js — Persistent JSON storage untuk sistem DATABASE.
  *
- * Menyimpan konfigurasi setup (channel ID per panel, message ID panel,
- * pengaturan GitHub, auto backup/clean) per guild.
- *
  * Schema (data/database-db.json):
  * {
- *   guildId:     string | null,
- *   createdBy:   string | null,
- *   createdAt:   string | null,
+ *   guildId:      string | null,
+ *   createdBy:    string | null,
+ *   createdAt:    string | null,
+ *   categoryId:   string | null,   ← ID channel kategori Discord
+ *   categoryName: string | null,   ← Nama kategori
  *   channels: {
  *     botSetting:  string | null,
  *     backup:      string | null,
@@ -20,9 +19,7 @@
  *     backup:      string | null,
  *     memberList:  string | null,
  *   },
- *   github: {
- *     repo:  string | null,   // "owner/repo"
- *   },
+ *   github: { repo: string | null },
  *   autoBackup: boolean,
  *   autoClean:  boolean,
  * }
@@ -36,9 +33,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH   = path.join(__dirname, "..", "..", "data", "database-db.json");
 
 const DEFAULT_DB = {
-  guildId:   null,
-  createdBy: null,
-  createdAt: null,
+  guildId:      null,
+  createdBy:    null,
+  createdAt:    null,
+  categoryId:   null,
+  categoryName: null,
   channels: {
     botSetting: null,
     backup:     null,
@@ -50,9 +49,7 @@ const DEFAULT_DB = {
     backup:     null,
     memberList: null,
   },
-  github: {
-    repo: null,
-  },
+  github:     { repo: null },
   autoBackup: false,
   autoClean:  false,
 };
@@ -88,7 +85,7 @@ export class DatabaseDB {
     fs.writeFileSync(DB_PATH, JSON.stringify(this._data, null, 2), "utf8");
   }
 
-  /** Returns true jika setup sudah pernah dilakukan (minimal satu channel tersimpan). */
+  /** True jika sudah pernah setup (minimal satu channel tersimpan). */
   isSetup() {
     return !!(
       this._data.channels.botSetting ||
@@ -98,27 +95,31 @@ export class DatabaseDB {
     );
   }
 
-  /** Kembalikan seluruh data setup. */
+  /** Kembalikan seluruh data setup (deep clone). */
   get() {
     return structuredClone(this._data);
   }
 
   /**
-   * Simpan konfigurasi channel yang dipilih admin dan tandai setup selesai.
+   * Simpan konfigurasi setelah setup selesai.
    * @param {{ botSetting: string, backup: string, console: string, memberList: string }} channels
+   * @param {string} categoryId
+   * @param {string} categoryName
    * @param {string} guildId
    * @param {string} userId
    */
-  saveSetup(channels, guildId, userId) {
-    this._data.channels  = { ...this._data.channels, ...channels };
-    this._data.guildId   = guildId;
-    this._data.createdBy = userId;
-    this._data.createdAt = new Date().toISOString();
+  saveSetup(channels, categoryId, categoryName, guildId, userId) {
+    this._data.channels     = { ...this._data.channels, ...channels };
+    this._data.categoryId   = categoryId;
+    this._data.categoryName = categoryName;
+    this._data.guildId      = guildId;
+    this._data.createdBy    = userId;
+    this._data.createdAt    = new Date().toISOString();
     this._save();
   }
 
   /**
-   * Simpan message ID panel tertentu agar bisa di-edit nanti.
+   * Simpan message ID panel agar bisa di-edit nanti.
    * @param {"botSetting"|"backup"|"memberList"} key
    * @param {string} messageId
    */
@@ -127,7 +128,7 @@ export class DatabaseDB {
     this._save();
   }
 
-  /** Hapus semua message ID (dipakai saat Hapus Panel). */
+  /** Hapus semua message ID panel. */
   clearMessages() {
     this._data.messages = { botSetting: null, backup: null, memberList: null };
     this._save();
@@ -144,16 +145,7 @@ export class DatabaseDB {
     this._save();
   }
 
-  /**
-   * Update channels (Edit Setup).
-   * @param {Partial<typeof DEFAULT_DB.channels>} channels
-   */
-  updateChannels(channels) {
-    this._data.channels = { ...this._data.channels, ...channels };
-    this._save();
-  }
-
-  /** Reset seluruh setup (HANYA menghapus konfigurasi, bukan channel/data Discord). */
+  /** Reset HANYA konfigurasi setup (bukan data user/premium/backup). */
   reset() {
     this._data = structuredClone(DEFAULT_DB);
     this._save();

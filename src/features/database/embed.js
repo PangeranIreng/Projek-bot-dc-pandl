@@ -1,34 +1,24 @@
 /**
- * features/database/embed.js — Semua embed builder untuk sistem DATABASE.
+ * features/database/embed.js — Semua embed + komponen untuk sistem DATABASE.
  *
- * Fungsi yang diekspor:
+ * Setup flow:
+ *   buildSetupMainEmbed/Components()            — menu utama /setup
+ *   buildSetupWizardEmbed/Components()           — wizard: Pilih Kategori vs Buat Baru
+ *   buildCategorySelectEmbed/Components(catId)   — pilih kategori yang sudah ada
+ *   buildSetupSuccessEmbed/Components(...)        — setelah setup berhasil
+ *   buildSetupManageEmbed/Components(setup)       — jika sudah pernah setup
+ *   buildResetConfirmEmbed/Components()           — konfirmasi reset
+ *   buildGitHubManagerEmbed/Components(setup)     — manajemen GitHub
  *
- *  Setup flow:
- *    buildSetupMainEmbed()              — menu utama /setup
- *    buildSetupChannelSelectEmbed(sel)  — pilih 4 channel (first-time)
- *    buildSetupSummaryEmbed(sel, guild) — ringkasan sebelum buat panel
- *    buildSetupManageEmbed(setup)       — jika sudah pernah setup
- *
- *  Panel embeds (edit-in-place):
- *    buildBotSettingEmbed(client, setup)         — panel ⚙️ Bot Setting
- *    buildBackupPanelEmbed(lastBackup)           — panel 💾 Backup
- *    buildStorageEmbed(stats)                    — panel 📊 Storage
- *    buildSmartCleanResultEmbed(result)          — hasil Smart Clean
- *    buildSmartCleanDetailEmbed(result)          — detail Smart Clean
- *    buildMemberListEmbed(stats)                 — panel 👥 Member List
- *
- *  Komponen (ActionRow + Button / Select):
- *    buildSetupMainComponents()                  — tombol menu utama
- *    buildSetupChannelSelectComponents(sel)      — 4 ChannelSelect + tombol
- *    buildSetupSummaryComponents()               — ✅ Buat / ✏️ Edit / ❌ Batal
- *    buildSetupManageComponents()                — menu manage existing setup
- *    buildBotSettingComponents()                 — ⚙️ Edit, 🔄 Refresh
- *    buildBackupPanelComponents()                — 💾 Backup, 🔍 Smart Clean, dll
- *    buildSmartCleanResultComponents()           — 📄 Detail, 🧹 Bersihkan, 🔄 Scan Ulang
- *    buildSmartCleanDetailComponents()           — 🧹 Bersihkan, 🔄 Scan Ulang
- *    buildCleanConfirmComponents()               — ✅ Ya, Hapus / ❌ Batal
- *    buildBackupActionComponents(tmpId)          — 📥 Download, ☁ Upload GitHub
- *    buildMemberListComponents()                 — 👥 Lihat, 🔍 Cari, 📤 Export, 🔄 Refresh
+ * Panel embeds (edit-in-place):
+ *   buildBotSettingEmbed(client, setup)
+ *   buildBackupPanelEmbed(lastBackup?)
+ *   buildStorageEmbed(stats)
+ *   buildSmartCleanResultEmbed/Components(result)
+ *   buildSmartCleanDetailEmbed/Components(result)
+ *   buildCleanConfirmComponents()
+ *   buildBackupActionComponents(tmpId)
+ *   buildMemberListEmbed/Components(stats)
  */
 
 import fs   from "node:fs";
@@ -47,8 +37,6 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR  = path.join(__dirname, "..", "..", "..");
 
-// ── Konstanta ─────────────────────────────────────────────────────────────────
-
 const FOOTER = "Pangeran Assistant AI • Database";
 const COLOR  = {
   BLUE:   0x5865f2,
@@ -58,7 +46,6 @@ const COLOR  = {
   GRAY:   0x2f3136,
 };
 
-/** Format uptime dari millisecond menjadi string yang mudah dibaca. */
 function formatUptime(ms) {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
@@ -69,22 +56,21 @@ function formatUptime(ms) {
   return `${m}m ${s % 60}d`;
 }
 
-// ── Setup: Menu Utama ─────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// SETUP FLOW
+// ════════════════════════════════════════════════════════════════════════════
 
-/** Embed menu utama /setup. */
+// ── Menu Utama /setup ─────────────────────────────────────────────────────────
+
 export function buildSetupMainEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("⚙️ Panel Admin — Setup")
-    .setDescription(
-      "Pilih sistem yang ingin kamu konfigurasi.\n\n" +
-      "**📊 Database** — Setup channel Database (Bot Setting, Backup, Console, Member List)",
-    )
+    .setTitle("⚙️ Panel Admin")
+    .setDescription("Pilih sistem yang ingin dikonfigurasi.")
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-/** Tombol menu utama /setup. */
 export function buildSetupMainComponents() {
   return [
     new ActionRowBuilder().addComponents(
@@ -94,74 +80,32 @@ export function buildSetupMainComponents() {
   ];
 }
 
-// ── Setup: Pilih Channel (First-time) ─────────────────────────────────────────
+// ── Wizard: Pilih Kategori vs Buat Baru ──────────────────────────────────────
 
-/**
- * Embed saat memilih channel untuk pertama kali.
- * @param {{ botSetting?: string, backup?: string, console?: string, memberList?: string }} selections
- */
-export function buildSetupChannelSelectEmbed(selections = {}) {
-  const check = (id) => (id ? `<#${id}> ✅` : "Belum dipilih");
-
+export function buildSetupWizardEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("📊 Setup Database — Pilih Channel")
+    .setTitle("📊 Setup Database")
     .setDescription(
-      "Pilih channel untuk setiap panel Database menggunakan menu di bawah.\n\n" +
-      "Setelah semua channel dipilih, klik **✅ Buat Panel**.\n",
-    )
-    .addFields(
-      { name: "⚙️ Bot Setting",  value: check(selections.botSetting),  inline: true },
-      { name: "📦 Backup",       value: check(selections.backup),       inline: true },
-      { name: "📄 Console",      value: check(selections.console),      inline: true },
-      { name: "👥 Member List",  value: check(selections.memberList),   inline: true },
+      "Pilih lokasi panel Database.\n\n" +
+      "**📂 Pilih Kategori** — Gunakan kategori yang sudah ada\n" +
+      "**📂 Buat Kategori Baru** — Buat kategori baru secara otomatis",
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-/**
- * Komponen 4 ChannelSelectMenu + tombol Buat Panel dan Batal.
- * @param {{ botSetting?: string, backup?: string, console?: string, memberList?: string }} selections
- */
-export function buildSetupChannelSelectComponents(selections = {}) {
-  const allSelected = selections.botSetting && selections.backup && selections.console && selections.memberList;
-
+export function buildSetupWizardComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ChannelSelectMenuBuilder()
-        .setCustomId("db:select:botSetting")
-        .setPlaceholder("⚙️ Pilih channel Bot Setting")
-        .addChannelTypes(ChannelType.GuildText)
-        .setMinValues(1).setMaxValues(1),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ChannelSelectMenuBuilder()
-        .setCustomId("db:select:backup")
-        .setPlaceholder("📦 Pilih channel Backup")
-        .addChannelTypes(ChannelType.GuildText)
-        .setMinValues(1).setMaxValues(1),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ChannelSelectMenuBuilder()
-        .setCustomId("db:select:console")
-        .setPlaceholder("📄 Pilih channel Console")
-        .addChannelTypes(ChannelType.GuildText)
-        .setMinValues(1).setMaxValues(1),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ChannelSelectMenuBuilder()
-        .setCustomId("db:select:memberList")
-        .setPlaceholder("👥 Pilih channel Member List")
-        .addChannelTypes(ChannelType.GuildText)
-        .setMinValues(1).setMaxValues(1),
-    ),
-    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId("db:setup:create")
-        .setLabel("✅ Buat Panel")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(!allSelected),
+        .setCustomId("db:setup:wizard:existing")
+        .setLabel("📂 Pilih Kategori")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId("db:setup:wizard:new")
+        .setLabel("📂 Buat Kategori Baru")
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId("db:setup:cancel")
         .setLabel("❌ Batal")
@@ -170,67 +114,190 @@ export function buildSetupChannelSelectComponents(selections = {}) {
   ];
 }
 
-// ── Setup: Ringkasan sebelum Buat Panel ───────────────────────────────────────
+// ── Pilih Kategori yang Sudah Ada ─────────────────────────────────────────────
 
 /**
- * Embed ringkasan channel yang dipilih sebelum membuat panel.
- * @param {{ botSetting: string, backup: string, console: string, memberList: string }} selections
+ * @param {string|null} selectedCategoryId
+ * @param {string|null} selectedCategoryName
  */
-export function buildSetupSummaryEmbed(selections) {
+export function buildCategorySelectEmbed(selectedCategoryId = null, selectedCategoryName = null) {
   return new EmbedBuilder()
-    .setColor(COLOR.GREEN)
-    .setTitle("📊 Konfirmasi Setup Database")
+    .setColor(COLOR.BLUE)
+    .setTitle("📂 Pilih Kategori")
     .setDescription(
-      "Berikut channel yang akan digunakan untuk setiap panel.\n" +
-      "Klik **✅ Buat Panel** untuk melanjutkan.\n",
-    )
-    .addFields(
-      { name: "⚙️ Bot Setting", value: `<#${selections.botSetting}>`, inline: true },
-      { name: "📦 Backup",      value: `<#${selections.backup}>`,      inline: true },
-      { name: "📄 Console",     value: `<#${selections.console}>`,     inline: true },
-      { name: "👥 Member List", value: `<#${selections.memberList}>`,  inline: true },
+      "Pilih kategori yang akan digunakan sebagai lokasi panel Database.\n\n" +
+      "Bot akan membuat channel berikut di dalam kategori yang dipilih:\n" +
+      "`⚙️ bot-setting` • `📦 backup` • `📄 console` • `👥 member-list`\n\n" +
+      (selectedCategoryId
+        ? `✅ **Kategori dipilih:** ${selectedCategoryName ?? "—"} (<#${selectedCategoryId}>)`
+        : "⏳ Belum ada kategori yang dipilih."),
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-/** Tombol ✅ Buat Panel / ✏️ Edit / ❌ Batal. */
-export function buildSetupSummaryComponents() {
+export function buildCategorySelectComponents(selectedCategoryId = null) {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("db:setup:create").setLabel("✅ Buat Panel").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("db:setup:edit").setLabel("✏️ Edit").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("db:setup:cancel").setLabel("❌ Batal").setStyle(ButtonStyle.Danger),
+      new ChannelSelectMenuBuilder()
+        .setCustomId("db:select:category")
+        .setPlaceholder("📂 Pilih kategori...")
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setMinValues(1)
+        .setMaxValues(1),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("db:setup:wizard:create")
+        .setLabel("➡️ Lanjut")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!selectedCategoryId),
+      new ButtonBuilder()
+        .setCustomId("db:setup:cancel")
+        .setLabel("❌ Batal")
+        .setStyle(ButtonStyle.Danger),
     ),
   ];
 }
 
-// ── Setup: Manage (sudah pernah setup) ───────────────────────────────────────
+// ── Setup Berhasil ────────────────────────────────────────────────────────────
 
 /**
- * Embed untuk manage setup yang sudah ada.
- * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
+ * @param {string} categoryName
+ * @param {{ botSetting: string, backup: string, console: string, memberList: string }} channels
  */
+export function buildSetupSuccessEmbed(categoryName, channels) {
+  return new EmbedBuilder()
+    .setColor(COLOR.GREEN)
+    .setTitle("✅ Setup Database Berhasil")
+    .addFields(
+      { name: "📂 Kategori",    value: `**${categoryName}**`,            inline: false },
+      { name: "✔ bot-setting",  value: `<#${channels.botSetting}>`,      inline: true  },
+      { name: "✔ backup",       value: `<#${channels.backup}>`,           inline: true  },
+      { name: "✔ console",      value: `<#${channels.console}>`,          inline: true  },
+      { name: "✔ member-list",  value: `<#${channels.memberList}>`,       inline: true  },
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+/**
+ * Tombol setelah setup berhasil — link langsung ke panel yang dibuat.
+ * @param {string} guildId
+ * @param {{ botSetting: string, backup: string }} channels
+ * @param {{ botSetting: string|null, backup: string|null }} messages
+ */
+export function buildSetupSuccessComponents(guildId, channels, messages) {
+  const btns = [];
+
+  if (channels.botSetting && messages.botSetting) {
+    btns.push(
+      new ButtonBuilder()
+        .setLabel("⚙️ Bot Setting")
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://discord.com/channels/${guildId}/${channels.botSetting}/${messages.botSetting}`),
+    );
+  }
+  if (channels.backup && messages.backup) {
+    btns.push(
+      new ButtonBuilder()
+        .setLabel("📦 Backup")
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://discord.com/channels/${guildId}/${channels.backup}/${messages.backup}`),
+    );
+  }
+  btns.push(
+    new ButtonBuilder().setCustomId("db:setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Danger),
+  );
+
+  return [new ActionRowBuilder().addComponents(...btns)];
+}
+
+// ── Manage (sudah pernah setup) ───────────────────────────────────────────────
+
+/** @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup */
 export function buildSetupManageEmbed(setup) {
   const ch = setup.channels;
-  const ms = setup.messages;
 
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
-    .setTitle("📊 Database — Setup Sudah Ada")
-    .setDescription("Database sudah pernah dikonfigurasi. Pilih tindakan di bawah.")
+    .setTitle("📊 Database")
     .addFields(
-      { name: "⚙️ Bot Setting",  value: ch.botSetting  ? `<#${ch.botSetting}>`  : "—", inline: true },
-      { name: "📦 Backup",       value: ch.backup       ? `<#${ch.backup}>`       : "—", inline: true },
-      { name: "📄 Console",      value: ch.console      ? `<#${ch.console}>`      : "—", inline: true },
-      { name: "👥 Member List",  value: ch.memberList   ? `<#${ch.memberList}>`   : "—", inline: true },
+      { name: "📌 Status",      value: "🟢 Aktif",                                                      inline: true  },
+      { name: "📂 Kategori",    value: setup.categoryName ?? "—",                                         inline: true  },
+      { name: "⚙️ Bot Setting", value: ch.botSetting  ? `<#${ch.botSetting}>`  : "❌ Belum dibuat",      inline: true  },
+      { name: "📦 Backup",      value: ch.backup       ? `<#${ch.backup}>`       : "❌ Belum dibuat",     inline: true  },
+      { name: "📄 Console",     value: ch.console      ? `<#${ch.console}>`      : "❌ Belum dibuat",     inline: true  },
+      { name: "👥 Member List", value: ch.memberList   ? `<#${ch.memberList}>`   : "❌ Belum dibuat",     inline: true  },
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+export function buildSetupManageComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:manage:edit").setLabel("📝 Edit Setup").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("db:manage:repair").setLabel("🔄 Repair Panel").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("db:manage:reset").setLabel("🗑 Reset Setup").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("db:manage:github").setLabel("☁️ GitHub Manager").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("db:setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Danger),
+    ),
+  ];
+}
+
+// ── Reset Konfirmasi ──────────────────────────────────────────────────────────
+
+export function buildResetConfirmEmbed() {
+  return new EmbedBuilder()
+    .setColor(COLOR.RED)
+    .setTitle("⚠️ Reset Setup")
+    .addFields(
       {
-        name: "📌 Status Panel",
-        value: [
-          `Bot Setting: ${ms.botSetting  ? "✅ Ada" : "❌ Belum dibuat"}`,
-          `Backup:      ${ms.backup      ? "✅ Ada" : "❌ Belum dibuat"}`,
-          `Member List: ${ms.memberList  ? "✅ Ada" : "❌ Belum dibuat"}`,
-        ].join("\n"),
+        name:  "Yang akan dihapus",
+        value: "✔ Konfigurasi Setup\n✔ Channel ID\n✔ Panel Database",
+        inline: true,
+      },
+      {
+        name:  "Yang TIDAK dihapus",
+        value: "✔ Database User\n✔ Premium\n✔ Backup Lokal\n✔ Backup GitHub\n✔ Data Scanner\n✔ AI",
+        inline: true,
+      },
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+export function buildResetConfirmComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("db:manage:reset:confirm").setLabel("🗑 Ya, Reset").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("db:manage:reset:cancel").setLabel("❌ Batal").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+// ── GitHub Manager ────────────────────────────────────────────────────────────
+
+/** @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup */
+export function buildGitHubManagerEmbed(setup) {
+  const repo  = process.env.GITHUB_REPO || setup.github?.repo || null;
+  const token = process.env.GITHUB_TOKEN ? "✅ Dikonfigurasi" : "❌ Belum ada";
+
+  return new EmbedBuilder()
+    .setColor(COLOR.BLUE)
+    .setTitle("☁️ GitHub Manager")
+    .setDescription(
+      "Konfigurasi GitHub untuk upload backup otomatis ke GitHub Releases.",
+    )
+    .addFields(
+      { name: "🐙 GitHub Repo",  value: repo ? `\`${repo}\`` : "❌ Belum dikonfigurasi", inline: true },
+      { name: "🔑 GitHub Token", value: token,                                            inline: true },
+      {
+        name: "📌 Cara Mengatur",
+        value:
+          "1. Tambahkan **GITHUB_TOKEN** di Replit Secrets\n" +
+          "2. Klik **✏️ Ubah Konfigurasi** dan masukkan `owner/repo`",
         inline: false,
       },
     )
@@ -238,29 +305,24 @@ export function buildSetupManageEmbed(setup) {
     .setTimestamp();
 }
 
-/** Tombol manage setup yang sudah ada. */
-export function buildSetupManageComponents() {
+export function buildGitHubManagerComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("db:setup:edit").setLabel("📝 Edit Setup").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("db:setup:rebuild").setLabel("🔄 Buat Ulang Panel").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("db:setup:delete").setLabel("🗑 Hapus Panel").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("db:setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("db:manage:github:edit").setLabel("✏️ Ubah Konfigurasi").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("db:setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Danger),
     ),
   ];
 }
 
-// ── Panel: Bot Setting ────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: BOT SETTING
+// ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Embed panel ⚙️ Bot Setting.
- * @param {import("discord.js").Client} client
- * @param {ReturnType<import("../../database/databaseDB.js").DatabaseDB["get"]>} setup
- */
+/** @param {import("discord.js").Client} client */
 export function buildBotSettingEmbed(client, setup) {
-  const uptimeMs = client.uptime ?? 0;
-  const version  = _readVersion();
-  const dbSize   = _readDataDirSize();
+  const uptimeMs   = client.uptime ?? 0;
+  const version    = _readVersion();
+  const dbSize     = _readDataDirSize();
   const githubRepo = process.env.GITHUB_REPO || setup.github?.repo || "Belum dikonfigurasi";
   const githubToken = process.env.GITHUB_TOKEN ? "✅ Dikonfigurasi" : "❌ Belum ada";
 
@@ -269,19 +331,18 @@ export function buildBotSettingEmbed(client, setup) {
     .setTitle("⚙️ Bot Setting")
     .setDescription("Konfigurasi dan status sistem bot secara real-time.")
     .addFields(
-      { name: "🤖 Bot",         value: client.user?.tag ?? "—",                  inline: true  },
-      { name: "📦 Versi",       value: `v${version}`,                             inline: true  },
-      { name: "⏱ Uptime",       value: formatUptime(uptimeMs),                    inline: true  },
-      { name: "💾 Database",    value: dbSize,                                     inline: true  },
-      { name: "🐙 GitHub Repo", value: `\`${githubRepo}\``,                        inline: true  },
-      { name: "🔑 GitHub Token",value: githubToken,                               inline: true  },
-      { name: "🔄 Auto Backup", value: setup.autoBackup  ? "✅ Aktif" : "❌ Nonaktif", inline: true },
-      { name: "🧹 Auto Clean",  value: setup.autoClean   ? "✅ Aktif" : "❌ Nonaktif", inline: true },
+      { name: "🤖 Bot",          value: client.user?.tag ?? "—",                        inline: true  },
+      { name: "📦 Versi",        value: `v${version}`,                                   inline: true  },
+      { name: "⏱ Uptime",        value: formatUptime(uptimeMs),                          inline: true  },
+      { name: "💾 Database",     value: dbSize,                                           inline: true  },
+      { name: "📂 Kategori",     value: setup.categoryName ?? "—",                        inline: true  },
+      { name: "🐙 GitHub Repo",  value: `\`${githubRepo}\``,                              inline: true  },
+      { name: "🔑 GitHub Token", value: githubToken,                                     inline: true  },
+      { name: "🔄 Auto Backup",  value: setup.autoBackup ? "✅ Aktif" : "❌ Nonaktif",   inline: true  },
+      { name: "🧹 Auto Clean",   value: setup.autoClean  ? "✅ Aktif" : "❌ Nonaktif",   inline: true  },
       {
-        name: "📌 Dibuat",
-        value: setup.createdAt
-          ? new Date(setup.createdAt).toLocaleString("id-ID")
-          : "—",
+        name:  "📌 Dibuat",
+        value: setup.createdAt ? new Date(setup.createdAt).toLocaleString("id-ID") : "—",
         inline: false,
       },
     )
@@ -289,7 +350,6 @@ export function buildBotSettingEmbed(client, setup) {
     .setTimestamp();
 }
 
-/** Tombol panel Bot Setting. */
 export function buildBotSettingComponents() {
   return [
     new ActionRowBuilder().addComponents(
@@ -299,12 +359,10 @@ export function buildBotSettingComponents() {
   ];
 }
 
-// ── Panel: Backup ─────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: BACKUP
+// ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Embed panel 💾 Backup.
- * @param {{ lastAt?: string, lastName?: string, lastSize?: string }|null} lastBackup
- */
 export function buildBackupPanelEmbed(lastBackup = null) {
   const lastInfo = lastBackup?.lastAt
     ? `${lastBackup.lastName ?? "backup.zip"}\n${lastBackup.lastSize ?? ""} • ${new Date(lastBackup.lastAt).toLocaleString("id-ID")}`
@@ -318,14 +376,11 @@ export function buildBackupPanelEmbed(lastBackup = null) {
       "Backup berisi: database, config, assets, logs, session, plugins.\n" +
       "Tidak termasuk: node_modules, cache, temp, file sampah.",
     )
-    .addFields(
-      { name: "💾 Backup Terakhir", value: lastInfo, inline: false },
-    )
+    .addFields({ name: "💾 Backup Terakhir", value: lastInfo, inline: false })
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-/** Tombol panel Backup. */
 export function buildBackupPanelComponents() {
   return [
     new ActionRowBuilder().addComponents(
@@ -337,70 +392,65 @@ export function buildBackupPanelComponents() {
   ];
 }
 
-// ── Panel: Storage ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: STORAGE
+// ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Embed panel 📊 Storage.
- * @param {ReturnType<import("./backup.js").getStorageStats>} stats
- */
 export function buildStorageEmbed(stats) {
   const s = stats.strings;
-
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
     .setTitle("📊 Storage — Penggunaan Penyimpanan")
     .addFields(
-      { name: "💾 Database",  value: s.database, inline: true },
-      { name: "🗃 Cache",     value: s.cache,    inline: true },
-      { name: "📁 Temp",      value: s.temp,     inline: true },
-      { name: "📦 Backup",    value: s.backup,   inline: true },
-      { name: "🖼 Assets",    value: s.assets,   inline: true },
-      { name: "📋 Logs",      value: s.logs,     inline: true },
-      { name: "📝 Source",    value: s.source,   inline: true },
-      { name: "📊 Total",     value: `**${s.total}**`,  inline: true },
-      { name: "💽 Disk Total", value: s.diskTotal, inline: true },
-      { name: "💿 Sisa Disk", value: s.diskFree,  inline: true },
+      { name: "💾 Database",   value: s.database,         inline: true },
+      { name: "🗃 Cache",      value: s.cache,             inline: true },
+      { name: "📁 Temp",       value: s.temp,              inline: true },
+      { name: "📦 Backup",     value: s.backup,            inline: true },
+      { name: "🖼 Assets",     value: s.assets,            inline: true },
+      { name: "📋 Logs",       value: s.logs,              inline: true },
+      { name: "📝 Source",     value: s.source,            inline: true },
+      { name: "📊 Total",      value: `**${s.total}**`,    inline: true },
+      { name: "💽 Disk Total", value: s.diskTotal,         inline: true },
+      { name: "💿 Sisa Disk",  value: s.diskFree,          inline: true },
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-// ── Panel: Smart Clean ────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: SMART CLEAN
+// ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Embed hasil Smart Clean.
- * @param {ReturnType<import("./backup.js").runSmartClean>} result
- */
 export function buildSmartCleanResultEmbed(result) {
-  const safeCount    = result.safe.length;
-  const reviewCount  = result.review.length;
-  const protCount    = result.protected.length;
+  const safe   = result.safe.length;
+  const review = result.review.length;
+  const prot   = result.protected.length;
 
   return new EmbedBuilder()
     .setColor(COLOR.YELLOW)
     .setTitle("🔍 Smart Clean — Hasil Pemindaian")
     .setDescription(
       `Pemindaian selesai pada **${new Date(result.scannedAt).toLocaleString("id-ID")}**\n\n` +
-      `Total yang bisa dibersihkan: **${safeCount} item** (${result.totalSafeSizeStr})`,
+      `Total yang bisa dibersihkan: **${safe} item** (${result.totalSafeSizeStr})`,
     )
     .addFields(
       {
         name: "🟢 Aman Dibersihkan",
-        value: safeCount > 0
-          ? `**${safeCount} item** — ${result.totalSafeSizeStr}\n${result.safe.slice(0, 5).map((f) => `\`${f.rel.slice(0, 50)}\``).join("\n")}${safeCount > 5 ? `\n... dan ${safeCount - 5} lainnya` : ""}`
+        value: safe > 0
+          ? `**${safe} item** — ${result.totalSafeSizeStr}\n${result.safe.slice(0, 5).map((f) => `\`${f.rel.slice(0, 50)}\``).join("\n")}${safe > 5 ? `\n... dan ${safe - 5} lainnya` : ""}`
           : "Tidak ada file yang perlu dibersihkan.",
         inline: false,
       },
       {
         name: "🟡 Perlu Ditinjau",
-        value: reviewCount > 0
-          ? `**${reviewCount} item**\n${result.review.slice(0, 3).map((f) => `\`${f.rel.slice(0, 50)}\``).join("\n")}${reviewCount > 3 ? `\n... dan ${reviewCount - 3} lainnya` : ""}`
+        value: review > 0
+          ? `**${review} item**\n${result.review.slice(0, 3).map((f) => `\`${f.rel.slice(0, 50)}\``).join("\n")}${review > 3 ? `\n... dan ${review - 3} lainnya` : ""}`
           : "Tidak ada.",
         inline: false,
       },
       {
-        name: "🔴 File Penting",
-        value: `**${protCount} item** dilindungi — tidak akan dihapus.`,
+        name:  "🔴 File Penting",
+        value: `**${prot} item** dilindungi — tidak akan dihapus.`,
         inline: false,
       },
     )
@@ -408,7 +458,6 @@ export function buildSmartCleanResultEmbed(result) {
     .setTimestamp();
 }
 
-/** Tombol hasil Smart Clean. */
 export function buildSmartCleanResultComponents(safeCount = 0) {
   return [
     new ActionRowBuilder().addComponents(
@@ -423,41 +472,28 @@ export function buildSmartCleanResultComponents(safeCount = 0) {
   ];
 }
 
-/**
- * Embed detail Smart Clean (setiap file + alasan).
- * @param {ReturnType<import("./backup.js").runSmartClean>} result
- */
 export function buildSmartCleanDetailEmbed(result) {
-  // Gabungkan safe + review untuk tampilan detail
-  const allReview = [...result.safe, ...result.review].slice(0, 20); // Discord embed limit
-
-  const lines = allReview.map((f) => {
+  const allItems = [...result.safe, ...result.review].slice(0, 20);
+  const lines = allItems.map((f) => {
     const cat    = result.safe.includes(f) ? "🟢" : "🟡";
     const label  = f.rel.slice(0, 60);
     const reason = f.reason.slice(0, 100);
     return `${cat} \`${label}\`\n↳ *${reason}*`;
   });
 
-  const desc = lines.length > 0
-    ? lines.join("\n\n")
-    : "Tidak ada file dalam kategori ini.";
-
   return new EmbedBuilder()
     .setColor(COLOR.YELLOW)
     .setTitle("📄 Smart Clean — Detail File")
-    .setDescription(desc.slice(0, 4000))
-    .addFields(
-      {
-        name: "📌 Catatan",
-        value: "File bertanda 🟡 **Perlu Ditinjau** tidak akan ikut dibersihkan.\nHanya file 🟢 **Aman** yang dihapus saat klik Bersihkan.",
-        inline: false,
-      },
-    )
+    .setDescription((lines.join("\n\n") || "Tidak ada file.").slice(0, 4000))
+    .addFields({
+      name:  "📌 Catatan",
+      value: "File 🟡 tidak ikut dibersihkan. Hanya file 🟢 yang dihapus.",
+      inline: false,
+    })
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-/** Tombol setelah melihat detail Smart Clean. */
 export function buildSmartCleanDetailComponents(safeCount = 0) {
   return [
     new ActionRowBuilder().addComponents(
@@ -471,7 +507,6 @@ export function buildSmartCleanDetailComponents(safeCount = 0) {
   ];
 }
 
-/** Tombol konfirmasi penghapusan Smart Clean. */
 export function buildCleanConfirmComponents() {
   return [
     new ActionRowBuilder().addComponents(
@@ -481,10 +516,6 @@ export function buildCleanConfirmComponents() {
   ];
 }
 
-/**
- * Tombol setelah backup selesai — Download dan Upload GitHub.
- * @param {string} tmpId
- */
 export function buildBackupActionComponents(tmpId) {
   return [
     new ActionRowBuilder().addComponents(
@@ -494,29 +525,26 @@ export function buildBackupActionComponents(tmpId) {
   ];
 }
 
-// ── Panel: Member List ────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL: MEMBER LIST
+// ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Embed panel 👥 Member List.
- * @param {{ total: number, premium: number, ceo: number, blacklist: number, activeToday: number }} stats
- */
 export function buildMemberListEmbed(stats) {
   return new EmbedBuilder()
     .setColor(COLOR.BLUE)
     .setTitle("👥 Member List")
     .setDescription("Statistik anggota server secara real-time.")
     .addFields(
-      { name: "👥 Total Member",       value: `**${stats.total}**`,       inline: true },
-      { name: "👑 Premium",            value: `**${stats.premium}**`,      inline: true },
-      { name: "🔱 CEO",                value: `**${stats.ceo}**`,          inline: true },
-      { name: "🚫 Blacklist",          value: `**${stats.blacklist}**`,    inline: true },
-      { name: "✅ Aktif Hari Ini",     value: `**${stats.activeToday}**`,  inline: true },
+      { name: "👥 Total Member",   value: `**${stats.total}**`,      inline: true },
+      { name: "👑 Premium",        value: `**${stats.premium}**`,     inline: true },
+      { name: "🔱 CEO",            value: `**${stats.ceo}**`,         inline: true },
+      { name: "🚫 Blacklist",      value: `**${stats.blacklist}**`,   inline: true },
+      { name: "✅ Aktif Hari Ini", value: `**${stats.activeToday}**`, inline: true },
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
 
-/** Tombol panel Member List. */
 export function buildMemberListComponents() {
   return [
     new ActionRowBuilder().addComponents(
@@ -528,17 +556,16 @@ export function buildMemberListComponents() {
   ];
 }
 
-// ── Helper internal ───────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// HELPERS INTERNAL
+// ════════════════════════════════════════════════════════════════════════════
 
-/** Baca versi dari package.json. */
 function _readVersion() {
   try {
-    const raw = fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8");
-    return JSON.parse(raw).version ?? "2.0.0";
+    return JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8")).version ?? "2.0.0";
   } catch { return "2.0.0"; }
 }
 
-/** Hitung ukuran folder data/ dengan format string yang mudah dibaca. */
 function _readDataDirSize() {
   try {
     const dir = path.join(ROOT_DIR, "data");
@@ -547,8 +574,8 @@ function _readDataDirSize() {
     for (const f of fs.readdirSync(dir)) {
       try { total += fs.statSync(path.join(dir, f)).size; } catch { /* skip */ }
     }
-    if (total < 1024)       return `${total} B`;
-    if (total < 1024*1024)  return `${(total / 1024).toFixed(1)} KB`;
-    return `${(total / (1024*1024)).toFixed(2)} MB`;
+    if (total < 1024)        return `${total} B`;
+    if (total < 1024 * 1024) return `${(total / 1024).toFixed(1)} KB`;
+    return `${(total / (1024 * 1024)).toFixed(2)} MB`;
   } catch { return "N/A"; }
 }
