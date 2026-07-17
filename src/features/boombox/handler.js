@@ -516,10 +516,18 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
 
     } else {
       let info = boomboxCache.getCachedMeta(videoId);
+      let infoMs = 0;
       if (info) {
         logger.info(`[BoomBox] Meta cache HIT | videoId=${videoId}`);
       } else if (platform !== "Spotify") {
-        info = await withStageTimeout(getVideoInfo(url), 10_000, "Analisis link");
+        const infoStart = Date.now();
+        // Allow up to 90s — getVideoInfo internally tries 4 yt-dlp methods
+        // (each 20s) plus a 30s ytdl-core fallback. The old 10s cap was
+        // shorter than a single method attempt, causing "Analisis link timed
+        // out" on every request regardless of the actual yt-dlp result.
+        info = await withStageTimeout(getVideoInfo(url), 90_000, "Analisis link");
+        infoMs = Date.now() - infoStart;
+        logger.info(`[BoomBox] ── Fetch Video Info | ${infoMs}ms | title="${info?.title ?? "null"}" dur=${info?.duration ?? "?"}s`);
         if (info?.title || info?.duration) boomboxCache.setCachedMeta(videoId, info);
       } else {
         info = { title: spotifyMeta.title, duration: null, thumbnail: spotifyMeta.thumbnail, uploader: spotifyMeta.artist };
@@ -572,12 +580,15 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       const uploadStart = Date.now();
       const t4tResult   = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
       const uploadMs    = Date.now() - uploadStart;
+      logger.info(`[BoomBox] ── Upload Top4Top | ${uploadMs}ms`);
 
       // ── Tahap 4: Verifikasi ───────────────────────────────────────────
       currentStage = "Generate BoomBox URL";
       await editStep(4);
+      const genStart = Date.now();
       boomboxUrl = t4tResult.result;
-      logger.info(`[BoomBox] ── Upload OK | ${boomboxUrl}`);
+      const genMs = Date.now() - genStart;
+      logger.info(`[BoomBox] ── Generate BoomBox URL | ${genMs}ms | ${boomboxUrl}`);
 
       // ── Persist to caches ─────────────────────────────────────────────
       boomboxCache.setCachedResult(videoId, { boomboxUrl, ytResult });
@@ -586,7 +597,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       } catch {}
 
       const totalMs = Date.now() - startedAt;
-      logger.info(`[BoomBox] Stats | cache=MISS | platform=${platform} | dl=${downloadMs}ms | up=${uploadMs}ms | total=${totalMs}ms`);
+      logger.info(`[BoomBox] Stats | cache=MISS | platform=${platform} | info=${infoMs}ms | dl=${downloadMs}ms | up=${uploadMs}ms | gen=${genMs}ms | total=${totalMs}ms`);
     }
 
     // ── Bookkeeping ───────────────────────────────────────────────────────

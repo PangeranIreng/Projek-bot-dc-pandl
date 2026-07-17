@@ -49,8 +49,9 @@ const DEFAULT_DB = {
   // user-info-free public view of completed conversions.
   // { messageId: string|null, entries: Array<{title, platform, duration, boomboxUrl, timestamp}> }
   logState: {
-    messageId: null,
-    entries:   [],
+    messageId:      null,
+    entries:        [],
+    migrationV2Done: false,
   },
   // Persistent video cache — survives restarts.
   // { [videoId]: { boomboxUrl, title, duration, thumbnail, createdAt, lastUsed, hitCount } }
@@ -101,7 +102,12 @@ export class BoomBoxDB {
             ...(parsed.settings?.roleLimits ?? {}),
           },
         },
-        logState: { ...def.logState, ...(parsed.logState ?? {}) },
+        logState: {
+          ...def.logState,
+          ...(parsed.logState ?? {}),
+          // Ensure the migrationV2Done field is always present
+          migrationV2Done: (parsed.logState?.migrationV2Done) ?? false,
+        },
       };
     } catch {
       return structuredClone(DEFAULT_DB);
@@ -218,7 +224,19 @@ export class BoomBoxDB {
   }
 
   resetLogState() {
-    this._data.logState = { messageId: null, entries: [] };
+    this._data.logState = { messageId: null, entries: [], migrationV2Done: this._data.logState?.migrationV2Done ?? false };
+    this._save();
+  }
+
+  /** @returns {boolean} */
+  getMigrationV2Done() {
+    return this._data.logState?.migrationV2Done === true;
+  }
+
+  /** @param {boolean} value */
+  setMigrationV2Done(value) {
+    if (!this._data.logState) this._data.logState = { messageId: null, entries: [], migrationV2Done: false };
+    this._data.logState.migrationV2Done = value;
     this._save();
   }
 

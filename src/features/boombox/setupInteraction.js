@@ -106,6 +106,19 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
+    // Platform maintenance toggle from Logs panel
+    const logsToggleMatch = /^bbsetup:logs:toggle:(youtube|tiktok|spotify)$/.exec(id);
+    if (logsToggleMatch) {
+      const platform = logsToggleMatch[1];
+      const newState = db.toggleMaintenance(platform);
+      const label    = platform.charAt(0).toUpperCase() + platform.slice(1);
+      logger.info(`[SetupBoomBox] Maintenance ${label}: ${newState ? "ON" : "OFF"} (toggled from Logs panel)`);
+      // Refresh the logs panel so button styles update
+      const { embed, components } = buildLogsPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
     // ── Batas Durasi ──────────────────────────────────────────────────────
     if (id === "bbsetup:duration") {
       const guild = interaction.guild;

@@ -27,33 +27,41 @@ const FOOTER = "BoomBox V2 • BoomBox Logs";
 // ── Panel utama Logs ──────────────────────────────────────────────────────────
 
 export function buildLogsPanel() {
-  const logChannel = db.getLogChannel() ?? BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID;
-
-  // History lama (tanpa platform) sudah ter-include di YouTube via db.getHistoryByPlatform
-  const ytCount = db.getHistoryByPlatform("YouTube").length;
-  const tkCount = db.getHistoryByPlatform("TikTok").length;
-  const spCount = db.getHistoryByPlatform("Spotify").length;
+  const logChannel  = db.getLogChannel() ?? BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID;
+  const maintenance = db.getMaintenance();
 
   const embed = new EmbedBuilder()
     .setColor(COLOR)
     .setTitle("📋 Setup BoomBox Logs")
     .setDescription(
       "━━━━━━━━━━━━━━━━━━\n\n" +
-      `📌 **Log Channel**: ${logChannel ? `<#${logChannel}>` : "❌ Belum diatur"}\n\n` +
-      "**Statistik Log:**\n" +
-      `🔴 YouTube: **${ytCount}** log _(termasuk log lama)_\n` +
-      `⚫ TikTok: **${tkCount}** log\n` +
-      `🟢 Spotify: **${spCount}** log\n\n` +
+      `📌 **Log Channel**\n${logChannel ? `<#${logChannel}>` : "❌ Belum diatur"}\n\n` +
       "━━━━━━━━━━━━━━━━━━"
     )
     .setFooter({ text: FOOTER });
 
+  // Row 1: Ganti Log Channel + platform toggles
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("bbsetup:logs:setchannel")
       .setLabel("Ganti Log Channel")
       .setEmoji("📌")
       .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:toggle:youtube")
+      .setLabel("YouTube")
+      .setEmoji("🔴")
+      .setStyle(maintenance.youtube ? ButtonStyle.Danger : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:toggle:tiktok")
+      .setLabel("TikTok")
+      .setEmoji("⚫")
+      .setStyle(maintenance.tiktok ? ButtonStyle.Danger : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:toggle:spotify")
+      .setLabel("Spotify")
+      .setEmoji("🟢")
+      .setStyle(maintenance.spotify ? ButtonStyle.Danger : ButtonStyle.Secondary),
   );
 
   const row2 = new ActionRowBuilder().addComponents(

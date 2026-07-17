@@ -15,6 +15,7 @@ import { IDS }                from "../../config/constants.js";
 import { initBinary }         from "../services/ytmp3gg.js";
 import { initConsole, consoleLog }  from "../features/database/console.js";
 import { refreshPanelsOnStartup }   from "../features/database/interaction.js";
+import { runBoomBoxLogsMigrationV2 } from "../features/boombox/logs/migration.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -73,4 +74,9 @@ export async function handleReady(client, secrets, state) {
       logger.warn("Ticket dashboard init failed on startup:", err?.message);
     });
   }
+
+  // BoomBox Logs V2 — one-time migration (idempotent, skips if already done)
+  runBoomBoxLogsMigrationV2(client).catch((err) => {
+    logger.warn(`[BoomBox Migration] Migration gagal (non-fatal): ${err?.message}`);
+  });
 }
