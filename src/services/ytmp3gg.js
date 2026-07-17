@@ -1333,25 +1333,50 @@ async function _invidiousFallback(input, type, quality, tmpDir, onProgress, sign
 // Methods are tried in order; the first to succeed wins.
 
 const TIKTOK_METHODS = [
-  // ── Method 1: Standard ── no special flags
-  [],
-
-  // ── Method 2: Skip cert check + Chrome desktop UA + TikTok Referer
+  // ── Method 1: Trill app extractor — paling andal untuk TikTok CDN modern (2024+).
+  // TikTok internal API "Trill" menggunakan endpoint CDN berbeda yang lebih sedikit
+  // diblokir dibanding web extractor default. Ini fix utama untuk HTTP 403.
   [
+    "--extractor-args", "tiktok:app_name=trill",
+    "--no-check-certificates",
+  ],
+
+  // ── Method 2: Trill + Chrome desktop UA + TikTok Referer
+  [
+    "--extractor-args", "tiktok:app_name=trill",
     "--no-check-certificates",
     "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "--add-headers", "Referer:https://www.tiktok.com/",
   ],
 
-  // ── Method 3: Force m4a/bestaudio, skip cert, mobile UA
+  // ── Method 3: TikTok Lite app — fingerprint berbeda, rate limit lebih rendah
   [
+    "--extractor-args", "tiktok:app_name=lite",
+    "--no-check-certificates",
+    "--add-headers", "User-Agent:Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
+    "--add-headers", "Referer:https://www.tiktok.com/",
+  ],
+
+  // ── Method 4: Trill + bestaudio format + mobile UA
+  [
+    "--extractor-args", "tiktok:app_name=trill",
     "--no-check-certificates",
     "--format", "bestaudio[ext=m4a]/bestaudio/best",
     "--add-headers", "User-Agent:Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
     "--add-headers", "Referer:https://www.tiktok.com/",
   ],
 
-  // ── Method 4: Extended retries within yt-dlp + different UA
+  // ── Method 5: Standard (no special flags) — fallback ke plain yt-dlp default
+  [],
+
+  // ── Method 6: Skip cert check + Chrome desktop UA + TikTok Referer (non-Trill)
+  [
+    "--no-check-certificates",
+    "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "--add-headers", "Referer:https://www.tiktok.com/",
+  ],
+
+  // ── Method 7: Extended retries + TikTok iOS UA
   [
     "--no-check-certificates",
     "--extractor-retries", "5",
@@ -1359,14 +1384,6 @@ const TIKTOK_METHODS = [
     "--retry-sleep", "exponential=1:2",
     "--add-headers", "User-Agent:TikTok/26.2.3 (iPhone; iOS 16.6; Scale/3.00)",
     "--add-headers", "Referer:https://www.tiktok.com/",
-  ],
-
-  // ── Method 5: Compat mode — broadest format selection, no cert, verbose for debugging
-  [
-    "--no-check-certificates",
-    "--format", "worstaudio/worst/best",
-    "--compat-options", "no-youtube-unavailable-videos",
-    "--add-headers", "User-Agent:Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
   ],
 ];
 
@@ -1504,11 +1521,26 @@ export async function getVideoInfo(url) {
   // fallback loop), but skipping the fallback here would needlessly lose
   // duration/thumbnail info that yt-dlp could otherwise recover in one try.
   const infoMethods = isTikTok
-    ? [[
-        "--no-check-certificates",
-        "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "--add-headers", "Referer:https://www.tiktok.com/",
-      ]]
+    ? [
+        // Method 1: Trill extractor — paling andal untuk TikTok modern (fix HTTP 403)
+        [
+          "--extractor-args", "tiktok:app_name=trill",
+          "--no-check-certificates",
+        ],
+        // Method 2: Trill + Chrome UA
+        [
+          "--extractor-args", "tiktok:app_name=trill",
+          "--no-check-certificates",
+          "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "--add-headers", "Referer:https://www.tiktok.com/",
+        ],
+        // Method 3: Standard Chrome UA (metode lama sebagai fallback)
+        [
+          "--no-check-certificates",
+          "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "--add-headers", "Referer:https://www.tiktok.com/",
+        ],
+      ]
     : [
         [],                                                                        // Method 1: yt-dlp default (android_vr internally)
         ["--extractor-args", "youtube:player_client=android_vr"],                 // Method 2: android_vr pinned

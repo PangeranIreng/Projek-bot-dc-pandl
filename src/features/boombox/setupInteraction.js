@@ -32,6 +32,7 @@ import {
   buildLogsPanel,
   buildLogChannelSelectPanel,
   handleLogChannelSelected,
+  buildLogChannelSavedEmbed,
 } from "./setup/logsSetup.js";
 import {
   buildDurationPanel,
@@ -46,7 +47,9 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  EmbedBuilder,
 } from "discord.js";
+import { buildPublicLogPanel } from "./logs/viewer.js";
 
 /**
  * Handle all interactions whose customId starts with "bbsetup:".
@@ -103,6 +106,75 @@ export async function handleSetupBoomBoxInteraction(interaction) {
 
     if (id === "bbsetup:logs:channel:select" && interaction.isChannelSelectMenu()) {
       await handleLogChannelSelected(interaction);
+      return;
+    }
+
+    // ── Hapus Panel Lama ──────────────────────────────────────────────────
+    if (id === "bbsetup:logs:deletepanel") {
+      const logChannelId = db.getLogChannel() ?? null;
+      const state        = db.getLogState();
+      let   statusMsg    = "🗑️ Panel lama tidak ditemukan di database.";
+
+      // Coba hapus pesan panel lama jika ada
+      if (state.messageId && logChannelId) {
+        try {
+          const logCh = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+          if (logCh?.isTextBased()) {
+            const oldMsg = await logCh.messages.fetch(state.messageId).catch(() => null);
+            if (oldMsg) {
+              await oldMsg.delete();
+              statusMsg = "🗑️ Panel lama berhasil dihapus.";
+            } else {
+              statusMsg = "ℹ️ Pesan panel lama sudah tidak ada di channel.";
+            }
+          }
+        } catch (delErr) {
+          logger.warn(`[SetupBoomBox] Gagal hapus panel lama: ${delErr.message}`);
+          statusMsg = `⚠️ Gagal hapus panel lama: ${delErr.message.slice(0, 80)}`;
+        }
+      }
+
+      // Reset messageId di DB agar panel baru dibuat saat BoomBox berikutnya selesai
+      db.setLogState({ messageId: null });
+
+      // Buat panel baru sekarang jika log channel sudah dikonfigurasi
+      let panelCreated = false;
+      if (logChannelId) {
+        try {
+          const logCh = await interaction.client.channels.fetch(logChannelId).catch(() => null);
+          if (logCh?.isTextBased()) {
+            const newMsg = await logCh.send(buildPublicLogPanel());
+            db.setLogState({ messageId: newMsg.id });
+            panelCreated = true;
+          }
+        } catch (createErr) {
+          logger.warn(`[SetupBoomBox] Gagal buat panel baru: ${createErr.message}`);
+        }
+      }
+
+      const confirmEmbed = new EmbedBuilder()
+        .setColor(panelCreated ? 0x57f287 : 0xfaa61a)
+        .setTitle(panelCreated ? "✅ Panel Diperbarui" : "🗑️ Panel Lama Dihapus")
+        .setDescription(
+          `${statusMsg}\n\n` +
+          (panelCreated
+            ? `✅ Panel BoomBox Logs V2 baru telah dibuat di <#${logChannelId}>.`
+            : logChannelId
+              ? "Panel baru akan dibuat otomatis setelah BoomBox berikutnya selesai."
+              : "⚠️ Log channel belum dikonfigurasi. Gunakan **Ganti Log Channel** terlebih dahulu.")
+        )
+        .setFooter({ text: "BoomBox V2 • BoomBox Logs" })
+        .setTimestamp();
+
+      const backRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("bbsetup:logs")
+          .setLabel("Kembali ke Setup Logs")
+          .setEmoji("◀️")
+          .setStyle(ButtonStyle.Primary),
+      );
+
+      await interaction.update({ embeds: [confirmEmbed], components: [backRow] });
       return;
     }
 

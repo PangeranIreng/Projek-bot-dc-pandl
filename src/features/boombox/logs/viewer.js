@@ -30,8 +30,8 @@ const SEP         = "━━━━━━━━━━━━━━━━━━";
 
 const PLATFORMS = {
   YouTube: { emoji: "🔴", label: "YouTube", style: ButtonStyle.Danger },
-  TikTok:  { emoji: "⚫", label: "TikTok",  style: ButtonStyle.Secondary },
-  Spotify: { emoji: "🟢", label: "Spotify", style: ButtonStyle.Success },
+  TikTok:  { emoji: "🎶", label: "TikTok",  style: ButtonStyle.Secondary },
+  Spotify: { emoji: "🎧", label: "Spotify", style: ButtonStyle.Success },
 };
 
 // Circled number ①–⑩ untuk penomoran entry
@@ -80,12 +80,12 @@ export function buildPublicLogPanel() {
     new ButtonBuilder()
       .setCustomId("bblog:v:open:TikTok")
       .setLabel("TikTok")
-      .setEmoji("⚫")
+      .setEmoji("🎶")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("bblog:v:open:Spotify")
       .setLabel("Spotify")
-      .setEmoji("🟢")
+      .setEmoji("🎧")
       .setStyle(ButtonStyle.Success),
   );
 

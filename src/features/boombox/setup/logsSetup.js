@@ -55,16 +55,21 @@ export function buildLogsPanel() {
     new ButtonBuilder()
       .setCustomId("bbsetup:logs:toggle:tiktok")
       .setLabel("TikTok")
-      .setEmoji("⚫")
+      .setEmoji("🎶")
       .setStyle(maintenance.tiktok ? ButtonStyle.Danger : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("bbsetup:logs:toggle:spotify")
       .setLabel("Spotify")
-      .setEmoji("🟢")
+      .setEmoji("🎧")
       .setStyle(maintenance.spotify ? ButtonStyle.Danger : ButtonStyle.Secondary),
   );
 
   const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:deletepanel")
+      .setLabel("Hapus Panel Lama")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId("bbsetup:back")
       .setLabel("Kembali")

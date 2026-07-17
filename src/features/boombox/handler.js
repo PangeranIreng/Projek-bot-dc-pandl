@@ -341,15 +341,27 @@ export async function handleBoomBoxMessage(message) {
   // Jika channel dikonfigurasi hanya untuk satu platform,
   // tolak URL yang tidak sesuai.
   if (!channelInfo.isLegacy && channelInfo.platform && platform !== channelInfo.platform) {
-    if (!platform) {
-      await message.reply({ content: userMention, embeds: [buildUnsupportedPlatformEmbed()] }).catch(() => {});
-    } else {
-      await message.reply({
-        content:
-          `${userMention} ❌ Channel ini hanya untuk **${channelInfo.platform}**.\n` +
-          `Link **${platform}** tidak dapat diproses di sini.`,
-      }).catch(() => {});
-    }
+    // Hapus pesan user (jangan mention user di reply)
+    try { await message.delete(); } catch { /* no permission — continue */ }
+
+    // Ambil channel ID per-platform dari DB untuk mention yang tepat
+    const configuredChannels = db.getChannels();
+    const ytCh  = configuredChannels.youtube ? `<#${configuredChannels.youtube}>` : "#🔴・create-boombox";
+    const tkCh  = configuredChannels.tiktok  ? `<#${configuredChannels.tiktok}>`  : "#🎶・boombox-tiktok";
+    const spCh  = configuredChannels.spotify ? `<#${configuredChannels.spotify}>` : "#🎧・boombox-spotify";
+
+    const notifContent =
+      "❌ Link tersebut tidak dapat diproses di channel ini.\n\n" +
+      "Silakan kirim ke:\n\n" +
+      `🔴 ${ytCh}\n` +
+      `🎶 ${tkCh}\n` +
+      `🎧 ${spCh}\n\n` +
+      "sesuai platform.";
+
+    // Kirim pesan tanpa mention, auto-delete setelah 8 detik
+    message.channel.send({ content: notifContent })
+      .then(msg => setTimeout(() => msg.delete().catch(() => {}), 8_000))
+      .catch(() => {});
     return;
   }
 

@@ -202,11 +202,8 @@ export function buildDurationLimitEmbed(detectedSec, maxSec = 25 * 60) {
 export function buildUserErrorEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR_ERROR)
-    .setTitle("⚠️ BoomBox sedang mengalami gangguan.")
-    .setDescription(
-      "Laporan otomatis telah dikirim ke Owner & Developer.\n\n" +
-      "Silakan coba beberapa saat lagi."
-    )
+    .setTitle("❌ BoomBox gagal diproses.")
+    .setDescription("Silakan coba lagi beberapa saat.")
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 }
