@@ -42,6 +42,9 @@ const DEFAULT_DB = {
   statistics: {
     total: 0,
     byPlatform: {},
+    byProvider: {},   // e.g. { "yt-dlp/method1": 50, "ytdl-core": 10 }
+    successCount: 0,  // total successful conversions (same as total, kept separately)
+    failureCount: 0,  // total failed conversions logged from handler
   },
   // Last 500 entries — primary data source for BoomBox Logs Viewer (V2)
   history: [],
@@ -160,16 +163,47 @@ export class BoomBoxDB {
 
   // ── Statistics ───────────────────────────────────────────────────────────
 
-  incrementStats(platform) {
-    if (!this._data.statistics) this._data.statistics = { total: 0, byPlatform: {} };
-    this._data.statistics.total = (this._data.statistics.total ?? 0) + 1;
-    this._data.statistics.byPlatform[platform] =
-      (this._data.statistics.byPlatform[platform] ?? 0) + 1;
+  /**
+   * Record a successful BoomBox conversion.
+   * @param {string} platform  "YouTube" | "TikTok" | "Spotify"
+   * @param {string|null} [provider]  e.g. "yt-dlp/method1", "ytdl-core", "kaizen"
+   */
+  incrementStats(platform, provider = null) {
+    if (!this._data.statistics) {
+      this._data.statistics = { total: 0, byPlatform: {}, byProvider: {}, successCount: 0, failureCount: 0 };
+    }
+    const s = this._data.statistics;
+    s.total        = (s.total        ?? 0) + 1;
+    s.successCount = (s.successCount ?? 0) + 1;
+    s.byPlatform[platform] = (s.byPlatform[platform] ?? 0) + 1;
+    if (provider) {
+      if (!s.byProvider) s.byProvider = {};
+      s.byProvider[provider] = (s.byProvider[provider] ?? 0) + 1;
+    }
+    this._save();
+  }
+
+  /**
+   * Record a failed BoomBox conversion (all providers exhausted).
+   * @param {string} platform
+   */
+  incrementFailureStats(platform) {
+    if (!this._data.statistics) {
+      this._data.statistics = { total: 0, byPlatform: {}, byProvider: {}, successCount: 0, failureCount: 0 };
+    }
+    this._data.statistics.failureCount = (this._data.statistics.failureCount ?? 0) + 1;
     this._save();
   }
 
   getStatistics() {
-    return this._data.statistics ?? { total: 0, byPlatform: {} };
+    const s = this._data.statistics ?? {};
+    return {
+      total:        s.total        ?? 0,
+      byPlatform:   s.byPlatform   ?? {},
+      byProvider:   s.byProvider   ?? {},
+      successCount: s.successCount ?? s.total ?? 0,
+      failureCount: s.failureCount ?? 0,
+    };
   }
 
   // ── History ──────────────────────────────────────────────────────────────

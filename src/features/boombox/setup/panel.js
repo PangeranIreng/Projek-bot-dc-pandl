@@ -14,7 +14,10 @@ import {
   ButtonBuilder,
   ButtonStyle,
 } from "discord.js";
-import { db } from "../../../database/db.js";
+import { db }              from "../../../database/db.js";
+import * as providerHealth from "../../../services/providerHealth.js";
+import { getQueueSnapshot } from "../../queue/boomboxQueue.js";
+import { getCacheStats }    from "../../../services/boomboxCache.js";
 
 const COLOR_PANEL  = 0x5865f2;
 const FOOTER_TEXT  = "BoomBox V2 • Setup Panel";
@@ -82,7 +85,84 @@ export function buildSetupBoomBoxPanel() {
       .setLabel("Maintenance")
       .setEmoji("🛠️")
       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:monitor")
+      .setLabel("Monitor")
+      .setEmoji("📊")
+      .setStyle(ButtonStyle.Secondary),
   );
 
   return { embed, components: [row] };
+}
+
+/**
+ * Build the BoomBox monitoring embed.
+ * Shows provider health, queue, cache, and statistics — all in one panel.
+ * @returns {EmbedBuilder}
+ */
+export function buildMonitorEmbed() {
+  // ── Provider health ──────────────────────────────────────────────────────
+  const allStatuses = providerHealth.getAllStatuses();
+  const providerLines = Object.entries(allStatuses).map(([label, s]) => {
+    const icon   = s.status === "ONLINE" ? "🟢" : "🔴";
+    const streak = s.consecutiveFailures > 0 ? ` (${s.consecutiveFailures}x gagal)` : "";
+    const skip   = s.totalSkipped  > 0 ? ` | skip=${s.totalSkipped}` : "";
+    return `${icon} **${label}**\n   ✅ ${s.totalSuccess} | ❌ ${s.totalFailure}${skip}${streak}`;
+  });
+  const providerSection = providerLines.length > 0
+    ? providerLines.join("\n")
+    : "_Belum ada data provider._";
+
+  // ── Queue ────────────────────────────────────────────────────────────────
+  const q = getQueueSnapshot();
+  const queueSection = `🔄 Aktif: **${q.active}** / ${q.maxConcurrent}  |  ⏳ Antrean: **${q.queued}**`;
+
+  // ── Cache ────────────────────────────────────────────────────────────────
+  const c = getCacheStats();
+  const cacheSection =
+    `💾 Result: **${c.resultSize}** entries  |  📋 Meta: **${c.metaSize}** entries\n` +
+    `🎯 Hit Rate: **${c.hitRate}**  (${c.hits} hit / ${c.misses} miss)`;
+
+  // ── Statistics ───────────────────────────────────────────────────────────
+  const stats = db.getStatistics();
+  const byPlatformLines = Object.entries(stats.byPlatform)
+    .map(([p, n]) => `${p}: ${n}`)
+    .join("  |  ");
+  const byProviderLines = Object.entries(stats.byProvider ?? {})
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 6)
+    .map(([p, n]) => `${p}: ${n}`)
+    .join("\n");
+  const statsSection =
+    `📊 Total: **${stats.total}**  |  ✅ Sukses: **${stats.successCount}**  |  ❌ Gagal: **${stats.failureCount}**\n` +
+    (byPlatformLines ? `🌍 Platform: ${byPlatformLines}\n` : "") +
+    (byProviderLines ? `🔧 Provider:\n${byProviderLines}` : "");
+
+  const SEP = "━━━━━━━━━━━━━━━━";
+  const desc = [
+    SEP,
+    "**🔌 Provider Status**",
+    "",
+    providerSection,
+    SEP,
+    "**🗂️ Queue**",
+    "",
+    queueSection,
+    SEP,
+    "**💾 Cache**",
+    "",
+    cacheSection,
+    SEP,
+    "**📈 Statistik (sejak restart)**",
+    "",
+    statsSection,
+    SEP,
+  ].join("\n");
+
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("📊 BoomBox Monitor")
+    .setDescription(desc.slice(0, 4096))
+    .setFooter({ text: "BoomBox V2 • Monitor" })
+    .setTimestamp();
 }

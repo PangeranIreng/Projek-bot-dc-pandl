@@ -1,42 +1,40 @@
 ---
-name: BoomBox stability fixes (production hardening)
-description: Root causes of BoomBox stuck/failure + all surgical fixes applied, with file locations.
+name: BoomBox Stability Fixes (Round 2)
+description: yt-dlp retry-sleep format fix, provider/timing in logs, provider stats persistence, monitoring panel.
 ---
 
-# BoomBox Stability Fixes
+# BoomBox Stability Fixes — Round 2
 
-## Critical bugs fixed
+**Why:** Spec required fixing an invalid yt-dlp parameter and adding provider/timing visibility to logs and DB.
 
-**1. Timeout = permanent failure (the main silent-fallback killer)**
-- File: `src/services/ytmp3gg.js`, `_isPermanentFailure()`
-- `"timed out"` was in the permanent-failure list → yt-dlp timeout skipped ytdl-core + kaizenapi entirely
-- Fix: removed `"timed out"` from permanent list. Timeouts are transient; they MUST trigger fallback.
+## Fix 1: `--retry-sleep exponential=1:2` → `exp=1:2`
+- Location: `src/services/ytmp3gg.js` TIKTOK_METHODS method 7
+- `exponential=1:2` is NOT a valid yt-dlp retry-sleep expression (produces "invalid http retry sleep expression" warning)
+- Correct format: `exp=BASE[:MAX]` — use `exp=1:2` (base=1s, max=2s exponential backoff)
+- Other methods use plain integer `"1"` which is always valid
 
-**2. `ensureBinary()` per-request GitHub API call + concurrency race**
-- File: `src/services/ytmp3gg.js`
-- Every `ytdl()` + `getVideoInfo()` called `ensureBinary()` which hit GitHub API for version check
-- No mutex: 20 concurrent requests could all trigger `_downloadBinary()` at once → file corruption
-- Fix: `initBinary()` (exported) called once at startup in `ready.js`; per-request `ensureBinary()` is now just `fs.existsSync(BIN_PATH)` + wait on the singleton promise.
+## Fix 2: Provider + timing now in log entries
+- `src/features/boombox/handler.js`: added `provider`, `downloadMs`, `uploadMs`, `totalMs` to the history `entry` object
+- `downloadMs` and `uploadMs` declared as `let` at top of `runBoomBoxJob` scope (not `const` inside else block)
+- `db.incrementStats(platform, ytResult.provider)` — second arg passes provider for persistent tracking
+- `db.incrementFailureStats(platform)` called in catch block to track failed conversions
 
-**3. No AbortController → zombie yt-dlp processes on stage timeout**
-- File: `src/features/boombox/handler.js`, `withStageTimeout()`
-- Stage timeout fired via `Promise.race` but yt-dlp child process kept running forever
-- Fix: `withStageTimeout` now accepts a factory `(signal) => Promise`; creates `AbortController` internally and calls `controller.abort()` before rejecting. `ytdl()` call updated to factory pattern.
+## Fix 3: Provider stats persist across restarts
+- `src/database/boomboxDB.js`:
+  - Added `byProvider`, `successCount`, `failureCount` to `DEFAULT_DB.statistics`
+  - `incrementStats(platform, provider)` — accepts optional provider
+  - `incrementFailureStats(platform)` — new method for error tracking
+  - `getStatistics()` — returns all fields with safe defaults
 
-**4. `getVideoInfo()` ignored provider health circuit breaker**
-- File: `src/services/ytmp3gg.js`, `getVideoInfo()`
-- When yt-dlp was OFFLINE, every metadata fetch still tried yt-dlp and waited 20s for timeout
-- Fix: added `providerHealth.shouldSkip(healthKey)` check at top of `getVideoInfo()`; returns nulls immediately if OFFLINE.
+## Fix 4: Provider shown in result embed
+- `src/features/boombox/embed.js`: `buildResultEmbed` now accepts `downloadMs, uploadMs`
+- Footer shows `via yt-dlp #1` (or whichever provider won)
+- Timing line: `⬇️ 12.3s ⬆️ 4.1s ⏱ 17.8s` or `⚡ 0.2s (cached)`
 
-**5. top4top.js ReadStream fd leak on error**
-- File: `src/services/top4top.js`, `_doUpload()`
-- `fs.createReadStream()` passed directly to `form.append()` → if axios threw, stream never closed
-- Fix: named variable `readStream`, explicit `readStream.destroy()` in catch block.
+## Fix 5: Monitor panel in /setupboombox
+- `src/features/boombox/setup/panel.js`:
+  - Added 5th "📊 Monitor" button to setup panel ActionRow
+  - `buildMonitorEmbed()` — shows provider health, queue snapshot, cache stats, statistics
+- `src/features/boombox/setupInteraction.js`: handles `bbsetup:monitor` → shows monitor embed
 
-## Architecture invariants to preserve
-- `_isPermanentFailure()` must NEVER include network/timeout errors — only truly permanent per-video outcomes (deleted, private, region-blocked, age-restricted).
-- `initBinary()` is the only function that calls `_fetchLatestYtdlpVersion()`. Never add a GitHub API call inside `ensureBinary()` or any per-request path.
-- `withStageTimeout` with a factory fn creates+aborts its own `AbortController`. Plain Promise callers (getVideoInfo, top4top) still work unchanged.
-- Startup init: `initBinary()` called in `src/events/ready.js` `handleReady()` — non-fatal if it fails.
-
-**Why:** All 5 bugs were root causes of BoomBox getting stuck in production under real concurrent load. They were non-obvious because each had a plausible-looking fix that was actually wrong (e.g. classifying timeout as permanent "to stop retrying" inadvertently broke the whole fallback chain).
+**How to apply:** Any future provider or timing changes should update the entry fields in handler.js and the embed in embed.js. The `byProvider` stat key matches `ytResult.provider` exactly as returned by ytdl().

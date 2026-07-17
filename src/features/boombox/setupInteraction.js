@@ -22,7 +22,7 @@
 import { logger } from "../../utils/logger.js";
 import { db }     from "../../database/db.js";
 
-import { buildSetupBoomBoxPanel }                       from "./setup/panel.js";
+import { buildSetupBoomBoxPanel, buildMonitorEmbed }    from "./setup/panel.js";
 import {
   buildChannelPlatformPanel,
   buildChannelSelectPanel,
@@ -64,6 +64,19 @@ export async function handleSetupBoomBoxInteraction(interaction) {
     if (id === "bbsetup:back") {
       const { embed, components } = buildSetupBoomBoxPanel();
       await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Monitor ───────────────────────────────────────────────────────────
+    if (id === "bbsetup:monitor") {
+      const backRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("bbsetup:back")
+          .setLabel("Kembali")
+          .setEmoji("◀️")
+          .setStyle(ButtonStyle.Secondary),
+      );
+      await interaction.update({ embeds: [buildMonitorEmbed()], components: [backRow] });
       return;
     }
 

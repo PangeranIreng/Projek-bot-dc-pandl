@@ -132,29 +132,47 @@ export function buildQueueEmbed(user, position, total, etaSec) {
  * @param {string}  boomboxUrl   Permanent top4top URL
  * @param {number}  elapsedMs    Total processing time in ms
  * @param {object}  usageInfo    { isUnlimited: bool, usage: number, limit: number }
+ * @param {number}  [downloadMs] Download stage duration in ms (0 = cache hit)
+ * @param {number}  [uploadMs]   Upload stage duration in ms (0 = cache hit)
  */
-export function buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo) {
+export function buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo, downloadMs = 0, uploadMs = 0) {
   const title    = truncateTitle(ytResult.title, 40);
   const duration = formatDuration(ytResult.duration);
-  const elapsed  = `${(elapsedMs / 1000).toFixed(1)} Seconds`;
+  const elapsed  = `${(elapsedMs / 1000).toFixed(1)}s`;
 
   const limitLine = usageInfo.isUnlimited
     ? "👑 Premium : Unlimited"
     : `💎 Free : ${usageInfo.usage} / ${usageInfo.limit}`;
 
+  // Provider label — shorten verbose internal names for user display
+  const rawProvider = ytResult.provider ?? null;
+  const providerLabel = rawProvider
+    ? rawProvider
+        .replace("yt-dlp/method", "yt-dlp #")
+        .replace("ytdl-core (race)", "ytdl-core")
+        .replace("yt-dlp (race)", "yt-dlp")
+    : null;
+
+  // Timing breakdown (only show if non-trivial)
+  const dlSec   = (downloadMs / 1000).toFixed(1);
+  const upSec   = (uploadMs   / 1000).toFixed(1);
+  const timingValue = downloadMs > 0
+    ? `⬇️ ${dlSec}s  ⬆️ ${upSec}s  ⏱ ${elapsed}`
+    : `⚡ ${elapsed} (cached)`;
+
   const embed = new EmbedBuilder()
     .setColor(COLOR_SUCCESS)
     .setTitle("🎵 BoomBox Ready")
     .addFields(
-      { name: "🎵 Song Title",      value: title,      inline: false },
-      { name: "🌍 Platform",        value: platform,   inline: true  },
-      { name: "⏱ Duration",         value: duration,   inline: true  },
-      { name: "🔗 BoomBox URL",     value: boomboxUrl, inline: false },
-      { name: "📊 Daily Limit",     value: limitLine,  inline: false },
-      { name: "⚡ Processing Time", value: elapsed,    inline: true  },
+      { name: "🎵 Song Title",  value: title,        inline: false },
+      { name: "🌍 Platform",    value: platform,     inline: true  },
+      { name: "⏱ Duration",     value: duration,     inline: true  },
+      { name: "🔗 BoomBox URL", value: boomboxUrl,   inline: false },
+      { name: "📊 Daily Limit", value: limitLine,    inline: false },
+      { name: "⚡ Waktu",       value: timingValue,  inline: false },
     )
     .setDescription(SEP14)
-    .setFooter({ text: FOOTER_TEXT })
+    .setFooter({ text: providerLabel ? `${FOOTER_TEXT} • via ${providerLabel}` : FOOTER_TEXT })
     .setTimestamp();
 
   if (ytResult.thumbnail) embed.setThumbnail(ytResult.thumbnail);

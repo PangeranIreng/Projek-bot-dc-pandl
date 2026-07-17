@@ -1377,11 +1377,15 @@ const TIKTOK_METHODS = [
   ],
 
   // ── Method 7: Extended retries + TikTok iOS UA
+  // NOTE: yt-dlp retry-sleep format is "exp=BASE[:MAX]" — "exponential=..." is
+  // an invalid expression in all modern yt-dlp versions and causes the
+  // "invalid http retry sleep expression" warning + silently falls back to no
+  // sleep. Use "exp=1:2" (base=1s, max=2s exponential backoff) instead.
   [
     "--no-check-certificates",
     "--extractor-retries", "5",
     "--fragment-retries", "5",
-    "--retry-sleep", "exponential=1:2",
+    "--retry-sleep", "exp=1:2",
     "--add-headers", "User-Agent:TikTok/26.2.3 (iPhone; iOS 16.6; Scale/3.00)",
     "--add-headers", "Referer:https://www.tiktok.com/",
   ],

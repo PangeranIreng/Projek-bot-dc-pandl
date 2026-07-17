@@ -487,6 +487,8 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
   let   boomboxUrl  = null;
   let   ytResult    = null;
   let   resultSent  = false;
+  let   downloadMs  = 0;   // download stage duration (0 on cache hit)
+  let   uploadMs    = 0;   // upload stage duration   (0 on cache hit)
 
   // V2: effective duration limit in seconds, based on member's roles
   const maxDurationSec = member
@@ -577,7 +579,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
         5 * 60_000,
         "Download audio",
       );
-      const downloadMs = Date.now() - downloadStart;
+      downloadMs = Date.now() - downloadStart;
       tmpDir = ytResult.tmpDir;
 
       if (spotifyMeta) {
@@ -591,7 +593,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       await editStep(3);
       const uploadStart = Date.now();
       const t4tResult   = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
-      const uploadMs    = Date.now() - uploadStart;
+      uploadMs          = Date.now() - uploadStart;
       logger.info(`[BoomBox] ── Upload Top4Top | ${uploadMs}ms`);
 
       // ── Tahap 4: Verifikasi ───────────────────────────────────────────
@@ -609,7 +611,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       } catch {}
 
       const totalMs = Date.now() - startedAt;
-      logger.info(`[BoomBox] Stats | cache=MISS | platform=${platform} | info=${infoMs}ms | dl=${downloadMs}ms | up=${uploadMs}ms | gen=${genMs}ms | total=${totalMs}ms`);
+      logger.info(`[BoomBox] Stats | cache=MISS | platform=${platform} | provider=${ytResult.provider ?? "unknown"} | info=${infoMs}ms | dl=${downloadMs}ms | up=${uploadMs}ms | gen=${genMs}ms | total=${totalMs}ms`);
     }
 
     // ── Bookkeeping ───────────────────────────────────────────────────────
@@ -619,23 +621,28 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     const usageInfo      = { isUnlimited: unlimited, usage: usageAfter, limit };
     const limitRemaining = unlimited ? "Unlimited" : `${Math.max(limit - usageAfter, 0)}/${limit}`;
 
+    const elapsedTotal = Date.now() - startedAt;
     const entry = {
-      userId:      message.author.id,
+      userId:        message.author.id,
       platform,
-      title:       ytResult.title ?? "Unknown",
-      originalUrl: url,
+      title:         ytResult.title ?? "Unknown",
+      originalUrl:   url,
       boomboxUrl,
-      duration:    ytResult.duration,
+      duration:      ytResult.duration,
       limitRemaining,
-      timestamp:   new Date().toISOString(),
+      timestamp:     new Date().toISOString(),
+      provider:      ytResult.provider ?? (boomboxUrl ? "cache" : "unknown"),
+      downloadMs,
+      uploadMs,
+      totalMs:       elapsedTotal,
     };
     db.addHistory(entry);
-    db.incrementStats(platform);
+    db.incrementStats(platform, ytResult.provider ?? null);
 
     // ── Result ────────────────────────────────────────────────────────────
     currentStage = "Display Result";
     const elapsedMs = Date.now() - startedAt;
-    const embed     = buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo);
+    const embed     = buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo, downloadMs, uploadMs);
     const row       = buildButtons(boomboxUrl);
     await statusMsg.delete().catch(() => {});
     await message.channel.send({ content: userMention, embeds: [embed], components: [row] });
@@ -652,11 +659,13 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     logger.error(`[BoomBox] ❌ Failed after ${elapsed}s at [${currentStage}]: ${err.message}`);
 
     const detailId = storeErrorDetail({ message: err.message, stage: currentStage, stack: err.stack });
+    try { db.incrementFailureStats(platform); } catch {} // non-fatal sync call
     await logError({
-      feature: `BoomBox — ${platform}`,
-      reason:  err.message,
-      stage:   currentStage,
-      error:   err,
+      feature:  `BoomBox — ${platform}`,
+      reason:   err.message,
+      stage:    currentStage,
+      error:    err,
+      provider: ytResult?.provider ?? "unknown",
     }).catch(() => {});
 
     if (resultSent) {
