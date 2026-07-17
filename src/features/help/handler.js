@@ -58,6 +58,11 @@ const CATEGORIES = {
     label: "Database",
     description: "Backup, Monitor, & Kelola Data Bot",
   },
+  luatools: {
+    emoji: "📜",
+    label: "Lua Tools",
+    description: "Obfuscator, Beautify, & Deobfuscator Lua",
+  },
   admin: {
     emoji: "⚙️",
     label: "Admin",
@@ -186,6 +191,14 @@ const USAGE = {
     emoji: "📖",
     summary: "Tampilkan pesan bantuan ini dengan kategori interaktif.",
     examples: ["`/help`"],
+  },
+
+  // 📜 Lua Tools
+  setupluatools: {
+    category: "luatools",
+    emoji: "📜",
+    summary: "Buka panel konfigurasi Lua Tools — atur channel dan log channel untuk Obfuscator, Beautify, dan Deobfuscator. Owner/Developer only.",
+    examples: ["`/setupluatools`"],
   },
 
   // ⚙️ Admin
@@ -331,6 +344,27 @@ function buildCategoryEmbed(categoryKey, commands) {
       "• 👥 **Member List** — Statistik member, premium, CEO",
       "",
       "Gunakan `/setup` untuk mengkonfigurasi channel masing-masing panel.",
+    ].join("\n"),
+    luatools: [
+      "Kirim file **\\.lua** ke channel yang sudah dikonfigurasi — bot akan proses otomatis.",
+      "",
+      "**🔒 Obfuscator**",
+      "Menggunakan API eksternal. Kirim file `.lua` ke channel Obfuscator.",
+      "Hasil dikirim ke DM dalam format `nama_obf.lua`.",
+      "",
+      "**🧹 Beautify**",
+      "Pemrosesan lokal. Kirim file `.lua` ke channel Beautify.",
+      "Bot akan merapikan indentasi dan format kode secara otomatis.",
+      "Hasil dikirim ke DM dalam format `nama_beautify.lua`.",
+      "",
+      "**🔓 Deobfuscator**",
+      "Menggunakan API eksternal. Kirim file `.lua` ke channel Deobfuscator.",
+      "Hasil dikirim ke DM dalam format `nama_deobf.lua`.",
+      "",
+      "**Format file:** ✅ `.lua` saja — `.luac` tidak didukung.",
+      "**Hasil:** Selalu dikirim ke DM. Pastikan DM diaktifkan.",
+      "",
+      "Gunakan `/setupluatools` untuk mengkonfigurasi channel.",
     ].join("\n"),
     admin: [
       "Perintah konfigurasi sistem — Owner/Developer only.",

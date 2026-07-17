@@ -28,6 +28,7 @@ import { handleScanButtonInteraction }  from "../handlers/scanInteractionHandler
 import { handleCpanelInteraction }      from "../features/setup/cpanel/interaction.js";
 import { handleHelpInteraction }        from "../features/help/handler.js";
 import { handleDatabaseInteraction }    from "../features/database/interaction.js";
+import { handleLuaToolsSetupInteraction } from "../features/luatools/setupInteraction.js";
 
 /**
  * @param {import("discord.js").Interaction} interaction
@@ -76,6 +77,8 @@ export async function handleInteractionCreate(interaction, commands, client) {
       await handleHelpInteraction(interaction);
     } else if (id.startsWith("db:")) {
       await handleDatabaseInteraction(interaction);
+    } else if (id.startsWith("ltsetup:")) {
+      await handleLuaToolsSetupInteraction(interaction);
     }
 
   } catch (err) {

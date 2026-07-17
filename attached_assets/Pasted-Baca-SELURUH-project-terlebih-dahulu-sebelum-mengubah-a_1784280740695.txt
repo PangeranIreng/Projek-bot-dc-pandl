@@ -1,0 +1,621 @@
+Baca SELURUH project terlebih dahulu sebelum mengubah apa pun.
+
+WAJIB membaca semua file yang berhubungan dengan:
+- Command
+- Handler
+- Database
+- Setup Wizard
+- Help
+- Permission
+- Config
+- Embed
+- Logs
+- Utils
+- API
+- Lua
+- Attachment Handler
+
+Jangan langsung coding.
+
+Analisa seluruh project terlebih dahulu.
+
+==========================================================
+ATURAN UTAMA
+==========================================================
+
+JANGAN MERUBAH FITUR YANG SUDAH ADA.
+
+JANGAN MERUBAH:
+
+• BoomBox
+• Keylogger Scanner
+• Ticket
+• AI
+• Premium
+• Database lama
+• Help lama
+• Setup BoomBox
+• Command lain
+• Embed lain
+• Permission lain
+
+Hanya TAMBAHKAN fitur baru.
+
+Semua fitur lama WAJIB tetap berjalan seperti sebelumnya.
+
+==========================================================
+FITUR BARU
+==========================================================
+
+LUA TOOLS
+
+Berisi:
+
+🔒 Obfuscator
+
+🧹 Beautify
+
+🔓 Deobfuscator
+
+==========================================================
+COMMAND SETUP
+==========================================================
+
+Buat command baru
+
+/setupluatools
+
+Hanya dapat digunakan oleh:
+
+• Owner Role
+• Developer Role
+
+atau
+
+Owner ID
+Developer ID
+
+Member tidak boleh menggunakan command ini.
+
+==========================================================
+SETUP WIZARD
+==========================================================
+
+Gunakan Wizard seperti Setup BoomBox.
+
+Bahasa Indonesia.
+
+Halaman ringkas.
+
+Tidak ramai.
+
+==========================================================
+
+Yang harus dipilih:
+
+━━━━━━━━━━━━━━━━
+
+CHANNEL
+
+━━━━━━━━━━━━━━━━
+
+🔒 Obfuscator
+
+🧹 Beautify
+
+🔓 Deobfuscator
+
+━━━━━━━━━━━━━━━━
+
+LOGS
+
+━━━━━━━━━━━━━━━━
+
+🔒 Obfuscator Logs
+
+🧹 Beautify Logs
+
+🔓 Deobfuscator Logs
+
+==========================================================
+
+Jika Lua Tools BELUM pernah disetup
+
+Wizard berjalan normal.
+
+==========================================================
+
+Jika Lua Tools SUDAH pernah disetup
+
+JANGAN membuat setup baru.
+
+Tampilkan informasi:
+
+Lua Tools sudah dikonfigurasi.
+
+Button:
+
+📄 Lihat Konfigurasi
+
+✏️ Ubah Konfigurasi
+
+🗑 Hapus Setup
+
+❌ Tutup
+
+==========================================================
+
+Jika klik
+
+🗑 Hapus Setup
+
+Tampilkan konfirmasi.
+
+Button
+
+✅ Ya, Hapus
+
+❌ Batal
+
+==========================================================
+
+Semua konfigurasi harus disimpan ke DATABASE.
+
+Tidak boleh hilang ketika:
+
+• Restart
+• Run ulang
+• Update
+• Redeploy
+• Import Github
+
+==========================================================
+CHANNEL
+==========================================================
+
+Contoh
+
+🔒┃obfuscator
+
+🧹┃beautify
+
+🔓┃deobfuscator
+
+==========================================================
+CHANNEL LOGS
+==========================================================
+
+Contoh
+
+🔒┃obfuscator-logs
+
+🧹┃beautify-logs
+
+🔓┃deobfuscator-logs
+
+==========================================================
+OBFUSCATOR
+==========================================================
+
+Menggunakan API.
+
+API Key disimpan pada ENV.
+
+Jangan hardcode API Key.
+
+==========================================================
+
+Jika user mengirim file
+
+.lua
+
+ke channel
+
+Obfuscator
+
+Bot otomatis:
+
+• membaca file
+
+• upload ke API
+
+• menunggu hasil
+
+• download hasil
+
+• kirim hasil ke DM user
+
+==========================================================
+
+Channel hanya menampilkan
+
+🔒 Lua Obfuscator
+
+File sedang diproses...
+
+Setelah selesai
+
+✅ Berhasil
+
+📬 File telah dikirim ke DM.
+
+==========================================================
+
+DM USER
+
+━━━━━━━━━━━━━━━━
+
+🔒 Lua Obfuscator
+
+━━━━━━━━━━━━━━━━
+
+Input
+
+nama.lua
+
+Output
+
+nama_obf.lua
+
+Status
+
+Berhasil
+
+Durasi
+
+xx.xx detik
+
+Lampirkan file hasil.
+
+==========================================================
+LOGS OBFUSCATOR
+==========================================================
+
+Bot mengirim ke
+
+Obfuscator Logs
+
+━━━━━━━━━━━━━━━━
+
+🔒 Lua Obfuscator
+
+━━━━━━━━━━━━━━━━
+
+User
+
+Nama
+
+ID
+
+Input
+
+nama.lua
+
+Output
+
+nama_obf.lua
+
+Ukuran
+
+Input → Output
+
+Durasi
+
+xx.xx detik
+
+Status
+
+Berhasil
+
+Tanggal
+
+Jam
+
+Lampirkan file hasil.
+
+==========================================================
+BEAUTIFY
+==========================================================
+
+Jika user mengirim
+
+.lua
+
+ke channel
+
+Beautify
+
+Bot otomatis Beautify.
+
+Channel
+
+🧹 Lua Beautify
+
+File sedang diproses...
+
+Selesai
+
+📬 File telah dikirim ke DM.
+
+==========================================================
+
+DM
+
+━━━━━━━━━━━━━━━━
+
+🧹 Lua Beautify
+
+━━━━━━━━━━━━━━━━
+
+Input
+
+nama.lua
+
+Output
+
+nama_beautify.lua
+
+Status
+
+Berhasil
+
+Lampirkan file.
+
+==========================================================
+LOGS BEAUTIFY
+==========================================================
+
+🧹 Lua Beautify
+
+User
+
+Nama
+
+ID
+
+Input
+
+nama.lua
+
+Output
+
+nama_beautify.lua
+
+Durasi
+
+Status
+
+Lampirkan file hasil.
+
+==========================================================
+DEOBFUSCATOR
+==========================================================
+
+Menggunakan API.
+
+Jika user mengirim
+
+.lua
+
+ke channel
+
+Deobfuscator
+
+Bot otomatis upload ke API.
+
+Hasil dikirim ke DM.
+
+==========================================================
+
+Channel
+
+🔓 Lua Deobfuscator
+
+File sedang diproses...
+
+Selesai
+
+📬 File telah dikirim ke DM.
+
+==========================================================
+
+DM
+
+━━━━━━━━━━━━━━━━
+
+🔓 Lua Deobfuscator
+
+━━━━━━━━━━━━━━━━
+
+Input
+
+nama.lua
+
+Output
+
+nama_deobf.lua
+
+Status
+
+Berhasil
+
+Lampirkan file.
+
+==========================================================
+LOGS DEOBFUSCATOR
+==========================================================
+
+🔓 Lua Deobfuscator
+
+User
+
+Nama
+
+ID
+
+Input
+
+nama.lua
+
+Output
+
+nama_deobf.lua
+
+Durasi
+
+Status
+
+Lampirkan file hasil.
+
+==========================================================
+FILE YANG DIDUKUNG
+==========================================================
+
+Obfuscator
+
+✅ .lua
+
+Beautify
+
+✅ .lua
+
+Deobfuscator
+
+✅ .lua
+
+==========================================================
+
+Jika user mengirim
+
+.luac
+
+Bot jangan crash.
+
+Balas dengan embed bahasa Indonesia.
+
+Contoh
+
+File .luac belum didukung.
+
+Silakan gunakan source code .lua.
+
+==========================================================
+DM
+==========================================================
+
+Semua hasil WAJIB dikirim melalui DM.
+
+Jika DM gagal
+
+Jangan kirim file ke channel.
+
+Balas
+
+"Gagal mengirim hasil ke DM. Aktifkan Direct Message lalu coba lagi."
+
+==========================================================
+HELP
+==========================================================
+
+Tambahkan kategori baru pada
+
+/help
+
+📜 Lua Tools
+
+Berisi:
+
+🔒 Obfuscator
+
+🧹 Beautify
+
+🔓 Deobfuscator
+
+Gunakan bahasa Indonesia.
+
+Jelaskan fungsi.
+
+Jelaskan cara penggunaan.
+
+Jelaskan format file yang didukung.
+
+==========================================================
+PERMISSION
+==========================================================
+
+Semua command setup
+
+Owner & Developer only.
+
+Member hanya bisa memakai fitur dengan mengirim file ke channel yang sudah ditentukan.
+
+==========================================================
+VALIDASI CHANNEL
+==========================================================
+
+Jika user mengirim file pada channel yang salah.
+
+Bot otomatis menghapus pesan user.
+
+Bot mengirim pemberitahuan tanpa mention.
+
+Contoh
+
+Silakan gunakan channel:
+
+#obfuscator
+
+atau
+
+#beautify
+
+atau
+
+#deobfuscator
+
+Pesan otomatis terhapus setelah beberapa detik.
+
+==========================================================
+DATABASE
+==========================================================
+
+Semua konfigurasi harus permanen.
+
+Tidak hilang ketika restart.
+
+==========================================================
+ERROR
+==========================================================
+
+Jika API gagal
+
+Jika Timeout
+
+Jika File rusak
+
+Jika ukuran file terlalu besar
+
+Jika format salah
+
+Jangan tampilkan error internal ke publik.
+
+User hanya melihat pesan yang ramah.
+
+Detail error hanya dikirim ke channel logs yang sesuai.
+
+==========================================================
+CHECK
+==========================================================
+
+Setelah selesai:
+
+• Periksa syntax semua file.
+• Pastikan tidak ada import yang rusak.
+• Pastikan tidak ada duplicate handler.
+• Pastikan tidak ada command yang bentrok.
+• Pastikan semua fitur lama tetap berjalan.
+• Jangan mengubah struktur fitur lama.
+• Restart bot.
+• Pastikan bot berjalan tanpa error.
+
+Implementasikan fitur baru ini tanpa mengubah perilaku fitur yang sudah ada.

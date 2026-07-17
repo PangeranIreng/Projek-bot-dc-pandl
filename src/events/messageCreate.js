@@ -10,6 +10,7 @@ import { handleAttachmentMessage }   from "../handlers/messageHandler.js";
 import { handleHesuCommand }         from "../features/scanner/hesuCommand.js";
 import { handleBoomBoxMessage }      from "../features/boombox/handler.js";
 import { handleTicketThreadMessage } from "../features/ticket/handler.js";
+import { handleLuaToolsMessage }     from "../features/luatools/handler.js";
 import { threadDB }              from "../database/threadDB.js";
 
 // Dedup guard: Discord can occasionally fire messageCreate twice for the same
@@ -53,6 +54,9 @@ export async function handleMessageCreate(message, secrets) {
 
     // BoomBox runs on a different channel from the scanner
     await handleBoomBoxMessage(message);
+
+    // Lua Tools: Obfuscator / Beautify / Deobfuscator channels
+    await handleLuaToolsMessage(message);
 
     // Scanner: only active in the designated scan channel
     if (message.channelId !== secrets.scanChannelId) return;

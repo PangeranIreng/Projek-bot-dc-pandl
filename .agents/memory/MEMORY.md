@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Lua Tools Architecture](luatools-architecture.md) — file layout, DB singleton, interaction prefix `ltsetup:`, and API env vars for the Lua Tools feature.
+
 - [DATABASE system](database-system.md) — arsitektur sistem DATABASE baru: 7 file baru, prefix `db:`, setup flow, panel Bot Setting/Backup/Console/Member List.
 
 - [Discord gateway bot vs connector](discord-gateway-bot.md) — self-hosted discord.js bots need a raw BOT_TOKEN secret + configureWorkflow console workflow, not the Discord OAuth connector.
