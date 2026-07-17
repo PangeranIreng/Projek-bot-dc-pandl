@@ -1,11 +1,13 @@
 /**
  * setup/logsSetup.js — Sub-panel: Setup BoomBox Logs.
  *
- * BoomBox Logs menggunakan SATU channel.
- * Panel ini:
- *   [1] Menampilkan channel log saat ini + statistik per platform
- *   [2] Tombol ganti channel (ChannelSelectMenu)
- *   [3] Setelah channel dipilih → edit/post panel publik V2 ke channel tersebut
+ * BoomBox Logs menggunakan:
+ *   - SATU global log channel (untuk log dashboard V2 publik)
+ *   - PER-PLATFORM log channel (YouTube Logs, TikTok Logs, Spotify Logs)
+ *     → Log detail dikirim ke channel masing-masing setelah job selesai
+ *
+ * Semua perubahan menggunakan tombol 💾 Simpan — database tidak berubah
+ * sampai Simpan ditekan.
  */
 
 import {
@@ -24,23 +26,37 @@ import { logger }           from "../../../utils/logger.js";
 const COLOR  = 0x3ba4ff;
 const FOOTER = "BoomBox V2 • BoomBox Logs";
 
+const PLATFORM_LOG_META = {
+  youtube: { emoji: "📺", label: "YouTube Logs" },
+  tiktok:  { emoji: "🎵", label: "TikTok Logs"  },
+  spotify: { emoji: "🎧", label: "Spotify Logs"  },
+};
+
 // ── Panel utama Logs ──────────────────────────────────────────────────────────
 
 export function buildLogsPanel() {
-  const logChannel  = db.getLogChannel() ?? BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID;
-  const maintenance = db.getMaintenance();
+  const logChannel         = db.getLogChannel() ?? BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID;
+  const platformLogCh      = db.getPlatformLogChannels();
+  const maintenance        = db.getMaintenance();
+
+  const platLines = Object.entries(PLATFORM_LOG_META).map(([key, { emoji, label }]) => {
+    const ch = platformLogCh[key] ? `<#${platformLogCh[key]}>` : "❌ Belum diatur";
+    return `${emoji} **${label}**: ${ch}`;
+  });
 
   const embed = new EmbedBuilder()
     .setColor(COLOR)
     .setTitle("📋 Setup BoomBox Logs")
     .setDescription(
       "━━━━━━━━━━━━━━━━━━\n\n" +
-      `📌 **Log Channel**\n${logChannel ? `<#${logChannel}>` : "❌ Belum diatur"}\n\n` +
-      "━━━━━━━━━━━━━━━━━━"
+      `📌 **Global Log Channel** (Dashboard V2)\n${logChannel ? `<#${logChannel}>` : "❌ Belum diatur"}\n\n` +
+      "📊 **Per-Platform Log Channels** (Log detail per platform)\n" +
+      platLines.join("\n") +
+      "\n\n━━━━━━━━━━━━━━━━━━"
     )
     .setFooter({ text: FOOTER });
 
-  // Row 1: Ganti Log Channel + platform toggles
+  // Row 1: Global log channel + maintenance toggles
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("bbsetup:logs:setchannel")
@@ -64,7 +80,27 @@ export function buildLogsPanel() {
       .setStyle(maintenance.spotify ? ButtonStyle.Danger : ButtonStyle.Secondary),
   );
 
+  // Row 2: Per-platform log channels
   const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:platcfg:youtube")
+      .setLabel("YouTube Logs")
+      .setEmoji("📺")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:platcfg:tiktok")
+      .setLabel("TikTok Logs")
+      .setEmoji("🎵")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs:platcfg:spotify")
+      .setLabel("Spotify Logs")
+      .setEmoji("🎧")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  // Row 3: Utility + back
+  const row3 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("bbsetup:logs:deletepanel")
       .setLabel("Hapus Panel Lama")
@@ -77,24 +113,22 @@ export function buildLogsPanel() {
       .setStyle(ButtonStyle.Secondary),
   );
 
-  return { embed, components: [row1, row2] };
+  return { embed, components: [row1, row2, row3] };
 }
 
-// ── Pilih channel log ─────────────────────────────────────────────────────────
+// ── Global Log Channel Select ─────────────────────────────────────────────────
 
 export function buildLogChannelSelectPanel() {
   const current = db.getLogChannel() ?? BOOMBOX_CONFIG.BOOMBOX_LOG_CHANNEL_ID;
 
   const embed = new EmbedBuilder()
     .setColor(COLOR)
-    .setTitle("📌 Ganti Log Channel")
+    .setTitle("📌 Ganti Global Log Channel")
     .setDescription(
       "━━━━━━━━━━━━━━━━━━\n\n" +
       `Channel log saat ini: ${current ? `<#${current}>` : "❌ Belum diatur"}\n\n` +
-      "Pilih **satu channel** yang akan menerima semua BoomBox Logs.\n" +
-      "Semua platform (YouTube, TikTok, Spotify) dikirim ke channel yang sama.\n\n" +
-      "Bot akan otomatis **mengedit panel BoomBox Logs lama** menjadi tampilan V2,\n" +
-      "atau membuat panel baru jika belum ada.\n\n" +
+      "Pilih **satu channel** yang akan menerima **BoomBox Logs Dashboard V2** (panel publik).\n" +
+      "Ini adalah panel ringkasan untuk semua platform.\n\n" +
       "━━━━━━━━━━━━━━━━━━"
     )
     .setFooter({ text: FOOTER });
@@ -117,8 +151,6 @@ export function buildLogChannelSelectPanel() {
   return { embed, components: [selectRow, backRow] };
 }
 
-// ── Konfirmasi simpan log channel ─────────────────────────────────────────────
-
 export function buildLogChannelSavedEmbed(channelId, panelStatus = "created") {
   const statusLine =
     panelStatus === "edited"
@@ -139,14 +171,6 @@ export function buildLogChannelSavedEmbed(channelId, panelStatus = "created") {
     .setTimestamp();
 }
 
-/**
- * Handle log channel select interaction.
- * Setelah channel dipilih:
- *   1. Simpan ke DB
- *   2. Edit panel lama menjadi V2, atau buat baru jika tidak ada
- *   3. Simpan messageId panel
- * @param {import("discord.js").ChannelSelectMenuInteraction} interaction
- */
 export async function handleLogChannelSelected(interaction) {
   const channel = interaction.channels.first();
   if (!channel) {
@@ -156,16 +180,13 @@ export async function handleLogChannelSelected(interaction) {
 
   db.setLogChannel(channel.id);
 
-  // ── Posting / edit panel V2 ke log channel ──────────────────────────────
   let panelStatus = "created";
-
   try {
     const logCh = await interaction.client.channels.fetch(channel.id).catch(() => null);
     if (logCh?.isTextBased()) {
       const state   = db.getLogState();
       const payload = buildPublicLogPanel();
 
-      // Coba edit pesan lama (termasuk panel V1 lama)
       if (state.messageId) {
         try {
           const old = await logCh.messages.fetch(state.messageId);
@@ -177,20 +198,16 @@ export async function handleLogChannelSelected(interaction) {
         }
       }
 
-      // Buat pesan baru jika panel lama tidak ada/sudah dihapus
       if (panelStatus !== "edited") {
         const newMsg = await logCh.send(payload);
         db.setLogState({ messageId: newMsg.id });
         logger.info(`[BoomBox] Panel BoomBox Logs V2 dibuat di #${channel.name}: ${newMsg.id}`);
       }
-    } else {
-      logger.warn(`[BoomBox] Channel ${channel.id} tidak dapat diakses atau bukan text channel`);
     }
   } catch (err) {
     logger.warn(`[BoomBox] Gagal posting panel ke log channel: ${err.message}`);
   }
 
-  // ── Reply ke setup interaction ───────────────────────────────────────────
   const backRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("bbsetup:logs")
@@ -206,6 +223,129 @@ export async function handleLogChannelSelected(interaction) {
 
   await interaction.update({
     embeds:     [buildLogChannelSavedEmbed(channel.id, panelStatus)],
+    components: [backRow],
+  });
+}
+
+// ── Per-Platform Log Channel Panels ──────────────────────────────────────────
+
+export function buildPlatformLogSelectPanel(platform) {
+  const { emoji, label } = PLATFORM_LOG_META[platform];
+  const platformLogCh    = db.getPlatformLogChannels();
+  const current          = platformLogCh[platform];
+
+  const embed = new EmbedBuilder()
+    .setColor(COLOR)
+    .setTitle(`${emoji} Setup ${label}`)
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      `Channel log saat ini: ${current ? `<#${current}>` : "❌ Belum diatur"}\n\n` +
+      `Pilih channel yang akan menerima **log detail ${label}**.\n` +
+      "Log sukses dan gagal akan dikirim ke channel ini setelah setiap job selesai.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .setFooter({ text: FOOTER });
+
+  const selectRow = new ActionRowBuilder().addComponents(
+    new ChannelSelectMenuBuilder()
+      .setCustomId(`bbsetup:logs:platcfg:select:${platform}`)
+      .setPlaceholder(`Pilih channel ${label}`)
+      .addChannelTypes(ChannelType.GuildText),
+  );
+
+  const backRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs")
+      .setLabel("Kembali")
+      .setEmoji("◀️")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  return { embed, components: [selectRow, backRow] };
+}
+
+export function buildPlatformLogPendingEmbed(platform, channelId) {
+  const { emoji, label } = PLATFORM_LOG_META[platform];
+  return new EmbedBuilder()
+    .setColor(0xfaa61a)
+    .setTitle(`${emoji} ${label} — Menunggu Konfirmasi`)
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      `📌 **Channel dipilih**: <#${channelId}>\n\n` +
+      "⚠️ **Konfigurasi belum disimpan.**\n" +
+      "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+export function buildPlatformLogSavedEmbed(platform, channelId) {
+  const { emoji, label } = PLATFORM_LOG_META[platform];
+  return new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle(`✅ ${label} Channel Berhasil Disimpan`)
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      `${emoji} **Platform**: ${label}\n` +
+      `📌 **Channel**: <#${channelId}>\n\n` +
+      "✅ Konfigurasi telah disimpan ke database.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+export async function handlePlatformLogSelected(interaction, platform) {
+  const channel = interaction.channels.first();
+  if (!channel) {
+    await interaction.reply({ content: "❌ Channel tidak valid.", ephemeral: true });
+    return;
+  }
+
+  // Tampilkan pending — database belum diubah
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`bbsetup:logs:platcfg:save:${platform}:${channel.id}`)
+      .setLabel("Simpan")
+      .setEmoji("💾")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`bbsetup:logs:platcfg:${platform}`)
+      .setLabel("Pilih Ulang")
+      .setEmoji("🔄")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs")
+      .setLabel("Kembali")
+      .setEmoji("◀️")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  await interaction.update({
+    embeds:     [buildPlatformLogPendingEmbed(platform, channel.id)],
+    components: [row],
+  });
+}
+
+export async function handlePlatformLogSave(interaction, platform, channelId) {
+  db.setPlatformLogChannel(platform, channelId);
+
+  const backRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bbsetup:logs")
+      .setLabel("Kembali ke Setup Logs")
+      .setEmoji("◀️")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:back")
+      .setLabel("Menu Utama")
+      .setEmoji("🏠")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.update({
+    embeds:     [buildPlatformLogSavedEmbed(platform, channelId)],
     components: [backRow],
   });
 }

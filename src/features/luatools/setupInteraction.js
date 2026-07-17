@@ -2,19 +2,21 @@
  * src/features/luatools/setupInteraction.js — Router untuk interaksi ltsetup:.
  *
  * Prefix routing:
- *   ltsetup:back                         → Panel utama setup
- *   ltsetup:view                         → Lihat konfigurasi (sama dengan back)
- *   ltsetup:edit                         → Ubah konfigurasi (buka setup wizard)
- *   ltsetup:close                        → Tutup panel
- *   ltsetup:delete                       → Konfirmasi hapus
- *   ltsetup:delete:confirm               → Hapus setup
- *   ltsetup:delete:cancel                → Batal hapus
- *   ltsetup:channel                      → Sub-panel pilih tool channel
- *   ltsetup:channel:<tool>               → ChannelSelectMenu untuk tool
- *   ltsetup:channel:select:<tool>        → Hasil ChannelSelectMenu
- *   ltsetup:logs                         → Sub-panel pilih log channel
- *   ltsetup:logs:<tool>                  → ChannelSelectMenu untuk log tool
- *   ltsetup:logs:select:<tool>           → Hasil ChannelSelectMenu
+ *   ltsetup:back                                   → Panel utama setup
+ *   ltsetup:view                                   → Lihat konfigurasi (sama dengan back)
+ *   ltsetup:edit                                   → Ubah konfigurasi (buka setup wizard)
+ *   ltsetup:close                                  → Tutup panel
+ *   ltsetup:delete                                 → Konfirmasi hapus
+ *   ltsetup:delete:confirm                         → Hapus setup
+ *   ltsetup:delete:cancel                          → Batal hapus
+ *   ltsetup:channel                                → Sub-panel pilih tool channel
+ *   ltsetup:channel:<tool>                         → ChannelSelectMenu untuk tool
+ *   ltsetup:channel:select:<tool>                  → Hasil ChannelSelectMenu (pending)
+ *   ltsetup:channel:save:<tool>:<channelId>        → 💾 Simpan channel ke DB
+ *   ltsetup:logs                                   → Sub-panel pilih log channel
+ *   ltsetup:logs:<tool>                            → ChannelSelectMenu untuk log tool
+ *   ltsetup:logs:select:<tool>                     → Hasil ChannelSelectMenu (pending)
+ *   ltsetup:logs:save:<tool>:<channelId>           → 💾 Simpan log channel ke DB
  */
 
 import { logger } from "../../utils/logger.js";
@@ -30,11 +32,13 @@ import {
   buildChannelToolPanel,
   buildChannelSelectPanel,
   handleChannelSelected,
+  handleChannelSave,
 } from "./setup/channelSetup.js";
 import {
   buildLogToolPanel,
   buildLogChannelSelectPanel,
   handleLogChannelSelected,
+  handleLogChannelSave,
 } from "./setup/logChannelSetup.js";
 
 import {
@@ -44,7 +48,7 @@ import {
   ButtonStyle,
 } from "discord.js";
 
-const TOOLS = ["obfuscator", "beautify", "deobfuscator"];
+const TOOLS  = ["obfuscator", "beautify", "deobfuscator"];
 const FOOTER = "Lua Tools V1 • Setup Panel";
 
 /**
@@ -135,18 +139,26 @@ export async function handleLuaToolsSetupInteraction(interaction) {
 
     // Pilih tool → tampilkan ChannelSelectMenu
     const chanToolMatch = /^ltsetup:channel:(obfuscator|beautify|deobfuscator)$/.exec(id);
-    if (chanToolMatch && !id.includes(":select:")) {
+    if (chanToolMatch && !id.includes(":select:") && !id.includes(":save:")) {
       const tool = chanToolMatch[1];
       const { embed, components } = buildChannelSelectPanel(tool);
       await interaction.update({ embeds: [embed], components });
       return;
     }
 
-    // ChannelSelectMenu result
+    // ChannelSelectMenu result → tampilkan pending
     const chanSelMatch = /^ltsetup:channel:select:(obfuscator|beautify|deobfuscator)$/.exec(id);
     if (chanSelMatch && interaction.isChannelSelectMenu()) {
       const tool = chanSelMatch[1];
       await handleChannelSelected(interaction, tool);
+      return;
+    }
+
+    // 💾 Simpan channel → commit ke DB
+    const chanSaveMatch = /^ltsetup:channel:save:(obfuscator|beautify|deobfuscator):(\d+)$/.exec(id);
+    if (chanSaveMatch) {
+      const [, tool, channelId] = chanSaveMatch;
+      await handleChannelSave(interaction, tool, channelId);
       return;
     }
 
@@ -159,18 +171,26 @@ export async function handleLuaToolsSetupInteraction(interaction) {
 
     // Pilih log tool → tampilkan ChannelSelectMenu
     const logToolMatch = /^ltsetup:logs:(obfuscator|beautify|deobfuscator)$/.exec(id);
-    if (logToolMatch && !id.includes(":select:")) {
+    if (logToolMatch && !id.includes(":select:") && !id.includes(":save:")) {
       const tool = logToolMatch[1];
       const { embed, components } = buildLogChannelSelectPanel(tool);
       await interaction.update({ embeds: [embed], components });
       return;
     }
 
-    // Log ChannelSelectMenu result
+    // Log ChannelSelectMenu result → tampilkan pending
     const logSelMatch = /^ltsetup:logs:select:(obfuscator|beautify|deobfuscator)$/.exec(id);
     if (logSelMatch && interaction.isChannelSelectMenu()) {
       const tool = logSelMatch[1];
       await handleLogChannelSelected(interaction, tool);
+      return;
+    }
+
+    // 💾 Simpan log channel → commit ke DB
+    const logSaveMatch = /^ltsetup:logs:save:(obfuscator|beautify|deobfuscator):(\d+)$/.exec(id);
+    if (logSaveMatch) {
+      const [, tool, channelId] = logSaveMatch;
+      await handleLogChannelSave(interaction, tool, channelId);
       return;
     }
 

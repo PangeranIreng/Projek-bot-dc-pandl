@@ -1,11 +1,9 @@
 /**
  * setup/panel.js — Panel utama /setupboombox.
  *
- * Menampilkan 4 tombol:
- *   📺 Setup Channel
- *   📋 Setup BoomBox Logs
- *   ⏱️ Batas Durasi
- *   🛠️ Maintenance
+ * Dua mode:
+ *   - Belum dikonfigurasi → tampilkan wizard setup
+ *   - Sudah dikonfigurasi → tampilkan ringkasan + opsi kelola
  */
 
 import {
@@ -22,19 +20,106 @@ import { getCacheStats }    from "../../../services/boomboxCache.js";
 const COLOR_PANEL  = 0x5865f2;
 const FOOTER_TEXT  = "BoomBox V2 • Setup Panel";
 
+// ── Panel: Sudah Dikonfigurasi ────────────────────────────────────────────────
+
 /**
- * Build the main /setupboombox panel embed + components.
+ * Tampil saat /setupboombox dijalankan dan konfigurasi sudah ada.
+ * Tombol: 📝 Edit Konfigurasi | 🗑 Hapus Konfigurasi | ❌ Tutup
+ * @returns {{ embed: EmbedBuilder, components: ActionRowBuilder[] }}
+ */
+export function buildConfiguredBoomBoxPanel() {
+  const channels         = db.getChannels();
+  const maintenance      = db.getMaintenance();
+  const logChannel       = db.getLogChannel();
+  const platformLogCh    = db.getPlatformLogChannels();
+
+  const chYT  = channels.youtube ? `<#${channels.youtube}>` : "❌ Belum diatur";
+  const chTK  = channels.tiktok  ? `<#${channels.tiktok}>`  : "❌ Belum diatur";
+  const chSP  = channels.spotify ? `<#${channels.spotify}>` : "❌ Belum diatur";
+  const chLog = logChannel        ? `<#${logChannel}>`       : "❌ Belum diatur";
+
+  const chLogYT = platformLogCh.youtube ? `<#${platformLogCh.youtube}>` : "❌ Belum diatur";
+  const chLogTK = platformLogCh.tiktok  ? `<#${platformLogCh.tiktok}>`  : "❌ Belum diatur";
+  const chLogSP = platformLogCh.spotify ? `<#${platformLogCh.spotify}>` : "❌ Belum diatur";
+
+  const maintYT = maintenance.youtube ? "🔴 Maintenance" : "🟢 Aktif";
+  const maintTK = maintenance.tiktok  ? "🔴 Maintenance" : "🟢 Aktif";
+  const maintSP = maintenance.spotify ? "🔴 Maintenance" : "🟢 Aktif";
+
+  const embed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle("✅ BoomBox — Sudah Dikonfigurasi")
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "BoomBox sudah dikonfigurasi.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .addFields(
+      {
+        name:   "📺 Channel",
+        value:  `YouTube: ${chYT}\nTikTok: ${chTK}\nSpotify: ${chSP}`,
+        inline: true,
+      },
+      {
+        name:   "🛠️ Status",
+        value:  `YouTube: ${maintYT}\nTikTok: ${maintTK}\nSpotify: ${maintSP}`,
+        inline: true,
+      },
+      {
+        name:   "📋 Global Log Channel",
+        value:  chLog,
+        inline: false,
+      },
+      {
+        name:   "📊 Platform Log Channels",
+        value:  `📺 YouTube Logs: ${chLogYT}\n🎵 TikTok Logs: ${chLogTK}\n🎧 Spotify Logs: ${chLogSP}`,
+        inline: false,
+      },
+    )
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bbsetup:edit")
+      .setLabel("Edit Konfigurasi")
+      .setEmoji("📝")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:delete")
+      .setLabel("Hapus Konfigurasi")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:close")
+      .setLabel("Tutup")
+      .setEmoji("❌")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  return { embed, components: [row] };
+}
+
+// ── Panel: Wizard Setup (admin) ───────────────────────────────────────────────
+
+/**
+ * Build the main /setupboombox admin panel embed + components.
  * @returns {{ embed: EmbedBuilder, components: ActionRowBuilder[] }}
  */
 export function buildSetupBoomBoxPanel() {
-  const channels    = db.getChannels();
-  const maintenance = db.getMaintenance();
-  const logChannel  = db.getLogChannel();
+  const channels         = db.getChannels();
+  const maintenance      = db.getMaintenance();
+  const logChannel       = db.getLogChannel();
+  const platformLogCh    = db.getPlatformLogChannels();
 
-  const chYT = channels.youtube ? `<#${channels.youtube}>` : "❌ Belum diatur";
-  const chTK = channels.tiktok  ? `<#${channels.tiktok}>` : "❌ Belum diatur";
-  const chSP = channels.spotify ? `<#${channels.spotify}>` : "❌ Belum diatur";
-  const chLog = logChannel       ? `<#${logChannel}>`       : "❌ Belum diatur";
+  const chYT  = channels.youtube ? `<#${channels.youtube}>` : "❌ Belum diatur";
+  const chTK  = channels.tiktok  ? `<#${channels.tiktok}>`  : "❌ Belum diatur";
+  const chSP  = channels.spotify ? `<#${channels.spotify}>` : "❌ Belum diatur";
+  const chLog = logChannel        ? `<#${logChannel}>`       : "❌ Belum diatur";
+
+  const chLogYT = platformLogCh.youtube ? `<#${platformLogCh.youtube}>` : "❌ Belum diatur";
+  const chLogTK = platformLogCh.tiktok  ? `<#${platformLogCh.tiktok}>`  : "❌ Belum diatur";
+  const chLogSP = platformLogCh.spotify ? `<#${platformLogCh.spotify}>` : "❌ Belum diatur";
 
   const maintYT = maintenance.youtube ? "🔴 Maintenance" : "🟢 Aktif";
   const maintTK = maintenance.tiktok  ? "🔴 Maintenance" : "🟢 Aktif";
@@ -46,18 +131,23 @@ export function buildSetupBoomBoxPanel() {
     .setDescription("━━━━━━━━━━━━━━━━━━\n\nPilih kategori yang ingin dikonfigurasi.\n\n━━━━━━━━━━━━━━━━━━")
     .addFields(
       {
-        name: "📺 Channel",
-        value: `YouTube: ${chYT}\nTikTok: ${chTK}\nSpotify: ${chSP}`,
+        name:   "📺 Channel",
+        value:  `YouTube: ${chYT}\nTikTok: ${chTK}\nSpotify: ${chSP}`,
         inline: true,
       },
       {
-        name: "🛠️ Status",
-        value: `YouTube: ${maintYT}\nTikTok: ${maintTK}\nSpotify: ${maintSP}`,
+        name:   "🛠️ Status",
+        value:  `YouTube: ${maintYT}\nTikTok: ${maintTK}\nSpotify: ${maintSP}`,
         inline: true,
       },
       {
-        name: "📋 Log Channel",
-        value: chLog,
+        name:   "📋 Global Log Channel",
+        value:  chLog,
+        inline: false,
+      },
+      {
+        name:   "📊 Platform Log Channels",
+        value:  `📺 YouTube Logs: ${chLogYT}\n🎵 TikTok Logs: ${chLogTK}\n🎧 Spotify Logs: ${chLogSP}`,
         inline: false,
       },
     )
@@ -95,11 +185,49 @@ export function buildSetupBoomBoxPanel() {
   return { embed, components: [row] };
 }
 
-/**
- * Build the BoomBox monitoring embed.
- * Shows provider health, queue, cache, and statistics — all in one panel.
- * @returns {EmbedBuilder}
- */
+// ── Panel: Konfirmasi Hapus ───────────────────────────────────────────────────
+
+export function buildDeleteConfirmPanel() {
+  const embed = new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle("🗑️ Hapus Konfigurasi BoomBox")
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "⚠️ Yakin ingin menghapus **seluruh konfigurasi** BoomBox?\n\n" +
+      "Semua channel, log channel, maintenance, dan role limits akan direset.\n" +
+      "Bot tidak akan memproses permintaan BoomBox sampai di-setup ulang.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .setFooter({ text: FOOTER_TEXT });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bbsetup:delete:confirm")
+      .setLabel("Ya, Hapus")
+      .setEmoji("✅")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:delete:cancel")
+      .setLabel("Batal")
+      .setEmoji("❌")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  return { embed, components: [row] };
+}
+
+// ── Panel: Closed ─────────────────────────────────────────────────────────────
+
+export function buildClosedEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("🎵 BoomBox — Panel Ditutup")
+    .setDescription("Panel setup telah ditutup.")
+    .setFooter({ text: FOOTER_TEXT });
+}
+
+// ── Monitor ───────────────────────────────────────────────────────────────────
+
 export function buildMonitorEmbed() {
   // ── Provider health ──────────────────────────────────────────────────────
   const allStatuses = providerHealth.getAllStatuses();

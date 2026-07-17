@@ -5,8 +5,10 @@
  *   [1] Tampilkan 3 tombol platform (YouTube / TikTok / Spotify)
  *   [2] Owner memilih platform
  *   [3] Tampilkan ChannelSelectMenu
- *   [4] Owner memilih channel
- *   [5] Simpan ke DB → tampilkan konfirmasi + tombol Kembali
+ *   [4] Owner memilih channel → tampilkan konfirmasi pending + tombol 💾 Simpan
+ *   [5] Owner menekan Simpan → simpan ke DB → tampilkan konfirmasi berhasil
+ *
+ * Database tidak berubah sampai tombol Simpan ditekan.
  */
 
 import {
@@ -110,19 +112,39 @@ export function buildChannelSelectPanel(platform) {
   return { embed, components: [selectRow, backRow] };
 }
 
-// ── Step 3: Konfirmasi ────────────────────────────────────────────────────────
+// ── Step 3: Konfirmasi Pending (belum disimpan) ────────────────────────────────
+
+export function buildChannelPendingEmbed(platform, channelId) {
+  const { emoji, label } = PLATFORM_LABELS[platform];
+
+  return new EmbedBuilder()
+    .setColor(0xfaa61a)
+    .setTitle(`${emoji} ${label} — Menunggu Konfirmasi`)
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      `${emoji} **Platform**: ${label}\n` +
+      `📌 **Channel dipilih**: <#${channelId}>\n\n` +
+      "⚠️ **Konfigurasi belum disimpan.**\n" +
+      "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+}
+
+// ── Step 4: Konfirmasi Tersimpan ──────────────────────────────────────────────
 
 export function buildChannelSavedEmbed(platform, channelId) {
   const { emoji, label } = PLATFORM_LABELS[platform];
 
   return new EmbedBuilder()
     .setColor(0x57f287)
-    .setTitle(`✅ Channel ${label} Berhasil Diatur`)
+    .setTitle(`✅ Channel ${label} Berhasil Disimpan`)
     .setDescription(
       "━━━━━━━━━━━━━━━━━━\n\n" +
       `${emoji} **Platform**: ${label}\n` +
       `📌 **Channel**: <#${channelId}>\n\n` +
-      "Channel berhasil disimpan ke database.\n\n" +
+      "✅ Konfigurasi telah disimpan ke database.\n\n" +
       "━━━━━━━━━━━━━━━━━━"
     )
     .setFooter({ text: FOOTER })
@@ -131,6 +153,7 @@ export function buildChannelSavedEmbed(platform, channelId) {
 
 /**
  * Handle channel select interaction.
+ * Menampilkan "pending" dengan Simpan button — TIDAK langsung menyimpan ke DB.
  * @param {import("discord.js").ChannelSelectMenuInteraction} interaction
  * @param {string} platform — "youtube" | "tiktok" | "spotify"
  */
@@ -141,7 +164,39 @@ export async function handleChannelSelected(interaction, platform) {
     return;
   }
 
-  db.setChannel(platform, channel.id);
+  // Tampilkan pending embed — database belum diubah
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`bbsetup:channel:save:${platform}:${channel.id}`)
+      .setLabel("Simpan")
+      .setEmoji("💾")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`bbsetup:channel:${platform}`)
+      .setLabel("Pilih Ulang")
+      .setEmoji("🔄")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("bbsetup:channel")
+      .setLabel("Kembali")
+      .setEmoji("◀️")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  await interaction.update({
+    embeds:     [buildChannelPendingEmbed(platform, channel.id)],
+    components: [row],
+  });
+}
+
+/**
+ * Handle Simpan button — save pending channel selection to DB.
+ * @param {import("discord.js").ButtonInteraction} interaction
+ * @param {string} platform
+ * @param {string} channelId
+ */
+export async function handleChannelSave(interaction, platform, channelId) {
+  db.setChannel(platform, channelId);
 
   const backRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -157,7 +212,7 @@ export async function handleChannelSelected(interaction, platform) {
   );
 
   await interaction.update({
-    embeds:     [buildChannelSavedEmbed(platform, channel.id)],
+    embeds:     [buildChannelSavedEmbed(platform, channelId)],
     components: [backRow],
   });
 }

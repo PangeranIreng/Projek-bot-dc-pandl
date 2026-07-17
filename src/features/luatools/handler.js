@@ -2,7 +2,9 @@
  * src/features/luatools/handler.js — Message handler untuk Lua Tools.
  *
  * Menangani .lua file yang dikirim ke channel Obfuscator / Beautify / Deobfuscator.
- * Semua hasil dikirim via DM; log ke log channel masing-masing tool.
+ * Hasil dikirim via DM + reply di channel.
+ * Jika DM gagal, file tetap dikirim di channel dengan pesan peringatan.
+ * Log sukses dikirim ke log channel per-tool; log gagal dikirim ke Error Log.
  */
 
 import { AttachmentBuilder } from "discord.js";
@@ -19,6 +21,7 @@ import {
   buildProcessErrorEmbed,
   buildDmEmbed,
   buildLogEmbed,
+  buildErrorLogEmbed,
 } from "./embed.js";
 
 const MAX_FILE_SIZE = 1_000_000; // 1 MB
@@ -30,7 +33,7 @@ const MAX_FILE_SIZE = 1_000_000; // 1 MB
  * @param {import("discord.js").Message} message
  */
 export async function handleLuaToolsMessage(message) {
-  const channels = ltDB.getChannels();
+  const channels  = ltDB.getChannels();
   const channelId = message.channelId;
 
   // Determine which tool this channel belongs to
@@ -50,9 +53,7 @@ export async function handleLuaToolsMessage(message) {
 
   // ── Validate file type ───────────────────────────────────────────────────
   if (ext !== ".lua") {
-    // Delete user message silently
     try { await message.delete(); } catch { /* no permission */ }
-
     const errEmbed = buildWrongFileTypeEmbed(ext || "(tidak ada ekstensi)");
     const reply    = await message.channel.send({ embeds: [errEmbed] }).catch(() => null);
     if (reply) setTimeout(() => reply.delete().catch(() => {}), 8_000);
@@ -85,11 +86,16 @@ export async function handleLuaToolsMessage(message) {
     let fileBuffer;
     try {
       const res = await fetch(attachment.url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} saat mengunduh file`);
       fileBuffer = Buffer.from(await res.arrayBuffer());
     } catch (err) {
-      logger.warn(`[LuaTools] Gagal download file attachment: ${err.message}`);
-      if (statusMsg) await statusMsg.edit({ embeds: [buildProcessErrorEmbed(tool)] }).catch(() => {});
+      const reason = err.message ?? "Gagal mengunduh file dari Discord";
+      logger.warn(`[LuaTools] Gagal download file attachment: ${reason}`);
+      if (statusMsg) await statusMsg.edit({ embeds: [buildProcessErrorEmbed(tool, reason)] }).catch(() => {});
+      await _sendErrorLog(message.client, tool, {
+        user: message.author, guild: message.guildId, channel: channelId,
+        fileName, fileSize: attachment.size, reason,
+      });
       return;
     }
 
@@ -99,6 +105,8 @@ export async function handleLuaToolsMessage(message) {
     let resultBuffer;
     let outputFileName;
     let processError = null;
+    let httpStatus   = null;
+    let apiResponse  = null;
 
     if (tool === "beautify") {
       // Local beautify
@@ -121,6 +129,8 @@ export async function handleLuaToolsMessage(message) {
         resultBuffer = res.result;
       } else {
         processError = res.error;
+        httpStatus   = res.httpStatus ?? null;
+        apiResponse  = res.apiResponse ?? null;
       }
     }
 
@@ -131,22 +141,28 @@ export async function handleLuaToolsMessage(message) {
     if (processError || !resultBuffer) {
       logger.warn(`[LuaTools] ${tool} gagal: ${processError}`);
       if (statusMsg) {
-        await statusMsg.edit({ embeds: [buildProcessErrorEmbed(tool)] }).catch(() => {});
+        await statusMsg.edit({ embeds: [buildProcessErrorEmbed(tool, processError)] }).catch(() => {});
       }
-      // Log failure
-      await _sendLog(message.client, tool, {
-        user:       message.author,
-        inputFile:  fileName,
-        outputFile: outputFileName ?? `${fileName}.out`,
-        inputSize,
-        outputSize: 0,
-        duration:   durationSec,
-        status:     "Gagal",
+      // Send error log to error log channel
+      await _sendErrorLog(message.client, tool, {
+        user: message.author, guild: message.guildId, channel: channelId,
+        fileName, fileSize: inputSize,
+        reason: processError ?? "Unknown error",
+        httpStatus, apiResponse,
       });
+      // Also report to system error logger
+      await logError({
+        feature: `LuaTools — ${tool}`,
+        reason:  processError ?? "Unknown error",
+        stage:   "Process File",
+        user:    message.author?.id,
+        guild:   message.guildId,
+        channel: channelId,
+      }).catch(() => {});
       return;
     }
 
-    // ── Send result to DM ──────────────────────────────────────────────────
+    // ── Send result to DM + reply in channel ───────────────────────────────
     const fileAttachment = new AttachmentBuilder(resultBuffer, { name: outputFileName });
     const dmEmbed        = buildDmEmbed(tool, {
       inputFile:  fileName,
@@ -162,18 +178,27 @@ export async function handleLuaToolsMessage(message) {
       dmOk = false;
     }
 
-    // ── Update channel embed ────────────────────────────────────────────────
+    // ── Update channel embed + optional channel file delivery ───────────────
     if (statusMsg) {
       if (dmOk) {
+        // DM berhasil — edit embed di channel ke success
         await statusMsg.edit({ embeds: [buildChannelSuccessEmbed(tool)] }).catch(() => {});
       } else {
+        // DM gagal — edit embed + kirim file ke channel sebagai fallback
         await statusMsg.edit({ embeds: [buildDmFailedEmbed()] }).catch(() => {});
+        try {
+          // Kirim file ke channel sebagai fallback agar user tetap mendapatkan hasilnya
+          await message.channel.send({
+            content: `<@${message.author.id}> ⚠️ Gagal mengirim hasil ke DM. Aktifkan **Direct Message** lalu coba lagi.\nFile hasil tersedia di sini:`,
+            files:   [new AttachmentBuilder(resultBuffer, { name: outputFileName })],
+          });
+        } catch (sendErr) {
+          logger.warn(`[LuaTools] Gagal kirim file fallback ke channel: ${sendErr.message}`);
+        }
       }
     }
 
-    if (!dmOk) return; // Don't log if DM failed (nothing was delivered)
-
-    // ── Send log ───────────────────────────────────────────────────────────
+    // ── Send success log ───────────────────────────────────────────────────
     await _sendLog(message.client, tool, {
       user:       message.author,
       inputFile:  fileName,
@@ -187,8 +212,14 @@ export async function handleLuaToolsMessage(message) {
   } catch (err) {
     logger.error(`[LuaTools] Unexpected error in ${tool} handler:`, err);
     if (statusMsg) {
-      await statusMsg.edit({ embeds: [buildProcessErrorEmbed(tool)] }).catch(() => {});
+      await statusMsg.edit({ embeds: [buildProcessErrorEmbed(tool, err?.message)] }).catch(() => {});
     }
+    await _sendErrorLog(message.client, tool, {
+      user: message.author, guild: message.guildId, channel: channelId,
+      fileName, fileSize: attachment.size,
+      reason: err?.message ?? String(err),
+      stack:  err?.stack,
+    });
     await logError({
       feature: "LuaTools",
       reason:  err?.message ?? String(err),
@@ -203,9 +234,10 @@ export async function handleLuaToolsMessage(message) {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
+/** Send success log embed (with optional file attachment) to the tool's log channel. */
 async function _sendLog(client, tool, data, fileAttachment = null) {
   try {
-    const logChannels = ltDB.getLogChannels();
+    const logChannels  = ltDB.getLogChannels();
     const logChannelId = logChannels[tool];
     if (!logChannelId) return;
 
@@ -219,5 +251,21 @@ async function _sendLog(client, tool, data, fileAttachment = null) {
     await logCh.send(payload);
   } catch (err) {
     logger.warn(`[LuaTools] Gagal kirim log ${tool}: ${err.message}`);
+  }
+}
+
+/** Send error log embed to the tool's error log channel. */
+async function _sendErrorLog(client, tool, data) {
+  try {
+    const logChannels  = ltDB.getLogChannels();
+    const logChannelId = logChannels[tool];
+    if (!logChannelId) return;
+
+    const logCh = await client.channels.fetch(logChannelId).catch(() => null);
+    if (!logCh?.isTextBased()) return;
+
+    await logCh.send({ embeds: [buildErrorLogEmbed(tool, data)] });
+  } catch (err) {
+    logger.warn(`[LuaTools] Gagal kirim error log ${tool}: ${err.message}`);
   }
 }

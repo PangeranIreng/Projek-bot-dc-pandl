@@ -120,13 +120,45 @@ export function buildDmFailedEmbed() {
     .setFooter({ text: FOOTER });
 }
 
-export function buildProcessErrorEmbed(tool) {
+export function buildProcessErrorEmbed(tool, reason) {
   const [emoji, label] = _meta(tool);
+  // Show actual reason so the user knows what went wrong (API offline, timeout, invalid key, etc.)
+  const desc = reason
+    ? `**❌ Gagal memproses file**\n\n**Alasan:** ${reason}`
+    : "❌ Terjadi kesalahan saat memproses file. Coba lagi beberapa saat.";
   return new EmbedBuilder()
     .setColor(COLOR_ERROR)
     .setTitle(`${emoji} ${label} — Gagal`)
-    .setDescription("Terjadi kesalahan saat memproses file. Coba lagi beberapa saat.")
+    .setDescription(desc)
     .setFooter({ text: FOOTER });
+}
+
+export function buildErrorLogEmbed(tool, { user, guild, channel, fileName, fileSize, reason, httpStatus, apiResponse, stack }) {
+  const [emoji, label] = _meta(tool);
+  const now = new Date();
+  const fields = [
+    { name: "Feature",   value: `${emoji} ${label}`, inline: true },
+    { name: "User",      value: user ? `${user.tag ?? user.username}\n\`${user.id}\`` : "Unknown", inline: true },
+    { name: "Guild",     value: guild ?? "Unknown", inline: true },
+    { name: "Channel",   value: channel ? `<#${channel}>` : "Unknown", inline: true },
+    { name: "File",      value: fileName ? `\`${fileName}\`` : "Unknown", inline: true },
+    { name: "Ukuran",    value: fileSize ? _sz(fileSize) : "Unknown", inline: true },
+    { name: "Alasan",    value: (reason ?? "Unknown").slice(0, 512), inline: false },
+  ];
+  if (httpStatus) fields.push({ name: "HTTP Status", value: String(httpStatus), inline: true });
+  if (apiResponse) fields.push({ name: "API Response", value: apiResponse.slice(0, 512), inline: false });
+  if (stack) fields.push({ name: "Stack", value: `\`\`\`\n${stack.slice(0, 500)}\n\`\`\``, inline: false });
+  fields.push(
+    { name: "Tanggal", value: now.toLocaleDateString("id-ID", { year: "numeric", month: "long", day: "numeric" }), inline: true },
+    { name: "Jam",     value: now.toLocaleTimeString("id-ID"), inline: true },
+  );
+  return new EmbedBuilder()
+    .setColor(COLOR_ERROR)
+    .setTitle(`❌ Error Log — ${label}`)
+    .setDescription("━━━━━━━━━━━━━━━━━━")
+    .addFields(fields)
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

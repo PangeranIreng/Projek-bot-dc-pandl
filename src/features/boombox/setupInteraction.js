@@ -2,37 +2,56 @@
  * setupInteraction.js — Router untuk semua interaksi bbsetup:.
  *
  * Prefix routing:
- *   bbsetup:back                          → Kembali ke panel utama
- *   bbsetup:channel                       → Sub-panel pilih platform channel
- *   bbsetup:channel:<youtube|tiktok|spotify>  → Step 2: ChannelSelectMenu
- *   bbsetup:channel:select:<platform>     → ChannelSelectMenu result
- *   bbsetup:logs                          → Sub-panel BoomBox Logs
- *   bbsetup:logs:setchannel               → Ganti log channel
- *   bbsetup:logs:channel:select           → ChannelSelectMenu result
- *   bbsetup:duration                      → Sub-panel Batas Durasi
- *   bbsetup:dur:rolesel                   → Role select menu result
- *   bbsetup:dur:set:<roleId>:<minutes>    → Preset durasi
- *   bbsetup:dur:custom:<roleId>           → Buka modal custom durasi
- *   bbsetup:dur:reset:<roleId>            → Reset ke default
- *   bbsetup:dur:modal:<roleId>            → Modal submit
- *   bbsetup:maintenance                   → Sub-panel Maintenance
- *   bbsetup:maint:toggle:<platform|all>   → Toggle maintenance
+ *   bbsetup:back                                       → Kembali ke panel utama
+ *   bbsetup:edit                                       → Buka wizard dari configured panel
+ *   bbsetup:close                                      → Tutup panel
+ *   bbsetup:delete                                     → Konfirmasi hapus
+ *   bbsetup:delete:confirm                             → Reset semua config
+ *   bbsetup:delete:cancel                              → Batal hapus
+ *   bbsetup:channel                                    → Sub-panel pilih platform channel
+ *   bbsetup:channel:<youtube|tiktok|spotify>           → Step 2: ChannelSelectMenu
+ *   bbsetup:channel:select:<platform>                  → ChannelSelectMenu result (pending)
+ *   bbsetup:channel:save:<platform>:<channelId>        → 💾 Simpan channel ke DB
+ *   bbsetup:logs                                       → Sub-panel BoomBox Logs
+ *   bbsetup:logs:setchannel                            → Ganti global log channel
+ *   bbsetup:logs:channel:select                        → Global log ChannelSelectMenu result
+ *   bbsetup:logs:platcfg:<platform>                    → Per-platform log ChannelSelectMenu
+ *   bbsetup:logs:platcfg:select:<platform>             → Per-platform log select result (pending)
+ *   bbsetup:logs:platcfg:save:<platform>:<channelId>   → 💾 Simpan platform log channel
+ *   bbsetup:duration                                   → Sub-panel Batas Durasi
+ *   bbsetup:dur:rolesel                                → Role select menu result
+ *   bbsetup:dur:set:<roleId>:<minutes>                 → Preset durasi
+ *   bbsetup:dur:custom:<roleId>                        → Buka modal custom durasi
+ *   bbsetup:dur:reset:<roleId>                         → Reset ke default
+ *   bbsetup:dur:modal:<roleId>                         → Modal submit
+ *   bbsetup:maintenance                                → Sub-panel Maintenance
+ *   bbsetup:maint:toggle:<platform|all>                → Toggle maintenance
  */
 
 import { logger } from "../../utils/logger.js";
 import { db }     from "../../database/db.js";
 
-import { buildSetupBoomBoxPanel, buildMonitorEmbed }    from "./setup/panel.js";
+import {
+  buildSetupBoomBoxPanel,
+  buildConfiguredBoomBoxPanel,
+  buildDeleteConfirmPanel,
+  buildClosedEmbed,
+  buildMonitorEmbed,
+} from "./setup/panel.js";
 import {
   buildChannelPlatformPanel,
   buildChannelSelectPanel,
   handleChannelSelected,
+  handleChannelSave,
 } from "./setup/channelSetup.js";
 import {
   buildLogsPanel,
   buildLogChannelSelectPanel,
   handleLogChannelSelected,
   buildLogChannelSavedEmbed,
+  buildPlatformLogSelectPanel,
+  handlePlatformLogSelected,
+  handlePlatformLogSave,
 } from "./setup/logsSetup.js";
 import {
   buildDurationPanel,
@@ -62,7 +81,78 @@ export async function handleSetupBoomBoxInteraction(interaction) {
 
     // ── Kembali ke panel utama ────────────────────────────────────────────
     if (id === "bbsetup:back") {
+      const { embed, components } = db.isConfigured()
+        ? buildConfiguredBoomBoxPanel()
+        : buildSetupBoomBoxPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Edit konfigurasi (dari configured panel) ──────────────────────────
+    if (id === "bbsetup:edit") {
       const { embed, components } = buildSetupBoomBoxPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Tutup panel ───────────────────────────────────────────────────────
+    if (id === "bbsetup:close") {
+      await interaction.update({ embeds: [buildClosedEmbed()], components: [] });
+      return;
+    }
+
+    // ── Hapus konfigurasi: tampilkan konfirmasi ───────────────────────────
+    if (id === "bbsetup:delete") {
+      const { embed, components } = buildDeleteConfirmPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Hapus konfigurasi: Ya, Hapus ─────────────────────────────────────
+    if (id === "bbsetup:delete:confirm") {
+      // Reset semua setting channel dan log channel (bukan data history)
+      const settings = db.getSetting("channels") ? {} : null;
+      db.setChannel("youtube", null);
+      db.setChannel("tiktok",  null);
+      db.setChannel("spotify", null);
+      db.setLogChannel(null);
+      db.setPlatformLogChannel("youtube", null);
+      db.setPlatformLogChannel("tiktok",  null);
+      db.setPlatformLogChannel("spotify", null);
+      logger.info("[SetupBoomBox] Konfigurasi BoomBox dihapus oleh owner.");
+
+      const embed = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle("✅ Konfigurasi Berhasil Dihapus")
+        .setDescription(
+          "━━━━━━━━━━━━━━━━━━\n\n" +
+          "Seluruh konfigurasi channel BoomBox telah direset.\n\n" +
+          "Bot tidak akan memproses permintaan BoomBox sampai di-setup ulang.\n\n" +
+          "━━━━━━━━━━━━━━━━━━"
+        )
+        .setFooter({ text: "BoomBox V2 • Setup Panel" })
+        .setTimestamp();
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("bbsetup:edit")
+          .setLabel("Setup Ulang")
+          .setEmoji("✏️")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId("bbsetup:close")
+          .setLabel("Tutup")
+          .setEmoji("❌")
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+      await interaction.update({ embeds: [embed], components: [row] });
+      return;
+    }
+
+    // ── Hapus konfigurasi: Batal ──────────────────────────────────────────
+    if (id === "bbsetup:delete:cancel") {
+      const { embed, components } = buildConfiguredBoomBoxPanel();
       await interaction.update({ embeds: [embed], components });
       return;
     }
@@ -96,11 +186,19 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
-    // ChannelSelectMenu result
+    // ChannelSelectMenu result → tampilkan pending + Simpan button
     const chanSelMatch = /^bbsetup:channel:select:(youtube|tiktok|spotify)$/.exec(id);
     if (chanSelMatch && interaction.isChannelSelectMenu()) {
       const platform = chanSelMatch[1];
       await handleChannelSelected(interaction, platform);
+      return;
+    }
+
+    // 💾 Simpan channel → commit ke DB
+    const chanSaveMatch = /^bbsetup:channel:save:(youtube|tiktok|spotify):(\d+)$/.exec(id);
+    if (chanSaveMatch) {
+      const [, platform, channelId] = chanSaveMatch;
+      await handleChannelSave(interaction, platform, channelId);
       return;
     }
 
@@ -122,13 +220,37 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
+    // ── Per-platform log channel setup ────────────────────────────────────
+    const platCfgMatch = /^bbsetup:logs:platcfg:(youtube|tiktok|spotify)$/.exec(id);
+    if (platCfgMatch && !id.includes(":select:") && !id.includes(":save:")) {
+      const platform = platCfgMatch[1];
+      const { embed, components } = buildPlatformLogSelectPanel(platform);
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // Per-platform log ChannelSelectMenu result → pending
+    const platLogSelMatch = /^bbsetup:logs:platcfg:select:(youtube|tiktok|spotify)$/.exec(id);
+    if (platLogSelMatch && interaction.isChannelSelectMenu()) {
+      const platform = platLogSelMatch[1];
+      await handlePlatformLogSelected(interaction, platform);
+      return;
+    }
+
+    // 💾 Simpan per-platform log channel
+    const platLogSaveMatch = /^bbsetup:logs:platcfg:save:(youtube|tiktok|spotify):(\d+)$/.exec(id);
+    if (platLogSaveMatch) {
+      const [, platform, channelId] = platLogSaveMatch;
+      await handlePlatformLogSave(interaction, platform, channelId);
+      return;
+    }
+
     // ── Hapus Panel Lama ──────────────────────────────────────────────────
     if (id === "bbsetup:logs:deletepanel") {
       const logChannelId = db.getLogChannel() ?? null;
       const state        = db.getLogState();
       let   statusMsg    = "🗑️ Panel lama tidak ditemukan di database.";
 
-      // Coba hapus pesan panel lama jika ada
       if (state.messageId && logChannelId) {
         try {
           const logCh = await interaction.client.channels.fetch(logChannelId).catch(() => null);
@@ -147,10 +269,8 @@ export async function handleSetupBoomBoxInteraction(interaction) {
         }
       }
 
-      // Reset messageId di DB agar panel baru dibuat saat BoomBox berikutnya selesai
       db.setLogState({ messageId: null });
 
-      // Buat panel baru sekarang jika log channel sudah dikonfigurasi
       let panelCreated = false;
       if (logChannelId) {
         try {
@@ -198,7 +318,6 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       const newState = db.toggleMaintenance(platform);
       const label    = platform.charAt(0).toUpperCase() + platform.slice(1);
       logger.info(`[SetupBoomBox] Maintenance ${label}: ${newState ? "ON" : "OFF"} (toggled from Logs panel)`);
-      // Refresh the logs panel so button styles update
       const { embed, components } = buildLogsPanel();
       await interaction.update({ embeds: [embed], components });
       return;
@@ -216,7 +335,6 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
-    // Role select → tampilkan preset durasi
     if (id === "bbsetup:dur:rolesel" && interaction.isStringSelectMenu()) {
       const roleId = interaction.values[0];
       const role   = interaction.guild?.roles.cache.get(roleId)
@@ -230,7 +348,6 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
-    // Preset durasi button: bbsetup:dur:set:<roleId>:<minutes>
     const durSetMatch = /^bbsetup:dur:set:(\d+):(\d+)$/.exec(id);
     if (durSetMatch) {
       const [, roleId, minutesStr] = durSetMatch;
@@ -258,7 +375,6 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
-    // Custom durasi → buka modal
     const durCustomMatch = /^bbsetup:dur:custom:(\d+)$/.exec(id);
     if (durCustomMatch) {
       const roleId = durCustomMatch[1];
@@ -266,7 +382,6 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
-    // Reset durasi ke default
     const durResetMatch = /^bbsetup:dur:reset:(\d+)$/.exec(id);
     if (durResetMatch) {
       const roleId = durResetMatch[1];
@@ -288,7 +403,6 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
-    // Modal submit: bbsetup:dur:modal:<roleId>
     const durModalMatch = /^bbsetup:dur:modal:(\d+)$/.exec(id);
     if (durModalMatch && interaction.isModalSubmit()) {
       const roleId      = durModalMatch[1];

@@ -1,7 +1,13 @@
 /**
  * src/features/luatools/setup/logChannelSetup.js — Sub-panel: Setup Log Channel Lua Tools.
  *
- * Memilih log channel untuk masing-masing tool: Obfuscator, Beautify, Deobfuscator.
+ * Alur:
+ *   [1] Tampilkan 3 tombol tool log (Obfuscator Logs / Beautify Logs / Deobfuscator Logs)
+ *   [2] Pilih channel via ChannelSelectMenu
+ *   [3] Tampilkan konfirmasi pending + tombol 💾 Simpan
+ *   [4] Tekan Simpan → simpan ke DB
+ *
+ * Database tidak berubah sampai tombol Simpan ditekan.
  */
 
 import {
@@ -96,7 +102,7 @@ export function buildLogChannelSelectPanel(toolKey) {
   return { embed, components: [selectRow, backRow] };
 }
 
-// ── Handle log channel select result ─────────────────────────────────────
+// ── Handle log channel select result — tampilkan pending ──────────────────
 
 export async function handleLogChannelSelected(interaction, toolKey) {
   const tool    = TOOLS.find(t => t.key === toolKey);
@@ -106,14 +112,53 @@ export async function handleLogChannelSelected(interaction, toolKey) {
     return;
   }
 
-  ltDB.setLogChannel(toolKey, channel.id);
+  const embed = new EmbedBuilder()
+    .setColor(0xfaa61a)
+    .setTitle(`${tool.emoji} ${tool.label} — Menunggu Konfirmasi`)
+    .setDescription(
+      "━━━━━━━━━━━━━━━━━━\n\n" +
+      `📌 **Channel dipilih**: <#${channel.id}>\n\n` +
+      "⚠️ **Konfigurasi belum disimpan.**\n" +
+      "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
+      "━━━━━━━━━━━━━━━━━━"
+    )
+    .setFooter({ text: FOOTER })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ltsetup:logs:save:${toolKey}:${channel.id}`)
+      .setLabel("Simpan")
+      .setEmoji("💾")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`ltsetup:logs:${toolKey}`)
+      .setLabel("Pilih Ulang")
+      .setEmoji("🔄")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ltsetup:logs")
+      .setLabel("Kembali")
+      .setEmoji("◀️")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  await interaction.update({ embeds: [embed], components: [row] });
+}
+
+// ── Handle Simpan button — commit ke DB ───────────────────────────────────
+
+export async function handleLogChannelSave(interaction, toolKey, channelId) {
+  const tool = TOOLS.find(t => t.key === toolKey);
+  ltDB.setLogChannel(toolKey, channelId);
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
-    .setTitle("✅ Log Channel Berhasil Diatur")
+    .setTitle("✅ Log Channel Berhasil Disimpan")
     .setDescription(
       "━━━━━━━━━━━━━━━━━━\n\n" +
-      `${tool.emoji} **${tool.label}** → <#${channel.id}>\n\n` +
+      `${tool.emoji} **${tool.label}** → <#${channelId}>\n\n` +
+      "✅ Konfigurasi telah disimpan ke database.\n\n" +
       "━━━━━━━━━━━━━━━━━━"
     )
     .setFooter({ text: FOOTER })

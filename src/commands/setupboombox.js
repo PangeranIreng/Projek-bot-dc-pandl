@@ -3,11 +3,19 @@
  *
  * Panel terpusat untuk seluruh konfigurasi BoomBox V2.
  * Hanya Owner yang dapat menggunakan command ini.
+ *
+ * Jika konfigurasi sudah ada → tampilkan panel "Sudah Dikonfigurasi"
+ * dengan tombol Edit / Hapus / Tutup.
+ * Jika belum ada → tampilkan wizard setup.
  */
 
 import { SlashCommandBuilder } from "discord.js";
 import { denyIfNotOwner }      from "../middleware/permissions.js";
-import { buildSetupBoomBoxPanel } from "../features/boombox/setup/panel.js";
+import { db }                  from "../database/db.js";
+import {
+  buildConfiguredBoomBoxPanel,
+  buildSetupBoomBoxPanel,
+} from "../features/boombox/setup/panel.js";
 
 export const data = new SlashCommandBuilder()
   .setName("setupboombox")
@@ -19,10 +27,13 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   if (await denyIfNotOwner(interaction)) return;
 
-  const { embed, components } = buildSetupBoomBoxPanel();
+  const panel = db.isConfigured()
+    ? buildConfiguredBoomBoxPanel()
+    : buildSetupBoomBoxPanel();
+
   await interaction.reply({
-    embeds:    [embed],
-    components,
+    embeds:    [panel.embed],
+    components: panel.components,
     ephemeral: true,
   });
 }

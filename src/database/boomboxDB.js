@@ -26,6 +26,12 @@ const DEFAULT_DB = {
     },
     // V2: Single log channel ID (null = belum di-setup, fallback ke config hardcode)
     logChannel: null,
+    // V3: Per-platform log channel IDs (null = tidak dikonfigurasi)
+    platformLogChannels: {
+      youtube: null,
+      tiktok:  null,
+      spotify: null,
+    },
     // V2: Maintenance per platform (false = aktif/normal)
     maintenance: {
       youtube: false,
@@ -95,6 +101,10 @@ export class BoomBoxDB {
           channels: {
             ...def.settings.channels,
             ...(parsed.settings?.channels ?? {}),
+          },
+          platformLogChannels: {
+            ...def.settings.platformLogChannels,
+            ...(parsed.settings?.platformLogChannels ?? {}),
           },
           maintenance: {
             ...def.settings.maintenance,
@@ -312,6 +322,17 @@ export class BoomBoxDB {
     this._save();
   }
 
+  // ── V3: isConfigured ────────────────────────────────────────────────────
+
+  /**
+   * Returns true if at least one BoomBox platform channel has been configured.
+   * Used by /setupboombox to show "already configured" view.
+   */
+  isConfigured() {
+    const ch = this._data.settings?.channels ?? {};
+    return !!(ch.youtube || ch.tiktok || ch.spotify);
+  }
+
   // ── V2: Log channel ──────────────────────────────────────────────────────
 
   /** @returns {string|null} */
@@ -323,6 +344,33 @@ export class BoomBoxDB {
   setLogChannel(channelId) {
     if (!this._data.settings) this._data.settings = {};
     this._data.settings.logChannel = channelId;
+    this._save();
+  }
+
+  // ── V3: Per-platform log channels ────────────────────────────────────────
+
+  /**
+   * Get per-platform log channel IDs.
+   * @returns {{ youtube: string|null, tiktok: string|null, spotify: string|null }}
+   */
+  getPlatformLogChannels() {
+    return {
+      youtube: null,
+      tiktok:  null,
+      spotify: null,
+      ...(this._data.settings?.platformLogChannels ?? {}),
+    };
+  }
+
+  /**
+   * Set log channel for a specific platform.
+   * @param {"youtube"|"tiktok"|"spotify"} platform
+   * @param {string|null} channelId
+   */
+  setPlatformLogChannel(platform, channelId) {
+    if (!this._data.settings) this._data.settings = {};
+    if (!this._data.settings.platformLogChannels) this._data.settings.platformLogChannels = {};
+    this._data.settings.platformLogChannels[platform] = channelId ?? null;
     this._save();
   }
 

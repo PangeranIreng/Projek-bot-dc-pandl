@@ -246,6 +246,106 @@ function withStageTimeout(promiseOrFactory, ms, stageLabel) {
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
+// ── Per-platform log channel sending ─────────────────────────────────────────
+
+const PLATFORM_COLORS = {
+  YouTube: 0xff0000,
+  TikTok:  0x69c9d0,
+  Spotify: 0x1db954,
+};
+
+/**
+ * Send a success log embed to the platform-specific log channel.
+ * @param {import("discord.js").Client} client
+ * @param {string} platform  "YouTube" | "TikTok" | "Spotify"
+ * @param {import("discord.js").Message} message
+ * @param {object} entry
+ */
+async function _sendPlatformLog(client, platform, message, entry) {
+  const platformLogChannels = db.getPlatformLogChannels();
+  const logChannelId = platformLogChannels[platform.toLowerCase()];
+  if (!logChannelId) return;
+
+  const logCh = await client.channels.fetch(logChannelId).catch(() => null);
+  if (!logCh?.isTextBased()) return;
+
+  const now          = new Date();
+  const durationFmt  = entry.duration
+    ? `${Math.floor(entry.duration / 60)}m ${entry.duration % 60}s`
+    : "-";
+
+  const embed = new EmbedBuilder()
+    .setColor(PLATFORM_COLORS[platform] ?? 0x5865f2)
+    .setTitle(`🎵 BoomBox Log — ${platform}`)
+    .setDescription("━━━━━━━━━━━━━━━━━━")
+    .addFields(
+      { name: "Platform",    value: platform,                                                           inline: true  },
+      { name: "User",        value: `${message.author.tag ?? message.author.username}\n\`${message.author.id}\``, inline: true },
+      { name: "Guild",       value: message.guild?.name ?? message.guildId ?? "Unknown",                inline: true  },
+      { name: "Channel",     value: `<#${message.channelId}>`,                                          inline: true  },
+      { name: "Judul Lagu",  value: (entry.title ?? "Unknown").slice(0, 256),                           inline: false },
+      { name: "URL Asli",    value: (entry.originalUrl ?? "-").slice(0, 512),                           inline: false },
+      { name: "BoomBox URL", value: (entry.boomboxUrl  ?? "-").slice(0, 512),                           inline: false },
+      { name: "Durasi",      value: durationFmt,                                                        inline: true  },
+      { name: "Provider",    value: entry.provider ?? "-",                                              inline: true  },
+      { name: "Status",      value: "✅ Berhasil",                                                      inline: true  },
+      {
+        name:   "Tanggal",
+        value:  now.toLocaleDateString("id-ID", { year: "numeric", month: "long", day: "numeric" }),
+        inline: true,
+      },
+      { name: "Jam", value: now.toLocaleTimeString("id-ID"), inline: true },
+    )
+    .setFooter({ text: "BoomBox V3 • Platform Log" })
+    .setTimestamp();
+
+  await logCh.send({ embeds: [embed] }).catch(err => {
+    logger.warn(`[BoomBox] Gagal kirim platform log ${platform}: ${err.message}`);
+  });
+}
+
+/**
+ * Send a failure log embed to the platform-specific log channel.
+ * @param {import("discord.js").Client} client
+ * @param {string} platform
+ * @param {import("discord.js").Message} message
+ * @param {{ stage: string, error: Error }} info
+ */
+async function _sendPlatformFailureLog(client, platform, message, { stage, error }) {
+  const platformLogChannels = db.getPlatformLogChannels();
+  const logChannelId = platformLogChannels[platform.toLowerCase()];
+  if (!logChannelId) return;
+
+  const logCh = await client.channels.fetch(logChannelId).catch(() => null);
+  if (!logCh?.isTextBased()) return;
+
+  const now = new Date();
+  const embed = new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle(`❌ BoomBox Error Log — ${platform}`)
+    .setDescription("━━━━━━━━━━━━━━━━━━")
+    .addFields(
+      { name: "Platform", value: platform,                                                                     inline: true  },
+      { name: "User",     value: `${message.author.tag ?? message.author.username}\n\`${message.author.id}\``, inline: true  },
+      { name: "Guild",    value: message.guild?.name ?? message.guildId ?? "Unknown",                          inline: true  },
+      { name: "Channel",  value: `<#${message.channelId}>`,                                                    inline: true  },
+      { name: "Stage",    value: stage ?? "Unknown",                                                           inline: true  },
+      { name: "Reason",   value: (error?.message ?? String(error)).slice(0, 512),                              inline: false },
+      {
+        name:   "Tanggal",
+        value:  now.toLocaleDateString("id-ID", { year: "numeric", month: "long", day: "numeric" }),
+        inline: true,
+      },
+      { name: "Jam",   value: now.toLocaleTimeString("id-ID"),                                                 inline: true  },
+    )
+    .setFooter({ text: "BoomBox V3 • Error Log" })
+    .setTimestamp();
+
+  await logCh.send({ embeds: [embed] }).catch(err => {
+    logger.warn(`[BoomBox] Gagal kirim platform failure log ${platform}: ${err.message}`);
+  });
+}
+
 function tryCleanup(tmpDir) {
   if (!tmpDir) return;
   try {
@@ -714,6 +814,9 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     currentStage = "Update BoomBox Log";
     await appendToLog(message.client, entry);
 
+    // ── Send to per-platform log channel ──────────────────────────────────
+    await _sendPlatformLog(message.client, platform, message, entry).catch(() => {});
+
     logger.info(`[BoomBox] ✅ Done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s | ${boomboxUrl}`);
 
   } catch (err) {
@@ -728,6 +831,12 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       stage:    currentStage,
       error:    err,
       provider: ytResult?.provider ?? "unknown",
+    }).catch(() => {});
+
+    // Send failure to platform-specific log channel
+    await _sendPlatformFailureLog(message.client, platform ?? "Unknown", message, {
+      stage: currentStage,
+      error: err,
     }).catch(() => {});
 
     if (resultSent) {
