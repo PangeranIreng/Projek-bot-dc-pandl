@@ -1,5 +1,6 @@
 # Memory Index
 
+- [BoomBox V3 Worker Architecture](boombox-v3-worker-architecture.md) — multi-platform workers, priority queue, retry, resource monitor, health checks, /workerstatus command.
 - [Lua Tools Architecture](luatools-architecture.md) — file layout, DB singleton, interaction prefix `ltsetup:`, and API env vars for the Lua Tools feature.
 
 - [DATABASE system](database-system.md) — arsitektur sistem DATABASE baru: 7 file baru, prefix `db:`, setup flow, panel Bot Setting/Backup/Console/Member List.

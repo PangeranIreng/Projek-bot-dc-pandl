@@ -467,4 +467,24 @@ export class BoomBoxDB {
       .sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0));
     return entries.slice(0, limit);
   }
+
+  // ── V3: Persistent worker config ─────────────────────────────────────────
+
+  /**
+   * Get saved worker config overrides (set via /workerstatus or updateWorkerConfig).
+   * @returns {{ [workerName: string]: { maxConcurrent?: number, timeoutMs?: number, maxRetries?: number } }}
+   */
+  getWorkerConfig() {
+    return { ...(this._data.settings?.workerConfig ?? {}) };
+  }
+
+  /**
+   * Persist worker config overrides so they survive restarts.
+   * @param {{ [workerName: string]: object }} config
+   */
+  setWorkerConfig(config) {
+    if (!this._data.settings) this._data.settings = {};
+    this._data.settings.workerConfig = config;
+    this._save();
+  }
 }

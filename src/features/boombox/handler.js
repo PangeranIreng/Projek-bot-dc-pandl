@@ -30,6 +30,8 @@ import {
 } from "discord.js";
 
 import { BOOMBOX_CONFIG, ALLOWED_ROLES, UNLIMITED_ROLES } from "./config.js";
+import { OWNER_ROLE_ID, DEVELOPER_ROLE_ID, PREMIUM_ROLE_ID } from "../../../config/roles.js";
+import { OWNER_USER_IDS, DEVELOPER_USER_IDS } from "../../../config/owner.js";
 import { ytdl, getVideoInfo }  from "../../services/ytmp3gg.js";
 import { top4top }             from "../../services/top4top.js";
 import { db, premDB }          from "../../database/db.js";
@@ -47,7 +49,7 @@ import {
 } from "./embed.js";
 import { storeErrorDetail } from "./errorStore.js";
 import { updateBoomBoxLogDashboard } from "../logs/logDashboard.js";
-import { enqueueBoomBoxJob } from "../queue/boomboxQueue.js";
+import { enqueueForPlatform, PRIORITY } from "../queue/boomboxQueue.js";
 import { logError } from "../../utils/errorLogger.js";
 import { logger }   from "../../utils/logger.js";
 
@@ -59,6 +61,36 @@ const MAX_DEDUP     = 200;
 
 /** Default maximum video duration (seconds) — used when no role limit configured. */
 const DEFAULT_MAX_DURATION_SEC = 25 * 60; // 25 minutes
+
+// ── V3: Stage-level retry ─────────────────────────────────────────────────────
+
+/**
+ * Retry a failing async operation up to `maxAttempts` times with
+ * exponential back-off. Does not retry on BOOMBOX_STAGE_TIMEOUT errors.
+ *
+ * @param {() => Promise<any>} fn
+ * @param {number} maxAttempts  Default 3
+ * @param {string} label        For log messages
+ * @returns {Promise<any>}
+ */
+async function withRetry(fn, maxAttempts = 3, label = "") {
+  let lastErr;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      // Don't retry hard timeouts (stage timeout already consumed the window)
+      if (err?.code === "BOOMBOX_STAGE_TIMEOUT") throw err;
+      if (i < maxAttempts - 1) {
+        const backoffMs = 2_000 * (i + 1);
+        logger.warn(`[BoomBox] ⚠ Retry ${i + 1}/${maxAttempts} for "${label}": ${err.message} — wait ${backoffMs}ms`);
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
+    }
+  }
+  throw lastErr;
+}
 
 // ── URL helpers ───────────────────────────────────────────────────────────────
 
@@ -133,6 +165,24 @@ function resolveBoomBoxChannel(channelId) {
 function isPlatformInMaintenance(platform) {
   const maint = db.getMaintenance();
   return maint[platform.toLowerCase()] === true;
+}
+
+// ── V3: Priority detection ────────────────────────────────────────────────────
+
+/**
+ * Determine job priority for a GuildMember.
+ * Lower number = processed first.
+ *   0 = Owner, 1 = Developer, 2 = Premium, 3 = Free
+ */
+function getJobPriority(member) {
+  if (!member) return PRIORITY.FREE;
+  const userId = member.id;
+  if (OWNER_USER_IDS.includes(userId))     return PRIORITY.OWNER;
+  if (DEVELOPER_USER_IDS.includes(userId)) return PRIORITY.DEVELOPER;
+  if (member.roles.cache.has(OWNER_ROLE_ID))     return PRIORITY.OWNER;
+  if (member.roles.cache.has(DEVELOPER_ROLE_ID)) return PRIORITY.DEVELOPER;
+  if (member.roles.cache.has(PREMIUM_ROLE_ID))   return PRIORITY.PREMIUM;
+  return PRIORITY.FREE;
 }
 
 // ── Role / Premium helpers ────────────────────────────────────────────────────
@@ -436,27 +486,31 @@ export async function handleBoomBoxMessage(message) {
     }
   }
 
-  // ── [2] Enter the BoomBox queue ───────────────────────────────────────────
+  // ── [2] Enter the BoomBox queue (V3 — per-platform worker + priority) ────
   const queueNotice = newQueueNoticeState();
+  const priority    = getJobPriority(member);
 
   try {
-    await enqueueBoomBoxJob(
+    await enqueueForPlatform(
+      platform,
+      priority,
       () => runBoomBoxJob(message, url, platform, userMention, unlimited, limit, member),
       {
         onQueued: (position, total, etaSec) => renderQueueNotice(queueNotice, message, position, total, etaSec),
         onStart:  () => clearQueueNotice(queueNotice),
+        jobId:    `${platform.toLowerCase()}-${message.author.id}-${message.id}`,
       },
     );
   } catch (err) {
-    logger.error(`[BoomBox] Job aborted by queue safety timeout for msg=${message.id}: ${err.message}`);
+    logger.error(`[BoomBox] Job aborted for msg=${message.id}: ${err.message}`);
     await logError({
       feature: "BoomBox",
-      reason:  `Job aborted by queue safety timeout: ${err.message}`,
-      stage:   "Queue Safety Timeout",
+      reason:  `Job aborted: ${err.message}`,
+      stage:   "Queue / Worker Failure",
       error:   err,
     }).catch(() => {});
     await message.channel.send({
-      content: `${userMention} ❌ Proses BoomBox kamu gagal (timeout) dan telah dibatalkan. Silakan coba kirim link-nya lagi.`,
+      content: `${userMention} ❌ Proses BoomBox kamu gagal dan telah dibatalkan. Silakan coba kirim link-nya lagi.`,
     }).catch(() => {});
   } finally {
     await clearQueueNotice(queueNotice);
@@ -568,16 +622,20 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       await editStep(2);
       logger.info(`[BoomBox] ── Downloading | ${platform} | ${downloadUrl}`);
       const downloadStart = Date.now();
-      ytResult = await withStageTimeout(
-        (signal) => ytdl(
-          downloadUrl,
-          BOOMBOX_CONFIG.AUDIO_TYPE,
-          BOOMBOX_CONFIG.AUDIO_QUALITY,
-          (label) => editStep(2, label),
-          signal,
+      ytResult = await withRetry(
+        () => withStageTimeout(
+          (signal) => ytdl(
+            downloadUrl,
+            BOOMBOX_CONFIG.AUDIO_TYPE,
+            BOOMBOX_CONFIG.AUDIO_QUALITY,
+            (label) => editStep(2, label),
+            signal,
+          ),
+          5 * 60_000,
+          "Download audio",
         ),
-        5 * 60_000,
-        "Download audio",
+        3,
+        "Download Audio",
       );
       downloadMs = Date.now() - downloadStart;
       tmpDir = ytResult.tmpDir;
@@ -592,7 +650,11 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       currentStage = "Upload to Top4Top";
       await editStep(3);
       const uploadStart = Date.now();
-      const t4tResult   = await withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top");
+      const t4tResult   = await withRetry(
+        () => withStageTimeout(top4top(ytResult.localFile), 5 * 60_000, "Upload ke Top4Top"),
+        3,
+        "Upload to Top4Top",
+      );
       uploadMs          = Date.now() - uploadStart;
       logger.info(`[BoomBox] ── Upload Top4Top | ${uploadMs}ms`);
 

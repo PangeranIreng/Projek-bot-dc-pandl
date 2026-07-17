@@ -16,6 +16,8 @@ import { initBinary }         from "../services/ytmp3gg.js";
 import { initConsole, consoleLog }  from "../features/database/console.js";
 import { refreshPanelsOnStartup }   from "../features/database/interaction.js";
 import { runBoomBoxLogsMigrationV2 } from "../features/boombox/logs/migration.js";
+import { initWorkerManager, setWorkerManagerClient } from "../features/queue/workerManager.js";
+import { db } from "../database/db.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -79,4 +81,14 @@ export async function handleReady(client, secrets, state) {
   runBoomBoxLogsMigrationV2(client).catch((err) => {
     logger.warn(`[BoomBox Migration] Migration gagal (non-fatal): ${err?.message}`);
   });
+
+  // V3: Initialize all platform workers + resource monitor + health checks.
+  // Must run after bot is ready so that health checks can inspect channels.
+  try {
+    initWorkerManager(db);
+    setWorkerManagerClient(client);
+    logger.info("[WorkerManager] All workers initialized and health checks started.");
+  } catch (err) {
+    logger.error(`[WorkerManager] Init failed (non-fatal): ${err?.message}`);
+  }
 }
