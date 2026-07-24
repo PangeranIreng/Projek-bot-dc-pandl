@@ -81,25 +81,7 @@ const USAGE = {
   // 🎵 BoomBox
   // (BoomBox is triggered by sending a YouTube/TikTok link in the BoomBox channel — no slash command)
 
-  // 🎫 Ticket
-  cticket: {
-    category: "ticket",
-    emoji: "🎫",
-    summary: "Konfigurasi sistem Open Ticket (panel, logs, mention role). Owner/Developer.",
-    examples: ["`/cticket panel_channel:#tiket logs_channel:#log-tiket mention_role:@Staff`"],
-  },
-  delcticket: {
-    category: "ticket",
-    emoji: "🗑️",
-    summary: "Hapus panel, dashboard, dan konfigurasi Ticket System. Owner only.",
-    examples: ["`/delcticket`"],
-  },
-  setclaimticket: {
-    category: "ticket",
-    emoji: "🎫",
-    summary: "Atur channel Staff Control — notifikasi & tombol Claim/Close/Transcript/Delete dikirim ke sini.",
-    examples: ["`/setclaimticket channel:#staff-control role:@Owner`"],
-  },
+  // 🎫 Ticket (dikonfigurasi via /setup → 🎫 Ticket)
 
   // 🧵 Thread
   thread: {
@@ -113,19 +95,7 @@ const USAGE = {
     ],
   },
 
-  // 🐞 Report (under admin)
-  cbug: {
-    category: "admin",
-    emoji: "🐞",
-    summary: "Konfigurasi Report Center — panel Bug Report & Feature Request. Owner only.",
-    examples: ["`/cbug panel_channel:#lapor logs_channel:#log-lapor developer_role:@Dev`"],
-  },
-  delcbug: {
-    category: "admin",
-    emoji: "🗑️",
-    summary: "Hapus panel dan konfigurasi Report Center. Owner only.",
-    examples: ["`/delcbug`"],
-  },
+  // 🐞 Report (dikonfigurasi via /setup → 🐞 Bug & Feature)
 
   // 👑 Premium
   addprem: {
@@ -177,12 +147,20 @@ const USAGE = {
     ],
   },
 
-  // 📊 Database
+  // ⚙️ Setup (Panel Admin terpusat)
   setup: {
-    category: "database",
-    emoji: "📊",
-    summary: "Buka menu admin untuk mengatur panel Database (Bot Setting, Backup, Console, Member List). Owner/Developer only.",
-    examples: ["`/setup`"],
+    category: "admin",
+    emoji: "⚙️",
+    summary: "Buka Panel Admin terpusat — konfigurasi Database, BoomBox, Lua Tools, Ticket, Bug & Feature, dan Premium Stats. Owner/Developer only.",
+    examples: [
+      "`/setup` → Buka Panel Admin",
+      "📊 Database → Bot Setting, Backup, Console, Member List",
+      "🎵 BoomBox → Channel, log, maintenance, dan pengaturan worker",
+      "📜 Lua Tools → Channel Obfuscator, Beautify, Deobfuscator",
+      "🎫 Ticket → Panel, log, mention role, dan claim channel",
+      "🐞 Bug & Feature → Panel, log, dan developer role",
+      "👑 Premium Stats → Pilih channel panel statistik",
+    ],
   },
 
   // ℹ️ General
@@ -193,21 +171,9 @@ const USAGE = {
     examples: ["`/help`"],
   },
 
-  // 📜 Lua Tools
-  setupluatools: {
-    category: "luatools",
-    emoji: "📜",
-    summary: "Buka panel konfigurasi Lua Tools — atur channel dan log channel untuk Obfuscator, Beautify, dan Deobfuscator. Owner/Developer only.",
-    examples: ["`/setupluatools`"],
-  },
+  // 📜 Lua Tools (dikonfigurasi via /setup → 📜 Lua Tools)
 
   // ⚙️ Admin
-  premstats: {
-    category: "admin",
-    emoji: "👑",
-    summary: "Buat panel Premium Statistics di channel yang dipilih. Owner/Developer only.",
-    examples: ["`/premstats channel:#premium-stats` → Buat panel di channel tersebut"],
-  },
   cc: {
     category: "admin",
     emoji: "🗑️",
@@ -304,7 +270,7 @@ function buildCategoryEmbed(categoryKey, commands) {
       "• YouTube: `youtube.com`, `youtu.be`, `music.youtube.com`",
       "• TikTok: `tiktok.com`, `vt.`, `vm.`, `m.tiktok.com`",
       "",
-      "**Queue:** Max 5 proses bersamaan. Request ke-6+ masuk antrean FIFO — kamu dapat notifikasi DM.",
+      "**Queue:** Max 5 proses bersamaan. Request ke-6+ masuk antrean FIFO — notifikasi tampil di channel.",
     ].join("\n"),
     scanner: [
       "Upload file ke channel Scanner — bot akan analisis otomatis.",
@@ -343,31 +309,33 @@ function buildCategoryEmbed(categoryKey, commands) {
       "• 📄 **Console** — Riwayat aktivitas bot (pesan baru, bukan edit)",
       "• 👥 **Member List** — Statistik member, premium, CEO",
       "",
-      "Gunakan `/setup` untuk mengkonfigurasi channel masing-masing panel.",
+      "Gunakan `/setup` → 📊 Database untuk mengkonfigurasi channel masing-masing panel.",
     ].join("\n"),
     luatools: [
       "Kirim file **\\.lua** ke channel yang sudah dikonfigurasi — bot akan proses otomatis.",
       "",
       "**🔒 Obfuscator**",
       "Menggunakan API eksternal. Kirim file `.lua` ke channel Obfuscator.",
-      "Hasil dikirim ke DM dalam format `nama_obf.lua`.",
+      "Hasil dikirim langsung ke channel dalam format `nama_obf.lua`.",
       "",
       "**🧹 Beautify**",
       "Pemrosesan lokal. Kirim file `.lua` ke channel Beautify.",
       "Bot akan merapikan indentasi dan format kode secara otomatis.",
-      "Hasil dikirim ke DM dalam format `nama_beautify.lua`.",
+      "Hasil dikirim langsung ke channel dalam format `nama_beautify.lua`.",
       "",
       "**🔓 Deobfuscator**",
       "Menggunakan API eksternal. Kirim file `.lua` ke channel Deobfuscator.",
-      "Hasil dikirim ke DM dalam format `nama_deobf.lua`.",
+      "Hasil dikirim langsung ke channel dalam format `nama_deobf.lua`.",
       "",
       "**Format file:** ✅ `.lua` saja — `.luac` tidak didukung.",
-      "**Hasil:** Selalu dikirim ke DM. Pastikan DM diaktifkan.",
+      "**Hasil:** Dikirim langsung ke channel, tidak via DM.",
       "",
-      "Gunakan `/setupluatools` untuk mengkonfigurasi channel.",
+      "Gunakan `/setup` → 📜 Lua Tools untuk mengkonfigurasi channel.",
     ].join("\n"),
     admin: [
       "Perintah konfigurasi sistem — Owner/Developer only.",
+      "",
+      "Gunakan `/setup` untuk membuka Panel Admin terpusat dan mengkonfigurasi semua sistem bot dari satu tempat.",
     ].join("\n"),
     general: [
       "Perintah umum yang dapat digunakan semua member.",

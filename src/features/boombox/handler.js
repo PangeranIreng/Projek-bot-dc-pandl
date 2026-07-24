@@ -385,19 +385,11 @@ function buildErrorDetailButton(detailId) {
 // ── Queue notice delivery ─────────────────────────────────────────────────────
 
 function newQueueNoticeState() {
-  return { dm: null, channelMsg: null };
+  return { channelMsg: null };
 }
 
 async function renderQueueNotice(state, message, position, total, etaSec) {
   const embed = buildQueueEmbed(message.author, position, total, etaSec);
-
-  if (state.dm) {
-    try { await state.dm.edit({ embeds: [embed] }); return; } catch { state.dm = null; }
-  } else {
-    try { state.dm = await message.author.send({ embeds: [embed] }); return; } catch {
-      logger.debug(`[BoomBox Queue] Could not DM ${message.author.id} — channel fallback`);
-    }
-  }
 
   try {
     if (state.channelMsg) {
@@ -411,7 +403,6 @@ async function renderQueueNotice(state, message, position, total, etaSec) {
 }
 
 async function clearQueueNotice(state) {
-  if (state.dm)         await state.dm.delete().catch(() => {});
   if (state.channelMsg) await state.channelMsg.delete().catch(() => {});
 }
 
@@ -574,13 +565,9 @@ export async function handleBoomBoxMessage(message) {
           "━━━━━━━━━━━━━━━━━━"
         );
 
-      let dmSent = false;
-      try { await message.author.send({ embeds: [limitEmbed] }); dmSent = true; } catch {}
-      if (!dmSent) {
-        message.reply({ embeds: [limitEmbed] })
-          .then((reply) => setTimeout(() => reply.delete().catch(() => {}), 10_000))
-          .catch(() => {});
-      }
+      message.channel.send({ content: `<@${message.author.id}>`, embeds: [limitEmbed] })
+        .then((reply) => setTimeout(() => reply.delete().catch(() => {}), 12_000))
+        .catch(() => {});
       processingSet.delete(message.id);
       return;
     }

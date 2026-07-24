@@ -1,49 +1,30 @@
 /**
- * commands/setup.js — /setup slash command.
+ * commands/setup.js — /setup slash command (Panel Admin Terpusat).
  *
- * Jika setup BELUM ADA → tampilkan Wizard Setup.
- * Jika sudah ada       → tampilkan Database Manager.
+ * Menggantikan: /setup (Database), /setupboombox, /setupluatools,
+ *               /cticket, /cbug, /delcbug, /delcticket, /setclaimticket, /premstats
  *
- * Seluruh logika setup ada di src/features/database/interaction.js
- * yang menangani interaksi lanjutan dengan prefix "db:".
- *
+ * Semua konfigurasi bot ada di satu command ini.
  * Hanya bisa digunakan oleh Owner / Developer.
  */
 
 import { SlashCommandBuilder } from "discord.js";
 import { denyIfNotStaff }      from "../middleware/permissions.js";
-import { databaseDB }          from "../database/databaseDB.js";
-import {
-  buildSetupWizardEmbed,
-  buildSetupWizardComponents,
-  buildSetupManageEmbed,
-  buildSetupManageComponents,
-} from "../features/database/embed.js";
+import { buildMainSetupEmbed, buildMainSetupComponents } from "../features/setup/adminSetup.js";
 
 export const data = new SlashCommandBuilder()
   .setName("setup")
-  .setDescription("Buka menu admin untuk mengatur panel Database dan sistem bot");
+  .setDescription("Buka Panel Admin untuk mengatur seluruh konfigurasi bot (Owner/Developer only)");
 
 /**
  * @param {import("discord.js").ChatInputCommandInteraction} interaction
  */
 export async function execute(interaction) {
-  // Hanya Owner / Developer yang dapat menggunakan command ini
   if (await denyIfNotStaff(interaction)) return;
 
-  if (databaseDB.isSetup()) {
-    // Sudah setup — langsung tampilkan Database Manager
-    await interaction.reply({
-      embeds:     [buildSetupManageEmbed(databaseDB.get())],
-      components: buildSetupManageComponents(),
-      ephemeral:  true,
-    });
-  } else {
-    // Belum setup — tampilkan Wizard Setup
-    await interaction.reply({
-      embeds:     [buildSetupWizardEmbed()],
-      components: buildSetupWizardComponents(),
-      ephemeral:  true,
-    });
-  }
+  await interaction.reply({
+    embeds:     [buildMainSetupEmbed()],
+    components: buildMainSetupComponents(),
+    ephemeral:  true,
+  });
 }

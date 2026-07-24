@@ -3,31 +3,33 @@
  * Routes buttons, selects, modals, and slash commands to their feature handlers.
  *
  * Interaction prefix routing:
- *   ps:       Premium Stats dashboard (replaces the retired "mon:" monitoring
- *             panel -- old "mon:" buttons on pre-existing messages no longer
- *             respond; delete that message and use /premstats instead)
+ *   setup:    Panel Admin terpusat (ticket, bug, premium stats, dll.)
+ *   ps:       Premium Stats dashboard
  *   ticket:   Ticket system
  *   bug:      Bug Report system
  *   bm:       BoomBox queue controls
  *   bblog:    BoomBox Log dashboard
+ *   bbsetup:  BoomBox setup wizard
  *   sk:       Scanner (scan again, full preview, etc.)
  *   cp:       CPanel role-button panels
  *   help:     Help command category select
  *   db:       Database system (Bot Setting, Backup, Console, Member List)
+ *   ltsetup:  Lua Tools setup wizard
  */
 
 import { logger }                   from "../utils/logger.js";
 import { logError }                 from "../utils/errorLogger.js";
-import { handlePremStatsInteraction }   from "../features/premium/statsInteraction.js";
-import { handleTicketInteraction }      from "../features/ticket/interaction.js";
-import { handleBugReportInteraction }   from "../features/bugreport/interaction.js";
-import { handleBoomBoxInteraction }     from "../features/boombox/interaction.js";
-import { handleBoomBoxLogInteraction }  from "../features/logs/logInteraction.js";
+import { handleAdminSetupInteraction }   from "../features/setup/adminSetup.js";
+import { handlePremStatsInteraction }    from "../features/premium/statsInteraction.js";
+import { handleTicketInteraction }       from "../features/ticket/interaction.js";
+import { handleBugReportInteraction }    from "../features/bugreport/interaction.js";
+import { handleBoomBoxInteraction }      from "../features/boombox/interaction.js";
+import { handleBoomBoxLogInteraction }   from "../features/logs/logInteraction.js";
 import { handleSetupBoomBoxInteraction } from "../features/boombox/setupInteraction.js";
-import { handleScanButtonInteraction }  from "../handlers/scanInteractionHandler.js";
-import { handleCpanelInteraction }      from "../features/setup/cpanel/interaction.js";
-import { handleHelpInteraction }        from "../features/help/handler.js";
-import { handleDatabaseInteraction }    from "../features/database/interaction.js";
+import { handleScanButtonInteraction }   from "../handlers/scanInteractionHandler.js";
+import { handleCpanelInteraction }       from "../features/setup/cpanel/interaction.js";
+import { handleHelpInteraction }         from "../features/help/handler.js";
+import { handleDatabaseInteraction }     from "../features/database/interaction.js";
 import { handleLuaToolsSetupInteraction } from "../features/luatools/setupInteraction.js";
 
 /**
@@ -48,16 +50,19 @@ export async function handleInteractionCreate(interaction, commands, client) {
       return;
     }
 
-    const isBtn       = interaction.isButton();
-    const isSelect    = interaction.isStringSelectMenu();
-    const isChanSel   = interaction.isChannelSelectMenu();
-    const isAnySelect = isSelect || isChanSel;
-    const isModal     = interaction.isModalSubmit();
+    const isBtn        = interaction.isButton();
+    const isSelect     = interaction.isStringSelectMenu();
+    const isChanSel    = interaction.isChannelSelectMenu();
+    const isRoleSel    = interaction.isRoleSelectMenu();
+    const isAnySelect  = isSelect || isChanSel || isRoleSel;
+    const isModal      = interaction.isModalSubmit();
     if (!isBtn && !isAnySelect && !isModal) return;
 
     const id = interaction.customId ?? "";
 
-    if (id.startsWith("ps:")) {
+    if (id.startsWith("setup:")) {
+      await handleAdminSetupInteraction(interaction);
+    } else if (id.startsWith("ps:")) {
       await handlePremStatsInteraction(interaction, client);
     } else if (id.startsWith("ticket:")) {
       await handleTicketInteraction(interaction);

@@ -17,7 +17,6 @@ import {
   buildProcessingEmbed,
   buildChannelSuccessEmbed,
   buildWrongFileTypeEmbed,
-  buildDmFailedEmbed,
   buildProcessErrorEmbed,
   buildDmEmbed,
   buildLogEmbed,
@@ -162,40 +161,28 @@ export async function handleLuaToolsMessage(message) {
       return;
     }
 
-    // ── Send result to DM + reply in channel ───────────────────────────────
+    // ── Kirim hasil langsung ke channel ────────────────────────────────────
     const fileAttachment = new AttachmentBuilder(resultBuffer, { name: outputFileName });
-    const dmEmbed        = buildDmEmbed(tool, {
+    const resultEmbed    = buildDmEmbed(tool, {
       inputFile:  fileName,
       outputFile: outputFileName,
       duration:   durationSec,
     });
 
-    let dmOk = false;
-    try {
-      await message.author.send({ embeds: [dmEmbed], files: [fileAttachment] });
-      dmOk = true;
-    } catch {
-      dmOk = false;
+    // Update embed status ke selesai
+    if (statusMsg) {
+      await statusMsg.edit({ embeds: [buildChannelSuccessEmbed(tool)] }).catch(() => {});
     }
 
-    // ── Update channel embed + optional channel file delivery ───────────────
-    if (statusMsg) {
-      if (dmOk) {
-        // DM berhasil — edit embed di channel ke success
-        await statusMsg.edit({ embeds: [buildChannelSuccessEmbed(tool)] }).catch(() => {});
-      } else {
-        // DM gagal — edit embed + kirim file ke channel sebagai fallback
-        await statusMsg.edit({ embeds: [buildDmFailedEmbed()] }).catch(() => {});
-        try {
-          // Kirim file ke channel sebagai fallback agar user tetap mendapatkan hasilnya
-          await message.channel.send({
-            content: `<@${message.author.id}> ⚠️ Gagal mengirim hasil ke DM. Aktifkan **Direct Message** lalu coba lagi.\nFile hasil tersedia di sini:`,
-            files:   [new AttachmentBuilder(resultBuffer, { name: outputFileName })],
-          });
-        } catch (sendErr) {
-          logger.warn(`[LuaTools] Gagal kirim file fallback ke channel: ${sendErr.message}`);
-        }
-      }
+    // Kirim file hasil ke channel
+    try {
+      await message.channel.send({
+        content: `<@${message.author.id}>`,
+        embeds:  [resultEmbed],
+        files:   [fileAttachment],
+      });
+    } catch (sendErr) {
+      logger.warn(`[LuaTools] Gagal kirim file hasil ke channel: ${sendErr.message}`);
     }
 
     // ── Send success log ───────────────────────────────────────────────────
