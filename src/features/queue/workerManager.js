@@ -12,9 +12,13 @@
  * health checks start right away without waiting for the first BoomBox job.
  */
 
-import os from "node:os";
+import os         from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { logger }   from "../../utils/logger.js";
 import { logError } from "../../utils/errorLogger.js";
+
+const _execFileAsync = promisify(execFile);
 import { PlatformWorker } from "./platformWorker.js";
 import {
   WORKER_DEFAULTS,
@@ -158,6 +162,18 @@ export function updateWorkerConfig(workerName, patch) {
 
 // ── Resource Monitor ───────────────────────────────────────────────────────
 
+/**
+ * Hysteresis band below the throttle threshold.
+ * Concurrency is only restored once usage drops this far below the trigger
+ * point, preventing rapid oscillation when load hovers at the boundary.
+ */
+const HYSTERESIS = 0.05; // 5 percentage-point band
+const RESTORE_MEM_THRESHOLD = MEMORY_THROTTLE_THRESHOLD - HYSTERESIS;
+const RESTORE_CPU_THRESHOLD = CPU_THROTTLE_THRESHOLD     - HYSTERESIS;
+
+/** True while any resource is above its trigger threshold. */
+let _underPressure = false;
+
 /** CPU usage averaged over a short window. */
 let _prevCpuTimes = null;
 
@@ -200,15 +216,30 @@ function _startResourceMonitor() {
       const cpuPressure = cpuUsage > CPU_THROTTLE_THRESHOLD;
 
       if (memPressure || cpuPressure) {
-        if (memPressure) logger.warn(`[WorkerManager] Memory pressure: ${(memUsage * 100).toFixed(1)}% — throttling workers`);
-        if (cpuPressure) logger.warn(`[WorkerManager] CPU pressure: ${(cpuUsage * 100).toFixed(1)}% — throttling workers`);
-
+        if (!_underPressure) {
+          if (memPressure) logger.warn(`[WorkerManager] Memory pressure: ${(memUsage * 100).toFixed(1)}% — throttling workers`);
+          if (cpuPressure) logger.warn(`[WorkerManager] CPU pressure: ${(cpuUsage * 100).toFixed(1)}% — throttling workers`);
+        }
+        _underPressure = true;
         for (const w of workers.values()) {
           const newMax = Math.max(MIN_CONCURRENCY, Math.floor(w._baseMaxConcurrent * 0.5));
           w.applyPressure(newMax);
         }
+      } else if (_underPressure) {
+        // Hysteresis: only restore when usage drops below the restore threshold,
+        // not the moment it dips under the trigger threshold. This prevents
+        // rapid oscillation when load hovers near the boundary.
+        const memSafe = memUsage < RESTORE_MEM_THRESHOLD;
+        const cpuSafe = cpuUsage < RESTORE_CPU_THRESHOLD;
+        if (memSafe && cpuSafe) {
+          _underPressure = false;
+          logger.info(`[WorkerManager] Resource pressure lifted (mem=${(memUsage * 100).toFixed(1)}% cpu=${(cpuUsage * 100).toFixed(1)}%) — restoring concurrency`);
+          for (const w of workers.values()) {
+            w.releasePressure();
+          }
+        }
       } else {
-        // Restore all workers that were throttled
+        // Never under pressure — ensure workers run at full concurrency (idempotent).
         for (const w of workers.values()) {
           w.releasePressure();
         }
@@ -257,12 +288,9 @@ async function _runHealthCheck(client) {
     }
   }
 
-  // Check yt-dlp presence
+  // Check yt-dlp presence (uses top-level _execFileAsync — no dynamic import overhead)
   try {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-    await execFileAsync("yt-dlp", ["--version"], { timeout: 5000 });
+    await _execFileAsync("yt-dlp", ["--version"], { timeout: 5000 });
   } catch {
     // Not a fatal issue — yt-dlp may be in bin/ instead of PATH
   }

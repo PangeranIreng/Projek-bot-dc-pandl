@@ -16,6 +16,7 @@ import { handleReady }         from "./events/ready.js";
 import { handleMessageCreate } from "./events/messageCreate.js";
 import { handleInteractionCreate } from "./events/interactionCreate.js";
 import { shutdownWorkerManager } from "./features/queue/workerManager.js";
+import { db } from "./database/db.js";
 
 // ── Global error handlers — registered ONCE at module level ───────────────────
 //
@@ -56,6 +57,12 @@ function _gracefulShutdown(signal) {
     shutdownWorkerManager();
   } catch (e) {
     logger.warn(`[Shutdown] WorkerManager shutdown error: ${e.message}`);
+  }
+  // Flush any debounced DB writes so no in-memory updates are lost.
+  try {
+    db.flush();
+  } catch (e) {
+    logger.warn(`[Shutdown] DB flush error: ${e.message}`);
   }
   // Give in-flight jobs a short window to finish writing state, then exit.
   // .unref() so this timer doesn't prevent exit if everything already cleaned up.

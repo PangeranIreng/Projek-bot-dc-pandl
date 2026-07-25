@@ -100,6 +100,8 @@ export class BoomBoxDB {
   constructor() {
     this._ensureDir();
     this._data = this._load();
+    /** @private — timer for debounced non-critical writes */
+    this._saveTimer = null;
   }
 
   _ensureDir() {
@@ -160,6 +162,34 @@ export class BoomBoxDB {
 
   _save() {
     fs.writeFileSync(DB_PATH, JSON.stringify(this._data, null, 2), "utf8");
+  }
+
+  /**
+   * Schedule a non-critical write within 500 ms.
+   * Multiple calls within the window coalesce into one write.
+   * Use for high-frequency updates (e.g. cache-hit counters) that don't
+   * need to be on disk before the next request arrives.
+   * @private
+   */
+  _scheduleSave() {
+    if (this._saveTimer) return;
+    this._saveTimer = setTimeout(() => {
+      this._saveTimer = null;
+      try { this._save(); } catch { /* non-fatal */ }
+    }, 500);
+    if (this._saveTimer.unref) this._saveTimer.unref();
+  }
+
+  /**
+   * Flush any pending debounced write to disk immediately.
+   * Call during graceful shutdown so no in-memory updates are lost.
+   */
+  flush() {
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+      try { this._save(); } catch { /* non-fatal */ }
+    }
   }
 
   // ── Daily usage ──────────────────────────────────────────────────────────
@@ -233,6 +263,40 @@ export class BoomBoxDB {
       this._data.statistics = { total: 0, byPlatform: {}, byProvider: {}, successCount: 0, failureCount: 0 };
     }
     this._data.statistics.failureCount = (this._data.statistics.failureCount ?? 0) + 1;
+    this._save();
+  }
+
+  /**
+   * Batch: append a history entry AND record platform/provider stats in one
+   * disk write instead of two. Use this instead of calling addHistory() and
+   * incrementStats() separately.
+   *
+   * @param {object} entry       Full history entry object
+   * @param {string} platform    "YouTube" | "TikTok" | "Spotify"
+   * @param {string|null} provider  e.g. "yt-dlp/method1", "ytdl-core", "kaizen"
+   */
+  addHistoryAndStats(entry, platform, provider = null) {
+    // ── History ────────────────────────────────────────────────────────────
+    if (!Array.isArray(this._data.history)) this._data.history = [];
+    this._data.history.push(entry);
+    if (this._data.history.length > MAX_HISTORY) {
+      this._data.history = this._data.history.slice(-MAX_HISTORY);
+    }
+
+    // ── Statistics ─────────────────────────────────────────────────────────
+    if (!this._data.statistics) {
+      this._data.statistics = { total: 0, byPlatform: {}, byProvider: {}, successCount: 0, failureCount: 0 };
+    }
+    const s = this._data.statistics;
+    s.total        = (s.total        ?? 0) + 1;
+    s.successCount = (s.successCount ?? 0) + 1;
+    s.byPlatform[platform] = (s.byPlatform[platform] ?? 0) + 1;
+    if (provider) {
+      if (!s.byProvider) s.byProvider = {};
+      s.byProvider[provider] = (s.byProvider[provider] ?? 0) + 1;
+    }
+
+    // ── Single write ───────────────────────────────────────────────────────
     this._save();
   }
 
@@ -522,7 +586,8 @@ export class BoomBoxDB {
     if (!entry) return;
     entry.hitCount = (entry.hitCount ?? 0) + 1;
     entry.lastUsed = Date.now();
-    this._save();
+    // Debounced — many rapid cache hits coalesce into a single disk write.
+    this._scheduleSave();
   }
 
   cleanVideoCache(maxAgeDays = 90) {

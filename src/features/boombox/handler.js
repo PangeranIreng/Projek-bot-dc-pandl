@@ -681,8 +681,9 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
   let   boomboxUrl = null;
   let   ytResult   = null;
   let   resultSent = false;
-  let   downloadMs = 0;   // download stage duration (0 on cache hit)
-  let   uploadMs   = 0;   // upload stage duration   (0 on cache hit)
+  let   downloadMs  = 0;   // download stage duration (0 on cache hit)
+  let   uploadMs    = 0;   // upload stage duration   (0 on cache hit)
+  let   spotifyMs   = 0;   // Spotify resolve duration (0 for non-Spotify)
   let   isFromCache = false;
 
   // V2: effective duration limit in seconds, based on member's roles
@@ -724,8 +725,11 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     let spotifyMeta = null;
     if (platform === "Spotify") {
       currentStage = "Resolve Spotify";
+      const spotifyStart = Date.now();
       spotifyMeta  = await withStageTimeout(resolveSpotify(url), 12_000, "Resolve Spotify track");
+      spotifyMs    = Date.now() - spotifyStart;
       downloadUrl  = spotifyMeta.ytdlInput;
+      logger.info(`[BoomBox] ── Spotify Resolve | ${spotifyMs}ms | title="${spotifyMeta.title}" artist="${spotifyMeta.artist}"`);
     }
 
     const videoId = extractVideoId(url, platform);
@@ -830,7 +834,8 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       } catch {}
 
       const totalMs = Date.now() - startedAt;
-      logger.info(`[BoomBox] Stats | cache=MISS | platform=${platform} | provider=${ytResult.provider ?? "unknown"} | info=${infoMs}ms | dl=${downloadMs}ms | up=${uploadMs}ms | gen=${genMs}ms | total=${totalMs}ms`);
+      const spotifyPart = spotifyMs > 0 ? ` | spotify=${spotifyMs}ms` : "";
+      logger.info(`[BoomBox] Stats | cache=MISS | platform=${platform} | provider=${ytResult.provider ?? "unknown"}${spotifyPart} | info=${infoMs}ms | dl=${downloadMs}ms | up=${uploadMs}ms | gen=${genMs}ms | total=${totalMs}ms`);
     }
 
     // ── Bookkeeping ───────────────────────────────────────────────────────
@@ -855,8 +860,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       uploadMs,
       totalMs:       elapsedTotal,
     };
-    db.addHistory(entry);
-    db.incrementStats(platform, ytResult.provider ?? null);
+    db.addHistoryAndStats(entry, platform, ytResult.provider ?? null);
 
     // ── Result ────────────────────────────────────────────────────────────
     currentStage = "Display Result";

@@ -102,15 +102,29 @@ export async function resolveSpotify(spotifyUrl) {
   let artist    = null;
   let thumbnail = null;
 
-  try {
-    const data = await fetchJson(oembedUrl, 8_000);
-    // oEmbed fields: { title, author_name, thumbnail_url, ... }
-    title     = (data.title      ?? "").trim() || null;
-    artist    = (data.author_name ?? "").trim() || null;
-    thumbnail = data.thumbnail_url ?? null;
-    logger.info(`[Spotify] oEmbed OK | title="${title}" artist="${artist}"`);
-  } catch (e) {
-    logger.warn(`[Spotify] oEmbed failed: ${e.message} — will use track ID as query`);
+  // Retry oEmbed up to 2 times — a single network hiccup shouldn't lose
+  // the title/artist that is needed to build a good search query.
+  let oembedErr;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const data = await fetchJson(oembedUrl, 8_000);
+      // oEmbed fields: { title, author_name, thumbnail_url, ... }
+      title     = (data.title       ?? "").trim() || null;
+      artist    = (data.author_name ?? "").trim() || null;
+      thumbnail = data.thumbnail_url ?? null;
+      logger.info(`[Spotify] oEmbed OK (attempt ${attempt}) | title="${title}" artist="${artist}"`);
+      oembedErr = null;
+      break;
+    } catch (e) {
+      oembedErr = e;
+      if (attempt < 2) {
+        logger.warn(`[Spotify] oEmbed attempt ${attempt} failed: ${e.message} — retrying in 1s`);
+        await new Promise(r => setTimeout(r, 1_000));
+      }
+    }
+  }
+  if (oembedErr) {
+    logger.warn(`[Spotify] oEmbed failed after 2 attempts: ${oembedErr.message} — will use track ID as query`);
     // Last-resort: use the track ID so yt-dlp can at least try a search
     title  = trackId;
     artist = "";

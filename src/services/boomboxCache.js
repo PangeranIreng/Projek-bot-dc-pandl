@@ -141,9 +141,15 @@ export function setCachedResult(videoId, { boomboxUrl, ytResult }) {
   };
   _resultCache.set(videoId, entry);
 
-  // Evict oldest entry when over the size cap
+  // Evict the least-recently-used entry when over the size cap.
+  // Map insertion order ≠ access order, so we must scan for the minimum
+  // lastUsed rather than popping the first key.
   if (_resultCache.size > MAX_RESULT_CACHE) {
-    _resultCache.delete(_resultCache.keys().next().value);
+    let lruKey = null, lruTime = Infinity;
+    for (const [k, v] of _resultCache) {
+      if ((v.lastUsed ?? 0) < lruTime) { lruTime = v.lastUsed ?? 0; lruKey = k; }
+    }
+    if (lruKey) _resultCache.delete(lruKey);
   }
 }
 
@@ -175,7 +181,12 @@ export function getCachedMeta(videoId) {
 export function setCachedMeta(videoId, meta) {
   _metaCache.set(videoId, { ...meta, cachedAt: Date.now() });
   if (_metaCache.size > MAX_META_CACHE) {
-    _metaCache.delete(_metaCache.keys().next().value);
+    // Evict the oldest-cached meta entry (least recently populated).
+    let lruKey = null, lruTime = Infinity;
+    for (const [k, v] of _metaCache) {
+      if ((v.cachedAt ?? 0) < lruTime) { lruTime = v.cachedAt ?? 0; lruKey = k; }
+    }
+    if (lruKey) _metaCache.delete(lruKey);
   }
 }
 
