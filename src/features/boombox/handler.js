@@ -39,14 +39,18 @@ import * as boomboxCache       from "../../services/boomboxCache.js";
 import { extractVideoId }      from "../../services/boomboxCache.js";
 import { resolveSpotify, isSpotifyUrl } from "../../services/spotifyResolver.js";
 import {
-  buildProcessingEmbed,
-  buildResultEmbed,
   buildDurationLimitEmbed,
-  buildErrorEmbed,
   buildUserErrorEmbed,
   buildUnsupportedPlatformEmbed,
-  buildQueueEmbed,
 } from "./embed.js";
+import {
+  buildDashProcessingEmbed,
+  buildDashSuccessEmbed,
+  buildDashCacheEmbed,
+  buildDashErrorEmbed,
+  buildDashMaintenanceEmbed,
+  buildDashTimeoutEmbed,
+} from "./dashboardEmbed.js";
 import { storeErrorDetail } from "./errorStore.js";
 import { updateBoomBoxLogDashboard } from "../logs/logDashboard.js";
 import { enqueueForPlatform, PRIORITY } from "../queue/boomboxQueue.js";
@@ -382,29 +386,7 @@ function buildErrorDetailButton(detailId) {
   );
 }
 
-// ── Queue notice delivery ─────────────────────────────────────────────────────
-
-function newQueueNoticeState() {
-  return { channelMsg: null };
-}
-
-async function renderQueueNotice(state, message, position, total, etaSec) {
-  const embed = buildQueueEmbed(message.author, position, total, etaSec);
-
-  try {
-    if (state.channelMsg) {
-      await state.channelMsg.edit({ content: `${message.author}`, embeds: [embed] });
-    } else {
-      state.channelMsg = await message.channel.send({ content: `${message.author}`, embeds: [embed] });
-    }
-  } catch (e) {
-    logger.warn(`[BoomBox Queue] Failed to render queue notice: ${e.message}`);
-  }
-}
-
-async function clearQueueNotice(state) {
-  if (state.channelMsg) await state.channelMsg.delete().catch(() => {});
-}
+// Queue notice removed — BoomBox memproses langsung tanpa menampilkan antrean ke user.
 
 // ── BoomBox Logs System ───────────────────────────────────────────────────────
 
@@ -515,10 +497,8 @@ export async function handleBoomBoxMessage(message) {
   // ── V2: Maintenance check ─────────────────────────────────────────────────
   if (isPlatformInMaintenance(platform)) {
     await message.reply({
-      content:
-        `${userMention}\n\n` +
-        `🚧 **BoomBox ${platform} sedang maintenance.**\n\n` +
-        "Silakan coba lagi beberapa saat lagi.",
+      content: userMention,
+      embeds:  [buildDashMaintenanceEmbed({ userId: message.author.id })],
     }).catch(() => {});
     return;
   }
@@ -573,9 +553,8 @@ export async function handleBoomBoxMessage(message) {
     }
   }
 
-  // ── [2] Enter the BoomBox queue (V3 — per-platform worker + priority) ────
-  const queueNotice = newQueueNoticeState();
-  const priority    = getJobPriority(member);
+  // ── [2] Masukkan ke antrian platform worker (tanpa menampilkan queue notice) ──
+  const priority = getJobPriority(member);
 
   try {
     await enqueueForPlatform(
@@ -583,9 +562,8 @@ export async function handleBoomBoxMessage(message) {
       priority,
       () => runBoomBoxJob(message, url, platform, userMention, unlimited, limit, member),
       {
-        onQueued: (position, total, etaSec) => renderQueueNotice(queueNotice, message, position, total, etaSec),
-        onStart:  () => clearQueueNotice(queueNotice),
-        jobId:    `${platform.toLowerCase()}-${message.author.id}-${message.id}`,
+        // onQueued tidak di-set — BoomBox langsung memproses tanpa notifikasi antrian
+        jobId: `${platform.toLowerCase()}-${message.author.id}-${message.id}`,
       },
     );
   } catch (err) {
@@ -597,10 +575,10 @@ export async function handleBoomBoxMessage(message) {
       error:   err,
     }).catch(() => {});
     await message.channel.send({
-      content: `${userMention} ❌ Proses BoomBox kamu gagal dan telah dibatalkan. Silakan coba kirim link-nya lagi.`,
+      content: userMention,
+      embeds:  [buildDashErrorEmbed({ userId: message.author.id })],
     }).catch(() => {});
   } finally {
-    await clearQueueNotice(queueNotice);
     processingSet.delete(message.id);
   }
 }
@@ -609,12 +587,44 @@ export async function handleBoomBoxMessage(message) {
  * The actual BoomBox pipeline for one request.
  * V2: menerima `member` untuk menentukan effective duration limit per role.
  */
+// Label tahap pipeline untuk status proses
+const STAGE_LABELS = [
+  "Sedang Memproses...",    // 0 — connecting
+  "Mengambil Metadata...",  // 1 — video info
+  "Mengunduh Audio...",     // 2 — download
+  "Mengunggah BoomBox...",  // 3 — upload
+  "Memverifikasi...",       // 4 — verify
+];
+
 async function runBoomBoxJob(message, url, platform, userMention, unlimited, limit, member) {
   let currentStage = "Send Processing Embed";
   let statusMsg;
   let lastThumbnail = null;
+  const userId = message.author.id;
+  // Snapshot dashboard config once per job — used consistently throughout the pipeline.
+  // Re-read only for the final result embed where changed settings should apply.
+  const dash = db.getDashboard();
+
+  // Konten pesan: mention user jika showMention aktif, atau string kosong
+  const msgContent = dash.showMention ? userMention : "";
+
+  // ── dashboard.enabled = false → mode teks (tidak ada styled embed) ────────
+  // Saat dashboard dinonaktifkan, bot tetap berfungsi penuh tapi menggunakan
+  // pesan teks biasa alih-alih embed bertata letak.
+  const dashEnabled = dash.enabled !== false;
+
   try {
-    statusMsg = await message.reply({ content: userMention, embeds: [buildProcessingEmbed(0, null)] });
+    if (dashEnabled) {
+      statusMsg = await message.reply({
+        content: msgContent,
+        embeds:  [buildDashProcessingEmbed(userId, null, null, dash)],
+      });
+    } else {
+      // Mode teks: satu pesan teks sederhana yang di-edit per tahap
+      statusMsg = await message.reply({
+        content: `${userMention}\n⏳ Sedang memproses...`,
+      });
+    }
   } catch (e) {
     logger.error(`[BoomBox] Failed to reply with processing embed: ${e.message}`);
     await logError({ feature: "BoomBox", reason: `Failed to reply: ${e.message}`, stage: currentStage, error: e });
@@ -623,13 +633,14 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
   }
   try { await message.delete(); } catch { /* no permission — continue */ }
 
-  const startedAt = Date.now();
-  let   tmpDir      = null;
-  let   boomboxUrl  = null;
-  let   ytResult    = null;
-  let   resultSent  = false;
-  let   downloadMs  = 0;   // download stage duration (0 on cache hit)
-  let   uploadMs    = 0;   // upload stage duration   (0 on cache hit)
+  const startedAt  = Date.now();
+  let   tmpDir     = null;
+  let   boomboxUrl = null;
+  let   ytResult   = null;
+  let   resultSent = false;
+  let   downloadMs = 0;   // download stage duration (0 on cache hit)
+  let   uploadMs   = 0;   // upload stage duration   (0 on cache hit)
+  let   isFromCache = false;
 
   // V2: effective duration limit in seconds, based on member's roles
   const maxDurationSec = member
@@ -638,7 +649,23 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
 
   const editStep = async (step, labelOverride = null) => {
     try {
-      await statusMsg.edit({ content: userMention, embeds: [buildProcessingEmbed(step, lastThumbnail, labelOverride)], components: [] });
+      if (!dashEnabled) {
+        // Mode teks: update label tahap sebagai teks biasa jika showStatus aktif
+        if (dash.showStatus) {
+          const label = labelOverride ?? STAGE_LABELS[Math.min(step, STAGE_LABELS.length - 1)];
+          await statusMsg.edit({ content: `${userMention}\n⏳ ${label}` });
+        }
+        return;
+      }
+      // showStatus: jika nonaktif, tidak update label tahap (tetap "Sedang Memproses...")
+      const label = dash.showStatus
+        ? (labelOverride ?? STAGE_LABELS[Math.min(step, STAGE_LABELS.length - 1)])
+        : null;
+      await statusMsg.edit({
+        content:    msgContent,
+        embeds:     [buildDashProcessingEmbed(userId, label, lastThumbnail, dash)],
+        components: [],
+      });
     } catch (e) {
       logger.debug(`[BoomBox] Edit step ${step} failed (non-fatal): ${e.message}`);
     }
@@ -666,6 +693,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       ytResult      = cached.ytResult;
       boomboxUrl    = cached.boomboxUrl;
       lastThumbnail = ytResult?.thumbnail ?? null;
+      isFromCache   = true;
       try { db.updateVideoCacheHit(videoId); } catch {}
       logger.info(`[BoomBox] ⚡ Cache HIT | videoId=${videoId} | url=${boomboxUrl}`);
 
@@ -790,9 +818,49 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     // ── Result ────────────────────────────────────────────────────────────
     currentStage = "Display Result";
     const elapsedMs = Date.now() - startedAt;
-    const embed     = buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo, downloadMs, uploadMs);
     const row       = buildButtons(boomboxUrl);
-    await statusMsg.edit({ content: userMention, embeds: [embed], components: [row] }).catch(() => {});
+
+    if (!dashEnabled) {
+      // Mode teks — hasil sederhana tanpa embed
+      const titleShort = (ytResult.title ?? "Unknown").slice(0, 60);
+      await statusMsg.edit({
+        content:    `${userMention}\n✅ **${titleShort}**\n📦 ${platform}\n⬇️ ${boomboxUrl}`,
+        components: [row],
+      }).catch(() => {});
+    } else {
+      // Mode embed — gunakan dashboard config (snapshot awal job)
+      let resultEmbed;
+      if (isFromCache) {
+        const savedEntry = db.getVideoCache(extractVideoId(url, platform));
+        const savedAt    = savedEntry?.createdAt
+          ? new Date(savedEntry.createdAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB"
+          : "Sebelumnya";
+        resultEmbed = buildDashCacheEmbed({
+          userId:      message.author.id,
+          title:       ytResult.title,
+          artist:      ytResult.uploader ?? null,
+          platform,
+          boomboxUrl,
+          thumbnail:   ytResult.thumbnail ?? null,
+          elapsedMs,
+          savedAt,
+          dashOverride: dash,
+        });
+      } else {
+        resultEmbed = buildDashSuccessEmbed({
+          userId:      message.author.id,
+          title:       ytResult.title,
+          artist:      ytResult.uploader ?? null,
+          platform,
+          boomboxUrl,
+          thumbnail:   ytResult.thumbnail ?? null,
+          elapsedMs,
+          fromCache:   false,
+          dashOverride: dash,
+        });
+      }
+      await statusMsg.edit({ content: msgContent, embeds: [resultEmbed], components: [row] }).catch(() => {});
+    }
     resultSent = true;
 
     // ── Append to BoomBox Logs ────────────────────────────────────────────
@@ -830,7 +898,17 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     }
 
     try {
-      await statusMsg.edit({ content: userMention, embeds: [buildUserErrorEmbed()], components: [] });
+      const isTimeout = err?.code === "BOOMBOX_STAGE_TIMEOUT";
+      if (!dashEnabled) {
+        // Mode teks — pesan error sederhana
+        const label = isTimeout ? "⌛ Waktu pemrosesan habis. Silakan coba lagi." : "❌ Gagal diproses. Silakan coba lagi.";
+        await statusMsg.edit({ content: `${userMention}\n${label}`, components: [] });
+      } else {
+        const errEmbed = isTimeout
+          ? buildDashTimeoutEmbed({ userId: message.author.id, dashOverride: dash })
+          : buildDashErrorEmbed({ userId: message.author.id, dashOverride: dash });
+        await statusMsg.edit({ content: msgContent, embeds: [errEmbed], components: [] });
+      }
     } catch (editErr) {
       logger.error(`[BoomBox] Failed to edit error embed: ${editErr.message}`);
     }

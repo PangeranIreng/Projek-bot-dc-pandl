@@ -15,6 +15,27 @@ import { BOOMBOX_CONFIG } from "../features/boombox/config.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH   = path.join(__dirname, "..", "..", "data", "boombox-db.json");
 
+const DEFAULT_DASHBOARD = {
+  enabled:       true,   // Aktifkan dashboard embed
+  showStatus:    true,   // Tampilkan status proses selama pipeline
+  showGif:       false,  // Tampilkan GIF di embed
+  gifs: {
+    loading:     "",
+    success:     "",
+    cache:       "",
+    error:       "",
+    maintenance: "",
+    timeout:     "",
+  },
+  showThumbnail: true,   // Tampilkan thumbnail lagu
+  showFooter:    true,   // Tampilkan footer embed
+  showTimestamp: true,   // Tampilkan timestamp
+  showMention:   true,   // Mention user di embed
+  embedColor:    "#5865f2", // Warna embed (hex)
+  showDuration:  false,  // Tampilkan durasi proses
+  durationFormat: "auto", // "ms" | "s" | "minsec" | "auto"
+};
+
 const DEFAULT_DB = {
   settings: {
     freeDailyLimit: BOOMBOX_CONFIG.DEFAULT_FREE_DAILY_LIMIT,
@@ -41,6 +62,8 @@ const DEFAULT_DB = {
     // V2: Duration limit per role in MINUTES { "<roleId>": <minutes> }
     // Converts to seconds at runtime only. Null/absent = use default 25 min.
     roleLimits: {},
+    // Dashboard display settings
+    dashboard: { ...DEFAULT_DASHBOARD },
   },
   // { "YYYY-MM-DD": { userId: count } }
   dailyUsage: {},
@@ -113,6 +136,14 @@ export class BoomBoxDB {
           roleLimits: {
             ...def.settings.roleLimits,
             ...(parsed.settings?.roleLimits ?? {}),
+          },
+          dashboard: {
+            ...def.settings.dashboard,
+            ...(parsed.settings?.dashboard ?? {}),
+            gifs: {
+              ...def.settings.dashboard.gifs,
+              ...(parsed.settings?.dashboard?.gifs ?? {}),
+            },
           },
         },
         logState: {
@@ -533,6 +564,95 @@ export class BoomBoxDB {
   setWorkerConfig(config) {
     if (!this._data.settings) this._data.settings = {};
     this._data.settings.workerConfig = config;
+    this._save();
+  }
+
+  // ── Dashboard display settings ────────────────────────────────────────────
+
+  /**
+   * Get the full dashboard config (with defaults filled in).
+   * @returns {object}
+   */
+  getDashboard() {
+    const d = this._data.settings?.dashboard ?? {};
+    return {
+      enabled:        d.enabled        ?? true,
+      showStatus:     d.showStatus     ?? true,
+      showGif:        d.showGif        ?? false,
+      gifs: {
+        loading:      d.gifs?.loading      ?? "",
+        success:      d.gifs?.success      ?? "",
+        cache:        d.gifs?.cache        ?? "",
+        error:        d.gifs?.error        ?? "",
+        maintenance:  d.gifs?.maintenance  ?? "",
+        timeout:      d.gifs?.timeout      ?? "",
+      },
+      showThumbnail:  d.showThumbnail  ?? true,
+      showFooter:     d.showFooter     ?? true,
+      showTimestamp:  d.showTimestamp  ?? true,
+      showMention:    d.showMention    ?? true,
+      embedColor:     d.embedColor     ?? "#5865f2",
+      showDuration:   d.showDuration   ?? false,
+      durationFormat: d.durationFormat ?? "auto",
+    };
+  }
+
+  /**
+   * Patch dashboard config with partial updates.
+   * @param {object} patch
+   */
+  setDashboard(patch) {
+    if (!this._data.settings) this._data.settings = {};
+    const current = this._data.settings.dashboard ?? {};
+    this._data.settings.dashboard = {
+      ...current,
+      ...patch,
+      gifs: {
+        ...(current.gifs ?? {}),
+        ...(patch.gifs ?? {}),
+      },
+    };
+    this._save();
+  }
+
+  /**
+   * Toggle a boolean dashboard setting.
+   * @param {"enabled"|"showStatus"|"showGif"|"showThumbnail"|"showFooter"|"showTimestamp"|"showMention"|"showDuration"} key
+   * @returns {boolean} New value
+   */
+  toggleDashboard(key) {
+    const current = this.getDashboard();
+    const newVal  = !current[key];
+    this.setDashboard({ [key]: newVal });
+    return newVal;
+  }
+
+  /**
+   * Set a specific GIF URL.
+   * @param {"loading"|"success"|"cache"|"error"|"maintenance"|"timeout"} type
+   * @param {string} url
+   */
+  setDashboardGif(type, url) {
+    const current = this.getDashboard();
+    this.setDashboard({ gifs: { ...current.gifs, [type]: url } });
+  }
+
+  /** Reset dashboard settings to defaults. */
+  resetDashboard() {
+    if (!this._data.settings) this._data.settings = {};
+    this._data.settings.dashboard = {
+      enabled:        true,
+      showStatus:     true,
+      showGif:        false,
+      gifs:           { loading: "", success: "", cache: "", error: "", maintenance: "", timeout: "" },
+      showThumbnail:  true,
+      showFooter:     true,
+      showTimestamp:  true,
+      showMention:    true,
+      embedColor:     "#5865f2",
+      showDuration:   false,
+      durationFormat: "auto",
+    };
     this._save();
   }
 }

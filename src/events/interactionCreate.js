@@ -72,7 +72,7 @@ export async function handleInteractionCreate(interaction, commands, client) {
       await handleBoomBoxInteraction(interaction);
     } else if (id.startsWith("bblog:")) {
       await handleBoomBoxLogInteraction(interaction);
-    } else if (id.startsWith("bbsetup:")) {
+    } else if (id.startsWith("bbsetup:") || id.startsWith("bbdash:")) {
       await handleSetupBoomBoxInteraction(interaction);
     } else if (isBtn && id.startsWith("sk:")) {
       await handleScanButtonInteraction(interaction);

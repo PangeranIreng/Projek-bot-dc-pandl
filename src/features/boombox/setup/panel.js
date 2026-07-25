@@ -28,12 +28,13 @@ function _buildMenuRow() {
       .setCustomId("bbsetup:menu:select")
       .setPlaceholder("⚙️ Pilih opsi konfigurasi...")
       .addOptions([
-        { label: "📺 Channel",        value: "channel",     description: "Atur channel BoomBox per platform" },
-        { label: "📋 Logs",           value: "logs",        description: "Atur channel log BoomBox" },
-        { label: "🛠️ Maintenance",    value: "maintenance", description: "Toggle maintenance per platform" },
-        { label: "📊 Monitor",        value: "monitor",     description: "Lihat status provider, queue, cache, dan statistik" },
-        { label: "⏱️ Batas Durasi",   value: "duration",    description: "Atur batas durasi audio per role" },
-        { label: "🗑️ Reset Konfigurasi", value: "reset",   description: "Hapus seluruh konfigurasi BoomBox" },
+        { label: "📺 Channel",           value: "channel",     description: "Atur channel BoomBox per platform" },
+        { label: "📋 Logs",              value: "logs",        description: "Atur channel log BoomBox" },
+        { label: "🛠️ Maintenance",       value: "maintenance", description: "Toggle maintenance per platform" },
+        { label: "📊 Monitor",           value: "monitor",     description: "Lihat status provider, queue, cache, dan statistik" },
+        { label: "⏱️ Batas Durasi",      value: "duration",    description: "Atur batas durasi audio per role" },
+        { label: "🎨 Dashboard BoomBox", value: "dashboard",   description: "Atur tampilan embed BoomBox" },
+        { label: "🗑️ Reset Konfigurasi", value: "reset",       description: "Hapus seluruh konfigurasi BoomBox" },
       ]),
   );
 }

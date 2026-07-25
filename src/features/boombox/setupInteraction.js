@@ -39,6 +39,24 @@ import {
   buildMonitorEmbed,
 } from "./setup/panel.js";
 import {
+  buildDashboardMainPanel,
+  buildDashboardTogglePanel,
+  buildDashboardGifPanel,
+  buildGifModal,
+  buildColorModal,
+  buildDashboardDurationPanel,
+  buildPreviewPanel,
+  buildDashboardResetConfirmPanel,
+} from "./setup/dashboardSetup.js";
+import {
+  buildDashProcessingEmbed,
+  buildDashSuccessEmbed,
+  buildDashCacheEmbed,
+  buildDashErrorEmbed,
+  buildDashMaintenanceEmbed,
+  buildDashTimeoutEmbed,
+} from "./dashboardEmbed.js";
+import {
   buildChannelPlatformPanel,
   buildChannelSelectPanel,
   handleChannelSelected,
@@ -105,6 +123,9 @@ export async function handleSetupBoomBoxInteraction(interaction) {
         await interaction.update({ embeds: [buildMonitorEmbed()], components: [backRow] });
       } else if (val === "duration") {
         const { embed, components } = buildDurationPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "dashboard") {
+        const { embed, components } = buildDashboardMainPanel();
         await interaction.update({ embeds: [embed], components });
       } else if (val === "reset") {
         const { embed, components } = buildDeleteConfirmPanel();
@@ -463,12 +484,224 @@ export async function handleSetupBoomBoxInteraction(interaction) {
       return;
     }
 
+    // ── Dashboard BoomBox (prefix: bbdash:) ───────────────────────────────
+    if (id === "bbdash:menu" || id.startsWith("bbdash:")) {
+      await handleDashboardInteraction(interaction, id);
+      return;
+    }
+
     // Unknown — log and ignore
     logger.debug(`[SetupBoomBox] Unknown interaction: ${id}`);
 
   } catch (err) {
     logger.error(`[SetupBoomBox] Interaction error for "${id}": ${err.message}`);
     const content = "❌ Terjadi kesalahan pada panel Setup BoomBox.";
+    if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content, ephemeral: true }).catch(() => {});
+    } else if (interaction.deferred) {
+      await interaction.editReply({ content }).catch(() => {});
+    }
+  }
+}
+
+// ── Dashboard BoomBox Handler ─────────────────────────────────────────────────
+
+const DASH_TOGGLE_KEYS = ["enabled", "showStatus", "showGif", "showThumbnail", "showFooter", "showTimestamp", "showMention", "showDuration"];
+const GIF_TYPES_SET    = new Set(["loading", "success", "cache", "error", "maintenance", "timeout"]);
+
+async function handleDashboardInteraction(interaction, id) {
+  try {
+
+    // ── Main menu ────────────────────────────────────────────────────────
+    if (id === "bbdash:menu") {
+      const { embed, components } = buildDashboardMainPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Dropdown select ──────────────────────────────────────────────────
+    if (id === "bbdash:menu:select" && interaction.isStringSelectMenu()) {
+      const val = interaction.values[0];
+      if (val === "toggles") {
+        const { embed, components } = buildDashboardTogglePanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "gif") {
+        const { embed, components } = buildDashboardGifPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "color") {
+        await interaction.showModal(buildColorModal());
+      } else if (val === "duration") {
+        const { embed, components } = buildDashboardDurationPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "preview") {
+        const { embed, components } = buildPreviewPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "reset") {
+        const { embed, components } = buildDashboardResetConfirmPanel();
+        await interaction.update({ embeds: [embed], components });
+      }
+      return;
+    }
+
+    // ── Toggle buttons ───────────────────────────────────────────────────
+    const toggleMatch = /^bbdash:toggle:(\w+)$/.exec(id);
+    if (toggleMatch) {
+      const key = toggleMatch[1];
+      if (DASH_TOGGLE_KEYS.includes(key)) {
+        const newVal = db.toggleDashboard(key);
+        logger.info(`[SetupDashboard] Toggle ${key} → ${newVal}`);
+        // Refresh the appropriate panel
+        if (["showDuration"].includes(key)) {
+          const { embed, components } = buildDashboardDurationPanel();
+          await interaction.update({ embeds: [embed], components });
+        } else if (key === "enabled" || key === "showStatus" || key === "showMention") {
+          const { embed, components } = buildDashboardTogglePanel();
+          await interaction.update({ embeds: [embed], components });
+        } else {
+          const { embed, components } = buildDashboardTogglePanel();
+          await interaction.update({ embeds: [embed], components });
+        }
+      } else {
+        await interaction.reply({ content: `❌ Pengaturan tidak dikenal: ${key}`, ephemeral: true });
+      }
+      return;
+    }
+
+    // ── GIF panel ────────────────────────────────────────────────────────
+    if (id === "bbdash:gif:panel") {
+      const { embed, components } = buildDashboardGifPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    const gifSetMatch = /^bbdash:gif:set:(\w+)$/.exec(id);
+    if (gifSetMatch) {
+      const type = gifSetMatch[1];
+      if (GIF_TYPES_SET.has(type)) {
+        await interaction.showModal(buildGifModal(type));
+      } else {
+        await interaction.reply({ content: `❌ Tipe GIF tidak dikenal: ${type}`, ephemeral: true });
+      }
+      return;
+    }
+
+    const gifModalMatch = /^bbdash:gif:modal:(\w+)$/.exec(id);
+    if (gifModalMatch && interaction.isModalSubmit()) {
+      const type = gifModalMatch[1];
+      if (GIF_TYPES_SET.has(type)) {
+        const url = interaction.fields.getTextInputValue("gif_url")?.trim() ?? "";
+        db.setDashboardGif(type, url);
+        logger.info(`[SetupDashboard] GIF ${type} diatur: ${url || "(dihapus)"}`);
+        const { embed, components } = buildDashboardGifPanel();
+        await interaction.update({ embeds: [embed], components });
+      }
+      return;
+    }
+
+    // ── Color modal ──────────────────────────────────────────────────────
+    if (id === "bbdash:color:set") {
+      await interaction.showModal(buildColorModal());
+      return;
+    }
+
+    if (id === "bbdash:color:modal" && interaction.isModalSubmit()) {
+      let raw = interaction.fields.getTextInputValue("embed_color")?.trim() ?? "";
+      if (!raw.startsWith("#")) raw = "#" + raw;
+      // Validate hex
+      const parsed = parseInt(raw.replace("#", ""), 16);
+      if (isNaN(parsed) || raw.replace("#", "").length < 3) {
+        await interaction.reply({ content: "❌ Format warna tidak valid. Gunakan format hex seperti `#5865f2` atau `FF0000`.", ephemeral: true });
+        return;
+      }
+      db.setDashboard({ embedColor: raw });
+      logger.info(`[SetupDashboard] Warna embed diubah ke ${raw}`);
+      const { embed, components } = buildDashboardMainPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Duration format buttons ──────────────────────────────────────────
+    const durFmtMatch = /^bbdash:dur:format:(ms|s|minsec|auto)$/.exec(id);
+    if (durFmtMatch) {
+      const fmt = durFmtMatch[1];
+      db.setDashboard({ durationFormat: fmt });
+      logger.info(`[SetupDashboard] Duration format → ${fmt}`);
+      const { embed, components } = buildDashboardDurationPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // ── Preview ──────────────────────────────────────────────────────────
+    if (id === "bbdash:preview:panel") {
+      const { embed, components } = buildPreviewPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    const previewMatch = /^bbdash:preview:(\w+)$/.exec(id);
+    if (previewMatch) {
+      const type = previewMatch[1];
+      const userId = interaction.user.id;
+      const backRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("bbdash:preview:panel").setLabel("🔙 Kembali ke Preview").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("bbdash:menu").setLabel("🏠 Dashboard").setStyle(ButtonStyle.Secondary),
+      );
+
+      let previewEmbed;
+      const fakeDash = db.getDashboard();
+
+      if (type === "processing") {
+        previewEmbed = buildDashProcessingEmbed(userId, null, null, fakeDash);
+      } else if (type === "success") {
+        previewEmbed = buildDashSuccessEmbed({
+          userId, dashOverride: fakeDash,
+          title: "Contoh Judul Lagu", artist: "Contoh Artist",
+          platform: "YouTube", boomboxUrl: "https://top4top.io/example",
+          elapsedMs: 1270, fromCache: false,
+        });
+      } else if (type === "cache") {
+        previewEmbed = buildDashCacheEmbed({
+          userId, dashOverride: fakeDash,
+          title: "Contoh Judul Lagu", artist: "Contoh Artist",
+          platform: "YouTube", boomboxUrl: "https://top4top.io/example",
+          elapsedMs: 120, savedAt: "Sebelumnya",
+        });
+      } else if (type === "error") {
+        previewEmbed = buildDashErrorEmbed({ userId, dashOverride: fakeDash });
+      } else if (type === "maintenance") {
+        previewEmbed = buildDashMaintenanceEmbed({ userId, dashOverride: fakeDash });
+      } else if (type === "timeout") {
+        previewEmbed = buildDashTimeoutEmbed({ userId, dashOverride: fakeDash });
+      } else {
+        await interaction.reply({ content: "❌ Tipe preview tidak dikenal.", ephemeral: true });
+        return;
+      }
+
+      await interaction.update({ embeds: [previewEmbed], components: [backRow] });
+      return;
+    }
+
+    // ── Reset ────────────────────────────────────────────────────────────
+    if (id === "bbdash:reset") {
+      const { embed, components } = buildDashboardResetConfirmPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    if (id === "bbdash:reset:confirm") {
+      db.resetDashboard();
+      logger.info("[SetupDashboard] Dashboard reset ke default.");
+      const { embed, components } = buildDashboardMainPanel();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    // Unknown dashboard action
+    logger.debug(`[SetupDashboard] Unknown interaction: ${id}`);
+
+  } catch (err) {
+    logger.error(`[SetupDashboard] Interaction error for "${id}": ${err.message}`);
+    const content = "❌ Terjadi kesalahan pada panel Dashboard BoomBox.";
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction.reply({ content, ephemeral: true }).catch(() => {});
     } else if (interaction.deferred) {
