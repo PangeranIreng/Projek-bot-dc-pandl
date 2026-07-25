@@ -8,7 +8,13 @@ import https    from "node:https";
 import axios    from "axios";
 import FormData from "form-data";
 import { logger } from "../utils/logger.js";
+import {
+  shouldSkip,
+  recordSuccess,
+  recordFailure,
+} from "./providerHealth.js";
 
+const PROVIDER_KEY  = "top4top";
 const MAX_RETRIES   = 3;
 const RETRY_DELAY   = 1500; // ms between retries
 
@@ -26,6 +32,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
  * @throws  On network failure or when no URL is found in the response after all retries.
  */
 export async function top4top(filePath) {
+  // ── Circuit breaker ───────────────────────────────────────────────────────
+  // If top4top has failed FAILURE_THRESHOLD times in a row, skip it entirely
+  // for RECOVERY_MS and report the outage rather than spamming the service.
+  if (shouldSkip(PROVIDER_KEY)) {
+    const err = new Error("top4top upload skipped — circuit breaker OPEN (service unavailable, auto-retry soon)");
+    err.code = "CIRCUIT_OPEN";
+    throw err;
+  }
+
   const fileName = filePath.split("/").pop();
   const fileSize = (fs.statSync(filePath).size / 1024).toFixed(1);
   logger.info(`[top4top] ▶ Uploading: ${fileName} (${fileSize} KB)`);
@@ -41,10 +56,13 @@ export async function top4top(filePath) {
     try {
       const result = await _doUpload(filePath, fileName);
       if (attempt > 1) logger.info(`[top4top] Upload succeeded on attempt ${attempt}`);
+      recordSuccess(PROVIDER_KEY);
       return result;
     } catch (err) {
       lastError = err;
       logger.warn(`[top4top] Attempt ${attempt} failed: ${err.message}`);
+      const isTimeout = err.code === "ECONNABORTED" || err.message.includes("timeout");
+      recordFailure(PROVIDER_KEY, { reason: err.message, isTimeout });
 
       // Don't retry on permanent client-side errors
       if (_isPermanentError(err)) {

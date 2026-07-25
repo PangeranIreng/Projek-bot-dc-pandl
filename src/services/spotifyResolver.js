@@ -21,6 +21,13 @@
 
 import https  from "node:https";
 import { logger } from "../utils/logger.js";
+import {
+  shouldSkip,
+  recordSuccess,
+  recordFailure,
+} from "./providerHealth.js";
+
+const PROVIDER_KEY = "spotify-oembed";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -102,32 +109,46 @@ export async function resolveSpotify(spotifyUrl) {
   let artist    = null;
   let thumbnail = null;
 
+  // ── Circuit breaker for Spotify oEmbed ────────────────────────────────────
+  // If the oEmbed endpoint has failed repeatedly, skip it and fall back to the
+  // track-ID query immediately rather than burning 2× 8s timeouts per request.
+  const oembedSkipped = shouldSkip(PROVIDER_KEY);
+  if (oembedSkipped) {
+    logger.warn(`[Spotify] oEmbed circuit breaker OPEN — skipping fetch, using track ID fallback`);
+    title  = trackId;
+    artist = "";
+  }
+
   // Retry oEmbed up to 2 times — a single network hiccup shouldn't lose
   // the title/artist that is needed to build a good search query.
   let oembedErr;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const data = await fetchJson(oembedUrl, 8_000);
-      // oEmbed fields: { title, author_name, thumbnail_url, ... }
-      title     = (data.title       ?? "").trim() || null;
-      artist    = (data.author_name ?? "").trim() || null;
-      thumbnail = data.thumbnail_url ?? null;
-      logger.info(`[Spotify] oEmbed OK (attempt ${attempt}) | title="${title}" artist="${artist}"`);
-      oembedErr = null;
-      break;
-    } catch (e) {
-      oembedErr = e;
-      if (attempt < 2) {
-        logger.warn(`[Spotify] oEmbed attempt ${attempt} failed: ${e.message} — retrying in 1s`);
-        await new Promise(r => setTimeout(r, 1_000));
+  if (!oembedSkipped) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const data = await fetchJson(oembedUrl, 8_000);
+        // oEmbed fields: { title, author_name, thumbnail_url, ... }
+        title     = (data.title       ?? "").trim() || null;
+        artist    = (data.author_name ?? "").trim() || null;
+        thumbnail = data.thumbnail_url ?? null;
+        logger.info(`[Spotify] oEmbed OK (attempt ${attempt}) | title="${title}" artist="${artist}"`);
+        recordSuccess(PROVIDER_KEY);
+        oembedErr = null;
+        break;
+      } catch (e) {
+        oembedErr = e;
+        recordFailure(PROVIDER_KEY, { reason: e.message });
+        if (attempt < 2) {
+          logger.warn(`[Spotify] oEmbed attempt ${attempt} failed: ${e.message} — retrying in 1s`);
+          await new Promise(r => setTimeout(r, 1_000));
+        }
       }
     }
-  }
-  if (oembedErr) {
-    logger.warn(`[Spotify] oEmbed failed after 2 attempts: ${oembedErr.message} — will use track ID as query`);
-    // Last-resort: use the track ID so yt-dlp can at least try a search
-    title  = trackId;
-    artist = "";
+    if (oembedErr) {
+      logger.warn(`[Spotify] oEmbed failed after 2 attempts: ${oembedErr.message} — will use track ID as query`);
+      // Last-resort: use the track ID so yt-dlp can at least try a search
+      title  = trackId;
+      artist = "";
+    }
   }
 
   // Build yt-dlp ytsearch1 query — "<artist> - <title> official audio"

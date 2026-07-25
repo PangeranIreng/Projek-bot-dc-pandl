@@ -53,3 +53,9 @@ export const RESOURCE_CHECK_INTERVAL_MS = 15_000; // 15 seconds
 
 /** Minimum concurrency floor when under resource pressure. */
 export const MIN_CONCURRENCY = 1;
+
+/**
+ * Disk usage fraction above which a warning is logged and cleanup is triggered.
+ * e.g. 0.90 = warn when 90% of disk space is used.
+ */
+export const DISK_WARN_THRESHOLD = 0.90;

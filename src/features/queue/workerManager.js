@@ -12,8 +12,9 @@
  * health checks start right away without waiting for the first BoomBox job.
  */
 
-import os         from "node:os";
-import { execFile } from "node:child_process";
+import os           from "node:os";
+import fs           from "node:fs";
+import { execFile }  from "node:child_process";
 import { promisify } from "node:util";
 import { logger }   from "../../utils/logger.js";
 import { logError } from "../../utils/errorLogger.js";
@@ -27,6 +28,7 @@ import {
   HEALTH_CHECK_INTERVAL_MS,
   RESOURCE_CHECK_INTERVAL_MS,
   MIN_CONCURRENCY,
+  DISK_WARN_THRESHOLD,
 } from "./workerConfig.js";
 
 // ── Worker registry ────────────────────────────────────────────────────────
@@ -269,38 +271,99 @@ function _startHealthCheck(client) {
   if (_healthCheckTimer.unref) _healthCheckTimer.unref();
 }
 
+/**
+ * How long a worker may remain active with no job completions before it is
+ * considered stalled and restarted automatically.
+ *
+ * BoomBox workers (timeoutMs = 0) rely on stage-level guards up to
+ * 5 min × 3 retries = 15 min max, so we allow 20 min before declaring a stall.
+ * Workers with an explicit timeoutMs use 3× that value instead.
+ */
+const BOOMBOX_STALL_MS = 20 * 60_000; // 20 minutes
+
+function _workerStallThresholdMs(w) {
+  return w.timeoutMs > 0 ? w.timeoutMs * 3 : BOOMBOX_STALL_MS;
+}
+
+async function _checkDiskSpace() {
+  try {
+    const tmpDir = os.tmpdir();
+    const stat   = await fs.promises.statfs(tmpDir);
+    const total  = stat.blocks  * stat.bsize;
+    const free   = stat.bfree   * stat.bsize;
+    const used   = (total - free) / total;
+    return { used, total, free };
+  } catch {
+    return null; // statfs not available on this platform — skip
+  }
+}
+
 async function _runHealthCheck(client) {
   logger.debug("[WorkerManager] Running health check...");
-  const issues = [];
+  const issues  = [];
+  const actions = []; // descriptions of auto-recovery actions taken
 
-  // Check database accessibility
+  // ── Database accessibility ────────────────────────────────────────────────
   try {
     if (_dbRef) _dbRef.getStatistics(); // read-only sanity check
   } catch (err) {
     issues.push(`Database: ${err.message}`);
+    // No module-level restart possible for a flat-file DB — log clearly so the
+    // operator knows data may be stale, but don't crash the process.
+    logger.error(`[WorkerManager] ⚠ Database health check failed: ${err.message}`);
   }
 
-  // Check all workers are not permanently stuck
+  // ── Worker stall detection + auto-restart ─────────────────────────────────
+  // A worker is stalled when it has active jobs but its lastActivityAt hasn't
+  // advanced for longer than its stall threshold (3× job timeout, or 20 min
+  // for BoomBox workers whose stage guards own the deadline).
   for (const [name, w] of workers.entries()) {
-    const snap = w.getSnapshot();
-    if (snap.active > 0 && snap.queued > 50) {
-      issues.push(`Worker ${name}: queue depth ${snap.queued} — possible stall`);
+    const snap         = w.getSnapshot();
+    const stallMs      = _workerStallThresholdMs(w);
+    const idleMs       = Date.now() - (snap.lastActivityAt ?? 0);
+    const isStalled    = snap.active > 0 && idleMs > stallMs;
+
+    if (isStalled) {
+      issues.push(`Worker ${name}: stalled (active=${snap.active}, no activity for ${Math.round(idleMs / 60_000)}min)`);
+      logger.warn(`[WorkerManager] 🔄 Auto-restarting stalled worker "${name}" (idle ${Math.round(idleMs / 60_000)}min, threshold ${Math.round(stallMs / 60_000)}min)`);
+      try {
+        w.restart();
+        actions.push(`Restarted stalled worker "${name}"`);
+      } catch (err) {
+        logger.error(`[WorkerManager] Failed to restart worker "${name}": ${err.message}`);
+      }
+    } else if (snap.queued > 50) {
+      // Deep queue is a warning signal even if activity is recent — log only.
+      issues.push(`Worker ${name}: queue depth ${snap.queued} (active=${snap.active})`);
     }
   }
 
-  // Check yt-dlp presence (uses top-level _execFileAsync — no dynamic import overhead)
+  // ── yt-dlp presence ───────────────────────────────────────────────────────
   try {
     await _execFileAsync("yt-dlp", ["--version"], { timeout: 5000 });
   } catch {
-    // Not a fatal issue — yt-dlp may be in bin/ instead of PATH
+    // Not fatal — yt-dlp may be in bin/ instead of PATH; the binary resolver
+    // in ytmp3gg.js handles this path automatically.
   }
 
+  // ── Disk space ────────────────────────────────────────────────────────────
+  const disk = await _checkDiskSpace();
+  if (disk !== null && disk.used >= DISK_WARN_THRESHOLD) {
+    const pct = (disk.used * 100).toFixed(1);
+    const freeMB = (disk.free / 1024 / 1024).toFixed(0);
+    issues.push(`Disk: ${pct}% used (${freeMB} MB free) — cleanup may be needed`);
+    logger.warn(`[WorkerManager] ⚠ Disk usage ${pct}% — only ${freeMB} MB free in ${os.tmpdir()}`);
+  }
+
+  // ── Report ────────────────────────────────────────────────────────────────
   if (issues.length > 0) {
-    logger.warn(`[WorkerManager] Health check issues:\n${issues.map(i => `  • ${i}`).join("\n")}`);
+    const recovered = actions.length > 0 ? ` | Recovery: ${actions.join("; ")}` : "";
+    logger.warn(`[WorkerManager] Health check issues:\n${issues.map(i => `  • ${i}`).join("\n")}${recovered}`);
     await logError({
-      feature: "WorkerManager Health Check",
-      reason:  issues.join(" | "),
-      stage:   "Health Check",
+      feature:  "WorkerManager Health Check",
+      reason:   issues.join(" | "),
+      stage:    "Health Check",
+      action:   actions.join("; ") || "No auto-recovery taken",
     }).catch(() => {});
   } else {
     logger.debug("[WorkerManager] Health check OK.");

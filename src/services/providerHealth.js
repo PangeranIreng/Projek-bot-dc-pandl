@@ -25,6 +25,8 @@ const PROVIDER_LABELS = {
   "yt-dlp-tiktok":  "yt-dlp (TikTok)",
   "ytdl-core":      "@distube/ytdl-core (Backup API 1)",
   "kaizenapi":      "kaizenapi.my.id (Backup API 2)",
+  "top4top":        "top4top.io (Uploader)",
+  "spotify-oembed": "Spotify oEmbed API",
 };
 
 /** @type {Map<string, { status: "ONLINE"|"OFFLINE", consecutiveFailures: number,

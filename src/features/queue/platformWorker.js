@@ -47,6 +47,14 @@ export class PlatformWorker {
 
     // Status: 'idle' | 'running' | 'busy' | 'restarting'
     this.status = "idle";
+
+    /**
+     * Timestamp of the last job activity on this worker (start or finish).
+     * Used by WorkerManager health check to detect truly stuck workers:
+     * if active > 0 and lastActivityAt hasn't advanced for a long time,
+     * the worker is stalled and should be restarted.
+     */
+    this.lastActivityAt = Date.now();
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -81,13 +89,14 @@ export class PlatformWorker {
   /** Snapshot of worker state for /workerstatus. */
   getSnapshot() {
     return {
-      name:          this.name,
-      status:        this.status,
-      active:        this._running.size,
-      queued:        this._queue.length,
-      maxConcurrent: this.maxConcurrent,
-      stats:         { ...this.stats },
-      avgDurationMs: this._avgDuration(),
+      name:           this.name,
+      status:         this.status,
+      active:         this._running.size,
+      queued:         this._queue.length,
+      maxConcurrent:  this.maxConcurrent,
+      stats:          { ...this.stats },
+      avgDurationMs:  this._avgDuration(),
+      lastActivityAt: this.lastActivityAt,
     };
   }
 
@@ -177,6 +186,7 @@ export class PlatformWorker {
     }
 
     const startedAt = Date.now();
+    this.lastActivityAt = startedAt; // record job start as last activity
     let lastErr;
     let succeeded  = false;
 
@@ -186,6 +196,7 @@ export class PlatformWorker {
           const result = await this._runWithTimeout(job.run);
           const dur    = Date.now() - startedAt;
           this._recordDuration(dur);
+          this.lastActivityAt = Date.now(); // record job completion
           this.stats.success++;
           logger.info(`[Worker:${this.name}] ✅ Job ${job.jobId} done in ${(dur / 1000).toFixed(1)}s (attempt ${attempt})`);
           succeeded = true;
