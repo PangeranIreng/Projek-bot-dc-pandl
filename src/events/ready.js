@@ -19,6 +19,7 @@ import { runBoomBoxLogsMigrationV2 } from "../features/boombox/logs/migration.js
 import { initWorkerManager, setWorkerManagerClient } from "../features/queue/workerManager.js";
 import { cleanupStaleBoomBoxTempDirs } from "../features/boombox/handler.js";
 import { db } from "../database/db.js";
+import { runConfigValidation } from "../utils/configValidator.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -123,6 +124,13 @@ export async function handleReady(client, secrets, state) {
   // BoomBox Logs V2 — one-time migration (idempotent, skips if already done)
   runBoomBoxLogsMigrationV2(client).catch((err) => {
     logger.warn(`[Startup] BoomBox Migration V2 gagal (non-fatal): ${err?.message}`);
+  });
+
+  // Config validation — verify all /setup-configured channels and roles still
+  // exist in Discord. Logs clear warnings and notifies via DATABASE console if
+  // any were deleted while the bot was offline. Non-fatal — bot continues normally.
+  runConfigValidation(client).catch((err) => {
+    logger.warn(`[Startup] Config validation gagal (non-fatal): ${err?.message}`);
   });
 
   // ── Startup summary ────────────────────────────────────────────────────────

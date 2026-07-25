@@ -132,6 +132,22 @@ function _withTimeout(promise, ms, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// ── Cancellable sleep ─────────────────────────────────────────────────────────
+//
+// Used for exponential backoff between provider/method switches.
+// Resolves early (with no error) when the AbortSignal fires — this way the
+// caller's catch() block handles abort via the standard _isAborted() path
+// rather than seeing a spurious rejection here.
+function _sleep(ms, signal) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (signal) {
+      const onAbort = () => { clearTimeout(timer); resolve(); };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
 // ── Binary bootstrap ──────────────────────────────────────────────────────────
 //
 // FIX: ensureBinary() used to run a GitHub API version-check on EVERY request.
@@ -1055,6 +1071,17 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
           break;
         }
         if (i < YOUTUBE_METHODS.length - 1) {
+          // Exponential backoff when YouTube returns an anti-bot challenge.
+          // Pausing before the next player-client reduces the risk of the same
+          // IP being immediately re-challenged by a different client type.
+          const isAntiBotErr = translated.message.toLowerCase().includes("anti-bot") ||
+                               translated.message.toLowerCase().includes("not a bot");
+          if (isAntiBotErr && !signal?.aborted) {
+            const backoffMs = Math.min(1500 * Math.pow(2, i), 8000); // 1.5s → 3s → 6s → 8s cap
+            logger.info(`[ytmp3gg] [Provider ${providerNum}] Anti-Bot backoff — ${backoffMs}ms sebelum method ${i + 2}`);
+            await _sleep(backoffMs, signal);
+            if (signal?.aborted) { bestError = Object.assign(new Error("Dibatalkan (timeout tahap)"), { name: "AbortError" }); ytdlpFailed = true; break; }
+          }
           logger.info(`[ytmp3gg] [Provider ${providerNum}] Switch → yt-dlp method ${i + 2}/${YOUTUBE_METHODS.length}`);
         }
       }
@@ -1426,6 +1453,16 @@ async function _ytdlTikTok(input, type, quality, onProgress, signal) {
       if (_isPermanentFailure(lastError)) {
         logger.info(`[ytmp3gg] Permanent failure — stopping TikTok fallback`);
         break;
+      }
+
+      // Exponential backoff between TikTok method switches.
+      // TikTok's CDN is aggressive with rate limiting — a small delay before
+      // trying the next app_name / UA set reduces consecutive 403 rejections.
+      if (i < TIKTOK_METHODS.length - 1 && !signal?.aborted) {
+        const backoffMs = Math.min(500 + 500 * i, 3000); // 500ms, 1s, 1.5s … 3s cap
+        logger.debug(`[ytmp3gg] TikTok method ${i + 1} failed — backoff ${backoffMs}ms sebelum method ${i + 2}`);
+        await _sleep(backoffMs, signal);
+        if (signal?.aborted) { lastError = Object.assign(new Error("Dibatalkan (timeout tahap)"), { name: "AbortError" }); break; }
       }
     }
   }
