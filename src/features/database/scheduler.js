@@ -42,6 +42,8 @@ export function startAutoBackupScheduler(client) {
   if (_timer) clearInterval(_timer);
   // Cek setiap 5 menit
   _timer = setInterval(_checkAndRun, 5 * 60 * 1000);
+  // .unref() so this timer doesn't prevent clean process exit on SIGTERM/SIGINT
+  if (_timer.unref) _timer.unref();
   logger.info("[Database/Scheduler] Auto backup scheduler aktif (cek setiap 5 menit)");
 }
 

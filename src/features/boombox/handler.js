@@ -22,6 +22,8 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -359,6 +361,47 @@ function tryCleanup(tmpDir) {
     }
   } catch (e) {
     logger.warn(`[BoomBox] Temp cleanup failed for ${tmpDir}: ${e.message}`);
+  }
+}
+
+/**
+ * Remove any stale BoomBox temp directories left behind by a previous
+ * crash or SIGKILL that prevented the normal finally-block cleanup from
+ * running. Safe to call at startup; individual failures are ignored.
+ *
+ * Patterns cleaned: boombox-*, boombox-piped-*, boombox-inv-*,
+ *                   bb-race-ytdlp-*, bb-race-ytdlc-*
+ * (all created by src/services/ytmp3gg.js via fs.mkdtempSync)
+ */
+export function cleanupStaleBoomBoxTempDirs() {
+  try {
+    const tmpBase = os.tmpdir();
+    const STALE_PREFIXES = ["boombox-", "boombox-piped-", "boombox-inv-", "bb-race-ytdlp-", "bb-race-ytdlc-"];
+    let entries;
+    try {
+      entries = fs.readdirSync(tmpBase);
+    } catch (e) {
+      logger.warn(`[BoomBox] Startup cleanup: failed to read tmpdir: ${e.message}`);
+      return;
+    }
+
+    let cleaned = 0;
+    for (const entry of entries) {
+      if (!STALE_PREFIXES.some(prefix => entry.startsWith(prefix))) continue;
+      const fullPath = path.join(tmpBase, entry);
+      try {
+        fs.rmSync(fullPath, { recursive: true, force: true });
+        cleaned++;
+      } catch {
+        // Ignore individual failures — may be owned by another process or already gone.
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info(`[BoomBox] Startup cleanup: removed ${cleaned} stale temp dir(s) from ${tmpBase}`);
+    }
+  } catch (e) {
+    logger.warn(`[BoomBox] Startup cleanup failed: ${e.message}`);
   }
 }
 

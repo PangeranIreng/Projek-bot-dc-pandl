@@ -8,6 +8,10 @@
  * time that user happens to trigger a premiumDB read, and no expiration
  * would ever be logged to the Premium Dashboard. This turns that into an
  * active process running on an interval.
+ *
+ * Error isolation: each individual expiry is wrapped in its own try-catch
+ * so that a single failure (e.g., role revoke fails for one user) does NOT
+ * skip the remaining expirations in the same sweep tick.
  */
 
 import { IDS } from "../../../config/constants.js";
@@ -27,32 +31,55 @@ async function sweepOnce(client) {
     // ── Expired Premium users → revoke role, delete record, log ──────────
     // NOTE: the record (with its expiresAt/type) is captured BEFORE deleting
     // it — logging after deletion would have nothing left to describe.
+    //
+    // Each user is processed in its own try-catch so that one failure
+    // (e.g. Discord rate-limit on role revoke) never skips the remaining users.
     for (const userId of premDB.getExpiredPremiumUsers()) {
-      const record = premDB.getPremiumUser(userId);
-      premDB.deletePremiumUser(userId);
-      await revokePremiumRole(client, IDS.GUILD_ID, userId);
-      await appendToPremiumLog(client, {
-        action:      "Premium Expired",
-        target:      `<@${userId}>`,
-        expiredAt:   record?.expiresAt ?? new Date().toISOString(),
-        premiumLabel:"Temporary",
-      });
-      logger.info(`[Premium] Expired premium for user ${userId}`);
-      anyChanged = true;
+      try {
+        const record = premDB.getPremiumUser(userId);
+        premDB.deletePremiumUser(userId);
+        await revokePremiumRole(client, IDS.GUILD_ID, userId);
+        await appendToPremiumLog(client, {
+          action:      "Premium Expired",
+          target:      `<@${userId}>`,
+          expiredAt:   record?.expiresAt ?? new Date().toISOString(),
+          premiumLabel:"Temporary",
+        }).catch(() => {});
+        logger.info(`[Premium] Expired premium for user ${userId}`);
+        anyChanged = true;
+      } catch (itemErr) {
+        logger.error(`[Premium] Failed to expire premium for user ${userId}: ${itemErr.message}`);
+        logError({
+          feature: "Premium",
+          reason:  `Failed to expire premium for user ${userId}: ${itemErr.message}`,
+          stage:   "User Premium Expiry",
+          error:   itemErr,
+        }).catch(() => {});
+      }
     }
 
     // ── Expired Premium roles → just delete record, log ───────────────────
     for (const roleId of premDB.getExpiredPremiumRoles()) {
-      const record = premDB.getPremiumRole(roleId);
-      premDB.deletePremiumRole(roleId);
-      await appendToPremiumLog(client, {
-        action:      "Premium Expired",
-        target:      `<@&${roleId}>`,
-        expiredAt:   record?.expiresAt ?? new Date().toISOString(),
-        premiumLabel:"Temporary",
-      });
-      logger.info(`[Premium] Expired premium for role ${roleId}`);
-      anyChanged = true;
+      try {
+        const record = premDB.getPremiumRole(roleId);
+        premDB.deletePremiumRole(roleId);
+        await appendToPremiumLog(client, {
+          action:      "Premium Expired",
+          target:      `<@&${roleId}>`,
+          expiredAt:   record?.expiresAt ?? new Date().toISOString(),
+          premiumLabel:"Temporary",
+        }).catch(() => {});
+        logger.info(`[Premium] Expired premium for role ${roleId}`);
+        anyChanged = true;
+      } catch (itemErr) {
+        logger.error(`[Premium] Failed to expire premium for role ${roleId}: ${itemErr.message}`);
+        logError({
+          feature: "Premium",
+          reason:  `Failed to expire premium for role ${roleId}: ${itemErr.message}`,
+          stage:   "Role Premium Expiry",
+          error:   itemErr,
+        }).catch(() => {});
+      }
     }
 
     // ── Expired custom limits → revert to default AND log ─────────────────
@@ -61,28 +88,49 @@ async function sweepOnce(client) {
     // tidak masuk ke Premium Logs" bug. Now every expiry is logged, same as
     // Premium expiry above.
     for (const userId of premDB.getExpiredCustomLimitUsers()) {
-      const record = premDB.getRawCustomLimitUser(userId);
-      premDB.deleteCustomLimitUser(userId);
-      await appendToPremiumLog(client, {
-        action:    "Custom Limit Expired",
-        target:    `<@${userId}>`,
-        limit:     record?.limit ?? null,
-        expiredAt: record?.expiresAt ?? new Date().toISOString(),
-      });
-      logger.info(`[Premium] Expired custom limit for user ${userId}`);
-      anyChanged = true;
+      try {
+        const record = premDB.getRawCustomLimitUser(userId);
+        premDB.deleteCustomLimitUser(userId);
+        await appendToPremiumLog(client, {
+          action:    "Custom Limit Expired",
+          target:    `<@${userId}>`,
+          limit:     record?.limit ?? null,
+          expiredAt: record?.expiresAt ?? new Date().toISOString(),
+        }).catch(() => {});
+        logger.info(`[Premium] Expired custom limit for user ${userId}`);
+        anyChanged = true;
+      } catch (itemErr) {
+        logger.error(`[Premium] Failed to expire custom limit for user ${userId}: ${itemErr.message}`);
+        logError({
+          feature: "Premium",
+          reason:  `Failed to expire custom limit for user ${userId}: ${itemErr.message}`,
+          stage:   "User Custom Limit Expiry",
+          error:   itemErr,
+        }).catch(() => {});
+      }
     }
+
     for (const roleId of premDB.getExpiredCustomLimitRoles()) {
-      const record = premDB.getRawCustomLimitRole(roleId);
-      premDB.deleteCustomLimitRole(roleId);
-      await appendToPremiumLog(client, {
-        action:    "Custom Limit Expired",
-        target:    `<@&${roleId}>`,
-        limit:     record?.limit ?? null,
-        expiredAt: record?.expiresAt ?? new Date().toISOString(),
-      });
-      logger.info(`[Premium] Expired custom limit for role ${roleId}`);
-      anyChanged = true;
+      try {
+        const record = premDB.getRawCustomLimitRole(roleId);
+        premDB.deleteCustomLimitRole(roleId);
+        await appendToPremiumLog(client, {
+          action:    "Custom Limit Expired",
+          target:    `<@&${roleId}>`,
+          limit:     record?.limit ?? null,
+          expiredAt: record?.expiresAt ?? new Date().toISOString(),
+        }).catch(() => {});
+        logger.info(`[Premium] Expired custom limit for role ${roleId}`);
+        anyChanged = true;
+      } catch (itemErr) {
+        logger.error(`[Premium] Failed to expire custom limit for role ${roleId}: ${itemErr.message}`);
+        logError({
+          feature: "Premium",
+          reason:  `Failed to expire custom limit for role ${roleId}: ${itemErr.message}`,
+          stage:   "Role Custom Limit Expiry",
+          error:   itemErr,
+        }).catch(() => {});
+      }
     }
 
     // ── Update dashboards if anything changed ────────────────────────────
@@ -91,12 +139,12 @@ async function sweepOnce(client) {
     }
   } catch (e) {
     logger.error(`[Premium] Sweep failed: ${e.message}`);
-    await logError({
+    logError({
       feature: "Premium",
       reason:  `Sweep failed: ${e.message}`,
       stage:   "Premium Expiration Sweep",
       error:   e,
-    });
+    }).catch(() => {});
   }
 }
 
@@ -107,7 +155,17 @@ async function sweepOnce(client) {
 export function startPremiumSweep(client) {
   // Run once immediately so anything that expired while the bot was down
   // is cleaned up right away, then on a fixed interval afterwards.
-  sweepOnce(client);
-  setInterval(() => sweepOnce(client), SWEEP_INTERVAL_MS);
+  // .catch(() => {}) because sweepOnce already handles its own errors internally,
+  // but a catastrophic throw outside its try-catch would be an unhandled rejection.
+  sweepOnce(client).catch(() => {});
+
+  const timer = setInterval(() => {
+    sweepOnce(client).catch(() => {});
+  }, SWEEP_INTERVAL_MS);
+
+  // .unref() so this interval does not prevent the process from exiting cleanly
+  // on SIGTERM/SIGINT — the sweep is a background monitor, not a critical blocker.
+  if (timer.unref) timer.unref();
+
   logger.info(`[Premium] Expiration sweep started (every ${SWEEP_INTERVAL_MS / 1000}s)`);
 }

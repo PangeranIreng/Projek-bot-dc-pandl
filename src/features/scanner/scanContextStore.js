@@ -17,6 +17,10 @@ const store = new Map();
 export function saveScanContext(context) {
   const scanId = randomUUID();
   const timeout = setTimeout(() => store.delete(scanId), TTL_MS);
+  // .unref() so these TTL timers do not prevent the process from exiting
+  // cleanly on SIGTERM/SIGINT. If the process needs to stop, we don't need
+  // to wait for scan contexts to expire — they are ephemeral in-memory state.
+  if (timeout.unref) timeout.unref();
   store.set(scanId, { ...context, timeout });
   return scanId;
 }
