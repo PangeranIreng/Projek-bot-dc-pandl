@@ -24,7 +24,7 @@ import {
 import { db } from "../../../database/db.js";
 
 const COLOR  = 0xfaa61a;
-const FOOTER = "BoomBox V2 • Batas Durasi";
+const FOOTER = "BoomBox • Durasi";
 
 // Preset durasi (menit) yang umum dipakai
 const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60];
@@ -55,12 +55,12 @@ export async function buildDurationPanel(guild) {
     .setColor(COLOR)
     .setTitle("⏱️ Batas Durasi per Role")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       "Atur durasi video maksimal untuk setiap role.\n" +
       "Role tanpa pengaturan menggunakan **default 25 menit**.\n\n" +
       "**Role & Batas Durasi:**\n" +
       descBody + "\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -107,11 +107,11 @@ export function buildDurationSetPanel(role) {
     .setColor(COLOR)
     .setTitle(`⏱️ Atur Durasi — ${role.name}`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `Role: **${role.name}**\n` +
       `Durasi saat ini: ${current != null ? `**${current} menit**` : "_default (25 menit)_"}\n\n` +
       "Pilih durasi maksimal atau klik **Custom** untuk input manual.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -174,11 +174,11 @@ export function buildDurationSavedEmbed(roleName, minutes) {
     .setColor(0x57f287)
     .setTitle("✅ Batas Durasi Berhasil Diatur")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `🎭 **Role**: ${roleName}\n` +
       `⏱️ **Durasi Maksimal**: ${minutes} menit\n\n` +
       "Tersimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -189,10 +189,10 @@ export function buildDurationResetEmbed(roleName) {
     .setColor(0x57f287)
     .setTitle("🔄 Batas Durasi Direset")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `🎭 **Role**: ${roleName}\n` +
       "Kembali ke default: **25 menit**.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();

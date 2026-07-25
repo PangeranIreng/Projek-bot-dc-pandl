@@ -49,7 +49,7 @@ import {
 } from "discord.js";
 
 const TOOLS  = ["obfuscator", "beautify", "deobfuscator"];
-const FOOTER = "Lua Tools V1 • Setup Panel";
+const FOOTER = "Lua Tools • Setup";
 
 /**
  * Handle all interactions whose customId starts with "ltsetup:".
@@ -60,19 +60,26 @@ export async function handleLuaToolsSetupInteraction(interaction) {
 
   try {
 
-    // ── Kembali ke panel utama ────────────────────────────────────────────
-    if (id === "ltsetup:back" || id === "ltsetup:view") {
-      const panel = ltDB.isAnyConfigured()
-        ? buildLuaToolsConfiguredPanel()
-        : buildLuaToolsSetupPanel();
+    // ── Kembali ke panel utama / view / edit ─────────────────────────────
+    if (id === "ltsetup:back" || id === "ltsetup:view" || id === "ltsetup:edit") {
+      const panel = buildLuaToolsSetupPanel();
       await interaction.update({ embeds: [panel.embed], components: panel.components });
       return;
     }
 
-    // ── Ubah konfigurasi (buka wizard dari panel configured) ──────────────
-    if (id === "ltsetup:edit") {
-      const panel = buildLuaToolsSetupPanel();
-      await interaction.update({ embeds: [panel.embed], components: panel.components });
+    // ── Dropdown menu pilih opsi ──────────────────────────────────────────
+    if (id === "ltsetup:menu:select" && interaction.isStringSelectMenu()) {
+      const val = interaction.values[0];
+      if (val === "channel") {
+        const { embed, components } = buildChannelToolPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "logs") {
+        const { embed, components } = buildLogToolPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "reset") {
+        const { embed, components } = buildDeleteConfirmPanel();
+        await interaction.update({ embeds: [embed], components });
+      }
       return;
     }
 
@@ -96,14 +103,12 @@ export async function handleLuaToolsSetupInteraction(interaction) {
 
       const embed = new EmbedBuilder()
         .setColor(0x57f287)
-        .setTitle("✅ Setup Berhasil Dihapus")
+        .setTitle("✅ Konfigurasi Lua Tools Direset")
         .setDescription(
-          "━━━━━━━━━━━━━━━━━━\n\n" +
-          "Seluruh konfigurasi Lua Tools telah direset.\n\n" +
-          "Bot tidak akan memproses file .lua sampai di-setup ulang.\n\n" +
-          "━━━━━━━━━━━━━━━━━━"
+          "Seluruh konfigurasi Lua Tools telah dihapus.\n\n" +
+          "Bot tidak akan memproses file .lua sampai di-setup ulang."
         )
-        .setFooter({ text: FOOTER })
+        .setFooter({ text: "Lua Tools • Setup" })
         .setTimestamp();
 
       const row = new ActionRowBuilder().addComponents(

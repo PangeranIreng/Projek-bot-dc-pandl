@@ -21,7 +21,7 @@ import {
 import { ltDB } from "../../../database/db.js";
 
 const COLOR  = 0x5865f2;
-const FOOTER = "Lua Tools V1 • Setup Channel";
+const FOOTER = "Lua Tools • Channel";
 
 const TOOLS = [
   { key: "obfuscator",   emoji: "🔒", label: "Obfuscator" },
@@ -38,13 +38,13 @@ export function buildChannelToolPanel() {
     .setColor(COLOR)
     .setTitle("📺 Setup Channel — Lua Tools")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       "Pilih tool untuk mengatur channelnya.\n\n" +
       TOOLS.map(t => {
         const cur = ch[t.key] ? `<#${ch[t.key]}>` : "❌ Belum diatur";
         return `${t.emoji} **${t.label}**: ${cur}`;
       }).join("\n") +
-      "\n\n━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -77,10 +77,10 @@ export function buildChannelSelectPanel(toolKey) {
     .setColor(COLOR)
     .setTitle(`${tool.emoji} Pilih Channel — ${tool.label}`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `Channel saat ini: ${cur}\n\n` +
       `Pilih channel yang akan menerima file .lua untuk **${tool.label}**.\n\n` +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -116,11 +116,11 @@ export async function handleChannelSelected(interaction, toolKey) {
     .setColor(0xfaa61a)
     .setTitle(`${tool.emoji} ${tool.label} — Menunggu Konfirmasi`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `📌 **Channel dipilih**: <#${channel.id}>\n\n` +
       "⚠️ **Konfigurasi belum disimpan.**\n" +
       "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -156,10 +156,10 @@ export async function handleChannelSave(interaction, toolKey, channelId) {
     .setColor(0x57f287)
     .setTitle("✅ Channel Berhasil Disimpan")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `${tool.emoji} **${tool.label}** → <#${channelId}>\n\n` +
       "✅ Konfigurasi telah disimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();

@@ -2,7 +2,7 @@
  * setup/logsSetup.js — Sub-panel: Setup BoomBox Logs.
  *
  * BoomBox Logs menggunakan:
- *   - SATU global log channel (untuk log dashboard V2 publik)
+ *   - SATU global log channel (untuk log dashboard publik)
  *   - PER-PLATFORM log channel (YouTube Logs, TikTok Logs, Spotify Logs)
  *     → Log detail dikirim ke channel masing-masing setelah job selesai
  *
@@ -24,7 +24,7 @@ import { buildPublicLogPanel } from "../logs/viewer.js";
 import { logger }           from "../../../utils/logger.js";
 
 const COLOR  = 0x3ba4ff;
-const FOOTER = "BoomBox V2 • BoomBox Logs";
+const FOOTER = "BoomBox • Logs";
 
 const PLATFORM_LOG_META = {
   youtube: { emoji: "📺", label: "YouTube Logs" },
@@ -48,11 +48,11 @@ export function buildLogsPanel() {
     .setColor(COLOR)
     .setTitle("📋 Setup BoomBox Logs")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
-      `📌 **Global Log Channel** (Dashboard V2)\n${logChannel ? `<#${logChannel}>` : "❌ Belum diatur"}\n\n` +
+      "" +
+      `📌 **Global Log Channel** (Dashboard)\n${logChannel ? `<#${logChannel}>` : "❌ Belum diatur"}\n\n` +
       "📊 **Per-Platform Log Channels** (Log detail per platform)\n" +
       platLines.join("\n") +
-      "\n\n━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -125,11 +125,11 @@ export function buildLogChannelSelectPanel() {
     .setColor(COLOR)
     .setTitle("📌 Ganti Global Log Channel")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `Channel log saat ini: ${current ? `<#${current}>` : "❌ Belum diatur"}\n\n` +
-      "Pilih **satu channel** yang akan menerima **BoomBox Logs Dashboard V2** (panel publik).\n" +
+      "Pilih **satu channel** yang akan menerima **BoomBox Logs Dashboard** (panel publik).\n" +
       "Ini adalah panel ringkasan untuk semua platform.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -154,18 +154,18 @@ export function buildLogChannelSelectPanel() {
 export function buildLogChannelSavedEmbed(channelId, panelStatus = "created") {
   const statusLine =
     panelStatus === "edited"
-      ? "✏️ Panel BoomBox Logs lama berhasil diperbarui ke tampilan V2."
+      ? "✏️ Panel BoomBox Logs lama berhasil diperbarui ke tampilan terbaru."
       : "📤 Panel BoomBox Logs V2 berhasil dikirim ke channel.";
 
   return new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle("✅ Log Channel Berhasil Diatur")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `📌 **Log Channel**: <#${channelId}>\n\n` +
       `${statusLine}\n\n` +
       "Semua BoomBox Logs (YouTube, TikTok, Spotify) akan dikirim ke channel ini.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -192,7 +192,7 @@ export async function handleLogChannelSelected(interaction) {
           const old = await logCh.messages.fetch(state.messageId);
           await old.edit(payload);
           panelStatus = "edited";
-          logger.info(`[BoomBox] Log panel V2 berhasil diedit di #${channel.name}`);
+          logger.info(`[BoomBox] Log panel berhasil diedit di #${channel.name}`);
         } catch {
           logger.info("[BoomBox] Pesan panel lama tidak ditemukan, membuat baru.");
         }
@@ -238,11 +238,11 @@ export function buildPlatformLogSelectPanel(platform) {
     .setColor(COLOR)
     .setTitle(`${emoji} Setup ${label}`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `Channel log saat ini: ${current ? `<#${current}>` : "❌ Belum diatur"}\n\n` +
       `Pilih channel yang akan menerima **log detail ${label}**.\n` +
       "Log sukses dan gagal akan dikirim ke channel ini setelah setiap job selesai.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -270,11 +270,11 @@ export function buildPlatformLogPendingEmbed(platform, channelId) {
     .setColor(0xfaa61a)
     .setTitle(`${emoji} ${label} — Menunggu Konfirmasi`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `📌 **Channel dipilih**: <#${channelId}>\n\n` +
       "⚠️ **Konfigurasi belum disimpan.**\n" +
       "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -286,11 +286,11 @@ export function buildPlatformLogSavedEmbed(platform, channelId) {
     .setColor(0x57f287)
     .setTitle(`✅ ${label} Channel Berhasil Disimpan`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `${emoji} **Platform**: ${label}\n` +
       `📌 **Channel**: <#${channelId}>\n\n` +
       "✅ Konfigurasi telah disimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();

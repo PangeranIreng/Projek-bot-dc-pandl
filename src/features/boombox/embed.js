@@ -16,8 +16,8 @@ const COLOR_SUCCESS    = 0x57f287; // Green
 const COLOR_DURATION   = 0xfaa61a; // Orange — limit notice, not an error
 const COLOR_ERROR      = 0xed4245; // Red
 const COLOR_QUEUE      = 0xfee75c; // Yellow — waiting, not an error
-const FOOTER_TEXT      = "Powered by PangeranAsisten | BoomBox";
-const SEP14            = "━━━━━━━━━━━━━━";
+const FOOTER_TEXT      = "BoomBox";
+const SEP14            = "";
 
 // BoomBox Logs archive embed — deliberately separate colors/footer/emoji set
 // from the rest of the module: it's a public, no-user-info history channel.
@@ -109,15 +109,10 @@ export function buildProcessingEmbed(stepIndex = 0, thumbnail = null, labelOverr
 export function buildQueueEmbed(user, position, total, etaSec) {
   return new EmbedBuilder()
     .setColor(COLOR_QUEUE)
-    .setTitle("🎵 BoomBox Queue")
+    .setTitle("🎵 BoomBox — Antrean")
     .setDescription(
       `<@${user.id}>\n\n` +
-      "Link berhasil diterima.\n\n" +
-      `**Posisi antrean:**\n#${position}${total > 1 ? ` dari ${total}` : ""}\n\n` +
-      `**Estimasi:**\n±${etaSec} detik\n\n` +
-      "Mohon tunggu.\n" +
-      "BoomBox akan otomatis dikirim ketika proses selesai.\n\n" +
-      "_Pesan ini hanya dapat dilihat oleh kamu._",
+      `⏳ Posisi: **#${position}**${total > 1 ? ` dari ${total}` : ""}  |  ±${etaSec}s`,
     )
     .setFooter({ text: FOOTER_TEXT });
 }
@@ -171,7 +166,6 @@ export function buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usag
       { name: "📊 Daily Limit", value: limitLine,    inline: false },
       { name: "⚡ Waktu",       value: timingValue,  inline: false },
     )
-    .setDescription(SEP14)
     .setFooter({ text: providerLabel ? `${FOOTER_TEXT} • via ${providerLabel}` : FOOTER_TEXT })
     .setTimestamp();
 

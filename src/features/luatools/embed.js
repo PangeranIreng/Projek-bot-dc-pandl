@@ -17,7 +17,7 @@ export function buildProcessingEmbed(tool) {
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(`${emoji} ${label}`)
-    .setDescription("━━━━━━━━━━━━━━━━━━\n\nFile sedang diproses...\n\n━━━━━━━━━━━━━━━━━━")
+    .setDescription("⠋ Memproses file...")
     .setFooter({ text: FOOTER });
 }
 
@@ -26,12 +26,7 @@ export function buildChannelSuccessEmbed(tool) {
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(`${emoji} ${label}`)
-    .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
-      "✅ **Berhasil**\n\n" +
-      "📬 File telah dikirim ke DM.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
-    )
+    .setDescription("✅ Berhasil diproses — file tersedia di bawah.")
     .setFooter({ text: FOOTER })
     .setTimestamp();
 }
@@ -51,7 +46,6 @@ export function buildDmEmbed(tool, { inputFile, outputFile, duration }) {
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(`${emoji} ${label}`)
-    .setDescription("━━━━━━━━━━━━━━━━━━")
     .addFields(fields)
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -90,7 +84,6 @@ export function buildLogEmbed(tool, { user, inputFile, outputFile, inputSize, ou
   return new EmbedBuilder()
     .setColor(ok ? color : COLOR_ERROR)
     .setTitle(`${emoji} ${label}`)
-    .setDescription("━━━━━━━━━━━━━━━━━━")
     .addFields(fields)
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -155,7 +148,6 @@ export function buildErrorLogEmbed(tool, { user, guild, channel, fileName, fileS
   return new EmbedBuilder()
     .setColor(COLOR_ERROR)
     .setTitle(`❌ Error Log — ${label}`)
-    .setDescription("━━━━━━━━━━━━━━━━━━")
     .addFields(fields)
     .setFooter({ text: FOOTER })
     .setTimestamp();

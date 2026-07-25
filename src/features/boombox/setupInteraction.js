@@ -79,19 +79,37 @@ export async function handleSetupBoomBoxInteraction(interaction) {
 
   try {
 
-    // ── Kembali ke panel utama ────────────────────────────────────────────
-    if (id === "bbsetup:back") {
-      const { embed, components } = db.isConfigured()
-        ? buildConfiguredBoomBoxPanel()
-        : buildSetupBoomBoxPanel();
+    // ── Kembali ke panel utama / view ────────────────────────────────────
+    if (id === "bbsetup:back" || id === "bbsetup:edit") {
+      const { embed, components } = buildSetupBoomBoxPanel();
       await interaction.update({ embeds: [embed], components });
       return;
     }
 
-    // ── Edit konfigurasi (dari configured panel) ──────────────────────────
-    if (id === "bbsetup:edit") {
-      const { embed, components } = buildSetupBoomBoxPanel();
-      await interaction.update({ embeds: [embed], components });
+    // ── Dropdown menu pilih opsi ──────────────────────────────────────────
+    if (id === "bbsetup:menu:select" && interaction.isStringSelectMenu()) {
+      const val = interaction.values[0];
+      if (val === "channel") {
+        const { embed, components } = buildChannelPlatformPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "logs") {
+        const { embed, components } = buildLogsPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "maintenance") {
+        const { embed, components } = buildMaintenancePanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "monitor") {
+        const backRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("bbsetup:back").setLabel("🔙 Kembali").setStyle(ButtonStyle.Secondary),
+        );
+        await interaction.update({ embeds: [buildMonitorEmbed()], components: [backRow] });
+      } else if (val === "duration") {
+        const { embed, components } = buildDurationPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "reset") {
+        const { embed, components } = buildDeleteConfirmPanel();
+        await interaction.update({ embeds: [embed], components });
+      }
       return;
     }
 
@@ -123,27 +141,17 @@ export async function handleSetupBoomBoxInteraction(interaction) {
 
       const embed = new EmbedBuilder()
         .setColor(0x57f287)
-        .setTitle("✅ Konfigurasi Berhasil Dihapus")
+        .setTitle("✅ Konfigurasi BoomBox Direset")
         .setDescription(
-          "━━━━━━━━━━━━━━━━━━\n\n" +
-          "Seluruh konfigurasi channel BoomBox telah direset.\n\n" +
-          "Bot tidak akan memproses permintaan BoomBox sampai di-setup ulang.\n\n" +
-          "━━━━━━━━━━━━━━━━━━"
+          "Seluruh konfigurasi channel BoomBox telah dihapus.\n\n" +
+          "Bot tidak akan memproses BoomBox sampai di-setup ulang."
         )
-        .setFooter({ text: "BoomBox V2 • Setup Panel" })
+        .setFooter({ text: "BoomBox • Setup" })
         .setTimestamp();
 
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("bbsetup:edit")
-          .setLabel("Setup Ulang")
-          .setEmoji("✏️")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("bbsetup:close")
-          .setLabel("Tutup")
-          .setEmoji("❌")
-          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("bbsetup:back").setLabel("Setup Ulang").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("bbsetup:close").setLabel("Tutup").setStyle(ButtonStyle.Secondary),
       );
 
       await interaction.update({ embeds: [embed], components: [row] });

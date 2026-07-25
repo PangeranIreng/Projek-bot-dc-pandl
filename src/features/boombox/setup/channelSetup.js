@@ -22,7 +22,7 @@ import {
 import { db } from "../../../database/db.js";
 
 const COLOR  = 0x5865f2;
-const FOOTER = "BoomBox V2 • Setup Channel";
+const FOOTER = "BoomBox • Channel";
 
 const PLATFORM_LABELS = {
   youtube: { emoji: "📺", label: "YouTube" },
@@ -44,10 +44,10 @@ export function buildChannelPlatformPanel() {
     .setColor(COLOR)
     .setTitle("📺 Setup Channel")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       "Pilih platform yang ingin dikonfigurasi channelnya.\n\n" +
       lines.join("\n") + "\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -87,10 +87,10 @@ export function buildChannelSelectPanel(platform) {
     .setColor(COLOR)
     .setTitle(`${emoji} Setup Channel — ${label}`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `Channel saat ini: ${current ? `<#${current}>` : "❌ Belum diatur"}\n\n` +
       `Pilih channel Discord yang akan menjadi channel **BoomBox ${label}**.\n\n` +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -121,12 +121,12 @@ export function buildChannelPendingEmbed(platform, channelId) {
     .setColor(0xfaa61a)
     .setTitle(`${emoji} ${label} — Menunggu Konfirmasi`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `${emoji} **Platform**: ${label}\n` +
       `📌 **Channel dipilih**: <#${channelId}>\n\n` +
       "⚠️ **Konfigurasi belum disimpan.**\n" +
       "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -141,11 +141,11 @@ export function buildChannelSavedEmbed(platform, channelId) {
     .setColor(0x57f287)
     .setTitle(`✅ Channel ${label} Berhasil Disimpan`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `${emoji} **Platform**: ${label}\n` +
       `📌 **Channel**: <#${channelId}>\n\n` +
       "✅ Konfigurasi telah disimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();

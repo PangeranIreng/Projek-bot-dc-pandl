@@ -694,8 +694,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       // V2: Duration limit menggunakan effective limit dari role member
       if (info?.duration !== null && info?.duration > maxDurationSec) {
         logger.info(`[BoomBox] Rejected: dur ${info.duration}s > ${maxDurationSec}s`);
-        await statusMsg.delete().catch(() => {});
-        await message.channel.send({
+        await statusMsg.edit({
           content:    userMention,
           embeds:     [buildDurationLimitEmbed(info.duration, maxDurationSec)],
           components: [],
@@ -793,8 +792,7 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
     const elapsedMs = Date.now() - startedAt;
     const embed     = buildResultEmbed(platform, ytResult, boomboxUrl, elapsedMs, usageInfo, downloadMs, uploadMs);
     const row       = buildButtons(boomboxUrl);
-    await statusMsg.delete().catch(() => {});
-    await message.channel.send({ content: userMention, embeds: [embed], components: [row] });
+    await statusMsg.edit({ content: userMention, embeds: [embed], components: [row] }).catch(() => {});
     resultSent = true;
 
     // ── Append to BoomBox Logs ────────────────────────────────────────────
@@ -831,11 +829,10 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       return;
     }
 
-    await statusMsg.delete().catch(() => {});
     try {
-      await message.channel.send({ content: userMention, embeds: [buildUserErrorEmbed()] });
-    } catch (sendErr) {
-      logger.error(`[BoomBox] Failed to send error to channel: ${sendErr.message}`);
+      await statusMsg.edit({ content: userMention, embeds: [buildUserErrorEmbed()], components: [] });
+    } catch (editErr) {
+      logger.error(`[BoomBox] Failed to edit error embed: ${editErr.message}`);
     }
 
   } finally {

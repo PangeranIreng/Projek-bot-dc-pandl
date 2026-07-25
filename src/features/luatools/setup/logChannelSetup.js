@@ -21,7 +21,7 @@ import {
 import { ltDB } from "../../../database/db.js";
 
 const COLOR  = 0x3ba4ff;
-const FOOTER = "Lua Tools V1 • Setup Logs";
+const FOOTER = "Lua Tools • Logs";
 
 const TOOLS = [
   { key: "obfuscator",   emoji: "🔒", label: "Obfuscator Logs" },
@@ -38,13 +38,13 @@ export function buildLogToolPanel() {
     .setColor(COLOR)
     .setTitle("📋 Setup Log Channel — Lua Tools")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       "Pilih tool untuk mengatur log channelnya.\n\n" +
       TOOLS.map(t => {
         const cur = log[t.key] ? `<#${log[t.key]}>` : "❌ Belum diatur";
         return `${t.emoji} **${t.label}**: ${cur}`;
       }).join("\n") +
-      "\n\n━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -77,10 +77,10 @@ export function buildLogChannelSelectPanel(toolKey) {
     .setColor(COLOR)
     .setTitle(`${tool.emoji} Pilih Log Channel — ${tool.label}`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `Channel saat ini: ${cur}\n\n` +
       `Pilih channel yang akan menerima logs untuk **${tool.label}**.\n\n` +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER });
 
@@ -116,11 +116,11 @@ export async function handleLogChannelSelected(interaction, toolKey) {
     .setColor(0xfaa61a)
     .setTitle(`${tool.emoji} ${tool.label} — Menunggu Konfirmasi`)
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `📌 **Channel dipilih**: <#${channel.id}>\n\n` +
       "⚠️ **Konfigurasi belum disimpan.**\n" +
       "Tekan **💾 Simpan** untuk menyimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -156,10 +156,10 @@ export async function handleLogChannelSave(interaction, toolKey, channelId) {
     .setColor(0x57f287)
     .setTitle("✅ Log Channel Berhasil Disimpan")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       `${tool.emoji} **${tool.label}** → <#${channelId}>\n\n` +
       "✅ Konfigurasi telah disimpan ke database.\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();

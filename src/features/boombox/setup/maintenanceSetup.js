@@ -19,7 +19,7 @@ import {
 import { db } from "../../../database/db.js";
 
 const COLOR  = 0xed4245;
-const FOOTER = "BoomBox V2 • Maintenance";
+const FOOTER = "BoomBox • Maintenance";
 
 function statusEmoji(active) {
   return active ? "🔴" : "🟢";
@@ -39,11 +39,11 @@ export function buildMaintenancePanel() {
     .setColor(COLOR)
     .setTitle("🛠️ Maintenance BoomBox")
     .setDescription(
-      "━━━━━━━━━━━━━━━━━━\n\n" +
+      "" +
       "Klik platform untuk toggle maintenance.\n" +
       "Saat maintenance aktif, user akan mendapat pesan:\n" +
       "> 🚧 *BoomBox sedang maintenance. Silakan coba lagi beberapa saat lagi.*\n\n" +
-      "━━━━━━━━━━━━━━━━━━"
+      ""
     )
     .addFields(
       {

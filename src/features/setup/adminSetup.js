@@ -48,6 +48,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
   ChannelSelectMenuBuilder,
   RoleSelectMenuBuilder,
   ChannelType,
@@ -144,17 +145,20 @@ function _buildMainEmbed() {
 function _buildMainComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("db:setup:open").setLabel("📊 Database").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("bbsetup:back").setLabel("🎵 BoomBox").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ltsetup:view").setLabel("📜 Lua Tools").setStyle(ButtonStyle.Primary),
+      new StringSelectMenuBuilder()
+        .setCustomId("setup:category:select")
+        .setPlaceholder("📂 Pilih sistem yang ingin dikonfigurasi...")
+        .addOptions([
+          { label: "📊 Database",      value: "database",  description: "Bot Setting, Backup, Console, Member List" },
+          { label: "🎵 BoomBox",       value: "boombox",   description: "Channel, Log, Maintenance, Monitor, Durasi" },
+          { label: "📜 Lua Tools",     value: "luatools",  description: "Channel Obfuscator, Beautify, Deobfuscator" },
+          { label: "🎫 Ticket",        value: "ticket",    description: "Panel, Log, Mention Role, Claim Channel" },
+          { label: "🐞 Bug & Feature", value: "bug",       description: "Panel, Log, Developer Role" },
+          { label: "👑 Premium Stats", value: "premium",   description: "Channel panel statistik premium" },
+        ]),
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("setup:ticket:main").setLabel("🎫 Ticket").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("setup:bug:main").setLabel("🐞 Bug & Feature").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("setup:prem:main").setLabel("👑 Premium Stats").setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("setup:close").setLabel("❌ Tutup").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -296,6 +300,47 @@ export async function handleAdminSetupInteraction(interaction) {
         embeds:     [_buildMainEmbed()],
         components: _buildMainComponents(),
       });
+      return;
+    }
+
+    // ── Dropdown kategori ──────────────────────────────────────────────────
+    if (id === "setup:category:select" && interaction.isStringSelectMenu()) {
+      if (await _denyNotStaff(interaction)) return;
+      const val = interaction.values[0];
+      if (val === "database") {
+        // Teruskan ke handler Database (db:setup:open sudah menangani ini)
+        interaction.customId = "db:setup:open";
+        const { handleDatabaseInteraction } = await import("../database/interaction.js");
+        await handleDatabaseInteraction(interaction);
+      } else if (val === "boombox") {
+        interaction.customId = "bbsetup:back";
+        const { handleSetupBoomBoxInteraction } = await import("../boombox/setupInteraction.js");
+        await handleSetupBoomBoxInteraction(interaction);
+      } else if (val === "luatools") {
+        interaction.customId = "ltsetup:view";
+        const { handleLuaToolsSetupInteraction } = await import("../luatools/setupInteraction.js");
+        await handleLuaToolsSetupInteraction(interaction);
+      } else if (val === "ticket") {
+        // Langsung tampilkan panel ticket inline
+        const cfg = ticketDB.getConfig();
+        await interaction.update({
+          embeds:     [_buildTicketEmbed()],
+          components: _buildTicketComponents(!!(cfg.panelChannelId || cfg.logsChannelId)),
+        });
+      } else if (val === "bug") {
+        if (await _denyNotOwner(interaction)) return;
+        const cfg = bugReportDB.getConfig();
+        await interaction.update({
+          embeds:     [_buildBugEmbed()],
+          components: _buildBugComponents(!!(cfg.panelChannelId || cfg.logsChannelId)),
+        });
+      } else if (val === "premium") {
+        const state = premDB.getPremStatsDashboardState();
+        await interaction.update({
+          embeds:     [_buildPremEmbed()],
+          components: _buildPremComponents(!!(state?.channelId)),
+        });
+      }
       return;
     }
 
