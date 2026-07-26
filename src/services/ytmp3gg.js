@@ -23,9 +23,32 @@ import ytdlCore                from "@distube/ytdl-core";
 import { kaizenDownload }      from "./kaizenDownloader.js";
 import { logger }              from "../utils/logger.js";
 import * as providerHealth     from "./providerHealth.js";
+import { classifyError, ERROR_CATEGORY } from "./providerHealth.js";
+import { recordProviderResult }          from "./providerMonitor.js";
 import { FFMPEG_PATH, ffmpegAvailable } from "../utils/ffmpegPath.js";
 import { COOKIES_ARGS, hasCookies, markCookiesUsed } from "../utils/cookiesResolver.js";
 import { ENV_INFO }                     from "../utils/envDetector.js";
+
+// ── Temporary cookie disable ──────────────────────────────────────────────────
+// If cookies cause an error (expired, invalid format, etc.), we disable them
+// temporarily so the pipeline can continue without cookies rather than
+// failing every attempt due to a bad credential file.
+
+let _cookiesDisabledUntil = 0;
+const COOKIES_DISABLE_DURATION_MS = 10 * 60_000; // 10 minutes
+
+function _cookiesTemporarilyDisabled() {
+  return Date.now() < _cookiesDisabledUntil;
+}
+
+export function disableCookiesTemporarily(durationMs = COOKIES_DISABLE_DURATION_MS) {
+  _cookiesDisabledUntil = Date.now() + durationMs;
+  logger.warn(`[ytmp3gg] Cookies disabled temporarily for ${durationMs / 60_000}min due to cookie error — retrying without cookies`);
+}
+
+export function resetCookieDisable() {
+  _cookiesDisabledUntil = 0;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN_DIR   = path.join(__dirname, "..", "..", "bin");
@@ -370,8 +393,15 @@ async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120
   const audioFmt = type === "mp4" ? "m4a" : "mp3";
   const audioQ   = type === "mp3" ? `${quality}K` : "0";
 
-  const cookieArgs = /tiktok\.com/i.test(input) ? [] : COOKIES_ARGS;
+  // Use cookies unless: (a) TikTok URL (no cookies needed), or (b) cookies
+  // temporarily disabled due to a recent cookie error (e.g. expired file).
+  const cookieArgs = (/tiktok\.com/i.test(input) || _cookiesTemporarilyDisabled())
+    ? []
+    : COOKIES_ARGS;
   if (cookieArgs.length > 0) markCookiesUsed();
+  if (_cookiesTemporarilyDisabled() && COOKIES_ARGS.length > 0) {
+    logger.debug("[ytmp3gg] Cookies temporarily disabled — running without cookies for this attempt");
+  }
   const args = [
     "--ffmpeg-location", FFMPEG_PATH,
     ...cookieArgs,        // YouTube cookies for YouTube/Spotify paths only
@@ -860,13 +890,13 @@ const YOUTUBE_METHODS = [
 ];
 
 /** Per-method timeout — fail fast so fallback loop stays responsive.
- * Methods 1–3: 20s (most YouTube downloads finish in < 15s on fast paths).
- * Methods 4–4: 30s (android client is slower to start).
- * Last method:  90s (full budget for slow connections / large files). */
+ * Methods 0–2: 15s (fast YouTube paths — android_vr, web_creator).
+ * Method 3:    25s (android client is slower to start, but still fail-fast).
+ * Last method: 60s (full budget for slow connections or large files). */
 function _methodTimeout(i) {
-  if (i < 3) return 20_000;
-  if (i < YOUTUBE_METHODS.length - 1) return 30_000;
-  return 90_000;
+  if (i < 3) return 15_000;
+  if (i < YOUTUBE_METHODS.length - 1) return 25_000;
+  return 60_000;
 }
 
 /**
@@ -927,9 +957,51 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signa
     `ytdl-core getInfo timed out (>${YTDL_CORE_INFO_TIMEOUT_MS / 1000}s)`,
   );
 
+  // Auto-detect best audio format — do NOT hardcode "highestaudio" blindly.
+  // Filter to audio-only tracks, sort by bitrate descending, prefer m4a/opus.
+  // Falls back to any audio format if the preferred types are unavailable.
+  const audioFormats = ytdlCore.filterFormats(info.formats ?? [], "audioonly");
+  if (!audioFormats.length) {
+    // No audio-only formats? Try best overall (may include video track)
+    const allFormats = info.formats ?? [];
+    const anyAudio = allFormats.filter(f => f.hasAudio).sort((a, b) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
+    if (!anyAudio.length) throw new Error("ytdl-core: no audio formats available for this video");
+    logger.warn(`[ytmp3gg] ytdl-core: no audio-only formats — using best muxed format (${anyAudio[0].container})`);
+    const stream = ytdlCore.downloadFromInfo(info, { format: anyAudio[0] });
+    const ext = "m4a";
+    const outputFile = path.join(tmpDir, `audio.${ext}`);
+    await _pipeStreamWithTimeout(stream, outputFile, YTDL_CORE_DOWNLOAD_TIMEOUT_MS, signal);
+    // Re-use finalFile logic below
+    const audioFmt2  = type === "mp4" ? "m4a" : "mp3";
+    const finalFile2 = path.join(tmpDir, `audio_final.${audioFmt2}`);
+    if (audioFmt2 === "m4a") {
+      fs.renameSync(outputFile, finalFile2);
+    } else {
+      const ffmpegArgs2 = ["-y", "-i", outputFile, "-vn", "-b:a", `${quality}k`, finalFile2];
+      await execFileAsync(FFMPEG_PATH, ffmpegArgs2, { timeout: 60_000, signal });
+      try { fs.unlinkSync(outputFile); } catch {}
+    }
+    const details2  = info.videoDetails ?? {};
+    const title2    = details2.title || null;
+    const duration2 = details2.lengthSeconds ? parseInt(details2.lengthSeconds, 10) : null;
+    const uploader2 = details2.author?.name || null;
+    const thumb2    = details2.thumbnails?.at(-1)?.url || null;
+    const stat2     = await fs.promises.stat(finalFile2);
+    logger.info(`[ytmp3gg] ✅ ytdl-core muxed fallback | title="${title2}" (${(stat2.size / 1024).toFixed(1)} KB)`);
+    return { title: title2, thumbnail: thumb2, uploader: uploader2, duration: duration2, type, quality: String(quality), localFile: finalFile2, tmpDir, provider: "ytdl-core" };
+  }
+
+  // Sort by bitrate descending — pick the highest quality audio-only stream.
+  // Prefer m4a/opus (no re-encode needed if target is m4a), otherwise pick by bitrate.
+  const m4aFormats  = audioFormats.filter(f => f.container === "mp4" || f.mimeType?.includes("m4a"));
+  const sortedFmts  = (m4aFormats.length ? m4aFormats : audioFormats)
+    .sort((a, b) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
+  const bestFmt     = sortedFmts[0];
+  logger.info(`[ytmp3gg] ytdl-core — selected format: ${bestFmt.container ?? "?"} ${bestFmt.audioBitrate ?? "?"}kbps (id=${bestFmt.itag})`);
+
   const ext        = "m4a";
   const outputFile = path.join(tmpDir, `audio.${ext}`);
-  const stream      = ytdlCore.downloadFromInfo(info, { quality: "highestaudio", filter: "audioonly" });
+  const stream     = ytdlCore.downloadFromInfo(info, { format: bestFmt });
 
   await _pipeStreamWithTimeout(stream, outputFile, YTDL_CORE_DOWNLOAD_TIMEOUT_MS, signal);
 
@@ -1130,10 +1202,17 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
 
     // Don't count truly deleted/private videos against yt-dlp health.
     if (!_isAborted(bestError, signal) && !_isPermanentFailure(bestError)) {
+      const cat = classifyError(bestError.message);
       providerHealth.recordFailure("yt-dlp-youtube", {
         reason:    bestError.message,
-        isTimeout: bestError.message.toLowerCase().includes("timeout"),
+        isTimeout: cat === ERROR_CATEGORY.NETWORK,
+        category:  cat,
       });
+      // If error is cookie-related, temporarily disable cookies so the
+      // fallback chain and future requests don't hit the same cookie wall.
+      if (cat === ERROR_CATEGORY.COOKIE) {
+        disableCookiesTemporarily();
+      }
     }
   }
 
@@ -1158,16 +1237,20 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
     logger.warn(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: OFFLINE | Reason: 5x consecutive failure — switch to next`);
   } else if (!signal?.aborted) {
     logger.info(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: Trying`);
+    const ytdlcStart = Date.now();
     try {
       const result = await _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signal);
       providerHealth.recordSuccess("ytdl-core");
+      recordProviderResult("ytdl-core", { success: true, durationMs: Date.now() - ytdlcStart });
       logger.info(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: SUCCESS`);
       return { ...result, provider: "ytdl-core" };
     } catch (err) {
       if (_isAborted(err, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw err; }
-      logger.warn(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: FAILED | Reason: ${err.message}`);
+      const cat = classifyError(err.message);
+      logger.warn(`[ytmp3gg] [Provider ${providerNum}] ytdl-core | Status: FAILED | Category: ${cat} | Reason: ${err.message}`);
       bestError = _betterError(bestError, Object.assign(err, { priority: err.priority ?? 2 }));
-      providerHealth.recordFailure("ytdl-core", { reason: err.message, isTimeout: err.message.toLowerCase().includes("timeout") });
+      providerHealth.recordFailure("ytdl-core", { reason: err.message, isTimeout: cat === ERROR_CATEGORY.NETWORK, category: cat });
+      recordProviderResult("ytdl-core", { success: false, durationMs: Date.now() - ytdlcStart, reason: err.message, errorCategory: cat });
     }
   }
 
@@ -1180,16 +1263,20 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
   } else if (!signal?.aborted) {
     await onProgress?.("Trying alternative API...");
     logger.info(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: Trying | Endpoint: kaizenapi.my.id/downloader/youtube`);
+    const kaizenStart = Date.now();
     try {
       const result = await kaizenDownload(input, type, quality, tmpDir, signal);
       providerHealth.recordSuccess("kaizenapi");
+      recordProviderResult("kaizenapi", { success: true, durationMs: Date.now() - kaizenStart });
       logger.info(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: SUCCESS`);
       return { ...result, provider: "kaizen" };
     } catch (kaizenErr) {
       if (_isAborted(kaizenErr, signal)) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} throw kaizenErr; }
-      logger.warn(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: FAILED | Reason: ${kaizenErr.message}`);
+      const cat = classifyError(kaizenErr.message);
+      logger.warn(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: FAILED | Category: ${cat} | Reason: ${kaizenErr.message}`);
       bestError = _betterError(bestError, Object.assign(kaizenErr, { priority: kaizenErr.priority ?? 2 }));
-      providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: kaizenErr.message.toLowerCase().includes("timeout") });
+      providerHealth.recordFailure("kaizenapi", { reason: kaizenErr.message, isTimeout: cat === ERROR_CATEGORY.NETWORK, category: cat });
+      recordProviderResult("kaizenapi", { success: false, durationMs: Date.now() - kaizenStart, reason: kaizenErr.message, errorCategory: cat });
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     }
   }
@@ -1244,14 +1331,49 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
 }
 
 // ── Piped API fallback ────────────────────────────────────────────────────────
-// Fetches the audio stream URL from public Piped instances (piped.video / kavin.rocks)
-// and downloads with yt-dlp using the resolved URL, bypassing YouTube bot detection.
+// Fetches the audio stream URL from public Piped instances and downloads with
+// yt-dlp using the resolved URL, bypassing YouTube bot detection.
+//
+// V2 improvements:
+//   - Per-instance health tracking: failed instances are skipped for 15 min
+//   - Faster timeout: 5s per instance (not 12s) — fail fast, move to next
+//   - More instances: larger pool increases resilience
+//   - Skip instance immediately if audio stream is absent (no delay)
 
 const PIPED_INSTANCES = [
   "https://pipedapi.kavin.rocks",
   "https://piped-api.garudalinux.org",
   "https://pipedapi.in",
+  "https://api.piped.projectsegfau.lt",
+  "https://pipedapi.drgns.space",
+  "https://piped-api.codeberg.page",
 ];
+
+/** Per-instance failure tracking: instance URL → { failures, disabledUntil } */
+const _pipedInstanceHealth = new Map();
+const PIPED_INSTANCE_DISABLE_MS = 15 * 60_000; // 15 min per failed instance
+const PIPED_INSTANCE_FAIL_THRESHOLD = 2;        // 2 consecutive fails → skip
+
+function _isPipedInstanceHealthy(instance) {
+  const h = _pipedInstanceHealth.get(instance);
+  if (!h) return true;
+  if (h.disabledUntil && Date.now() < h.disabledUntil) return false;
+  return true;
+}
+
+function _recordPipedSuccess(instance) {
+  _pipedInstanceHealth.delete(instance); // reset on success
+}
+
+function _recordPipedFailure(instance) {
+  const h = _pipedInstanceHealth.get(instance) ?? { failures: 0, disabledUntil: null };
+  h.failures++;
+  if (h.failures >= PIPED_INSTANCE_FAIL_THRESHOLD) {
+    h.disabledUntil = Date.now() + PIPED_INSTANCE_DISABLE_MS;
+    logger.warn(`[ytmp3gg] Piped instance ${instance} disabled for ${PIPED_INSTANCE_DISABLE_MS / 60_000}min after ${h.failures} failures`);
+  }
+  _pipedInstanceHealth.set(instance, h);
+}
 
 function _extractYouTubeId(url) {
   const m = String(url).match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
@@ -1260,35 +1382,65 @@ function _extractYouTubeId(url) {
 
 async function _pipedFallback(input, type, quality, tmpDir, onProgress, signal) {
   const videoId = _extractYouTubeId(input);
-  if (!videoId) throw new Error("Piped: could not extract YouTube video ID");
+  if (!videoId) throw new Error("Piped: could not extract YouTube video ID from URL");
 
-  let audioUrl = null;
+  let audioUrl   = null;
   let videoTitle = null;
 
-  for (const instance of PIPED_INSTANCES) {
+  // Try each instance — skip unhealthy ones, fast-fail per instance (5s)
+  const healthy = PIPED_INSTANCES.filter(_isPipedInstanceHealthy);
+  if (healthy.length === 0) {
+    // All instances temporarily disabled — reset the oldest one and try again
+    logger.warn("[ytmp3gg] All Piped instances are temporarily disabled — resetting health for retry");
+    for (const inst of PIPED_INSTANCES) _pipedInstanceHealth.delete(inst);
+    healthy.push(...PIPED_INSTANCES.slice(0, 2));
+  }
+
+  for (const instance of healthy) {
     if (signal?.aborted) break;
+    const t0 = Date.now();
     try {
-      const res = await _withTimeout(
-        fetch(`${instance}/streams/${videoId}`, {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5_000); // 5s per instance
+      let res;
+      try {
+        res = await fetch(`${instance}/streams/${videoId}`, {
           headers: { "User-Agent": "Mozilla/5.0 (compatible; BoomBox/1.0)" },
-          signal,
-        }),
-        12_000,
-        "Piped API request timed out",
-      );
-      if (!res.ok) continue;
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) {
+        logger.warn(`[ytmp3gg] Piped ${instance} → HTTP ${res.status} — skipping`);
+        _recordPipedFailure(instance);
+        continue;
+      }
       const data = await res.json();
-      videoTitle = data.title ?? null;
+      videoTitle  = data.title ?? null;
       const streams = (data.audioStreams ?? [])
         .filter(s => s.mimeType && (s.mimeType.includes("audio") || s.mimeType.includes("mp4a")))
         .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
-      if (streams[0]?.url) { audioUrl = streams[0].url; break; }
+      if (streams[0]?.url) {
+        audioUrl = streams[0].url;
+        _recordPipedSuccess(instance);
+        logger.info(`[ytmp3gg] Piped ${instance} → audio stream found (${Date.now() - t0}ms)`);
+        break;
+      }
+      // API returned OK but no audio streams — still count as failure
+      logger.warn(`[ytmp3gg] Piped ${instance} — no audio streams in response, trying next`);
+      _recordPipedFailure(instance);
     } catch (e) {
-      logger.warn(`[ytmp3gg] Piped instance ${instance} failed: ${e.message}`);
+      if (e.name === "AbortError") {
+        logger.warn(`[ytmp3gg] Piped ${instance} timed out (5s) — skipping`);
+      } else {
+        logger.warn(`[ytmp3gg] Piped ${instance} failed: ${e.message}`);
+      }
+      _recordPipedFailure(instance);
     }
   }
 
-  if (!audioUrl) throw new Error("Piped: no audio stream URL found on any instance");
+  if (!audioUrl) throw new Error("Piped: nenhum audio stream found on any healthy instance");
 
   // Download the resolved stream URL directly with yt-dlp
   const audioFmt = type === "mp4" ? "m4a" : "mp3";
@@ -1303,12 +1455,13 @@ async function _pipedFallback(input, type, quality, tmpDir, onProgress, signal) 
     "--audio-quality", audioQ,
     "--no-warnings",
     "--no-simulate",
+    "--socket-timeout", "10",
     "-o", outTpl,
     audioUrl,
   ];
 
-  const { stdout } = await execFileAsync(BIN_PATH, args, {
-    timeout:   120_000,
+  await execFileAsync(BIN_PATH, args, {
+    timeout:   90_000,
     maxBuffer: 1 * 1024 * 1024,
   });
 
@@ -1318,7 +1471,7 @@ async function _pipedFallback(input, type, quality, tmpDir, onProgress, signal) 
   return {
     localFile: path.join(tmpDir, files[0]),
     tmpDir,
-    title:    videoTitle,
+    title:     videoTitle,
     thumbnail: null,
     uploader:  "Piped",
     duration:  null,
@@ -1329,43 +1482,90 @@ async function _pipedFallback(input, type, quality, tmpDir, onProgress, signal) 
 
 // ── Invidious API fallback ────────────────────────────────────────────────────
 // Fetches audio stream URLs from public Invidious instances.
+// V2: per-instance health tracking, 5s timeout per instance.
 
 const INVIDIOUS_INSTANCES = [
   "https://inv.nadeko.net",
   "https://invidious.snopyta.org",
   "https://vid.puffyan.us",
   "https://invidious.tiekoetter.com",
+  "https://invidious.privacydev.net",
+  "https://invidious.lunar.icu",
 ];
+
+/** Per-instance failure tracking for Invidious (same pattern as Piped). */
+const _invidiousInstanceHealth = new Map();
+const INVIDIOUS_DISABLE_MS    = 15 * 60_000;
+const INVIDIOUS_FAIL_THRESHOLD = 2;
+
+function _isInvidiousHealthy(inst) {
+  const h = _invidiousInstanceHealth.get(inst);
+  if (!h) return true;
+  if (h.disabledUntil && Date.now() < h.disabledUntil) return false;
+  return true;
+}
+function _recordInvidiousSuccess(inst) { _invidiousInstanceHealth.delete(inst); }
+function _recordInvidiousFailure(inst) {
+  const h = _invidiousInstanceHealth.get(inst) ?? { failures: 0, disabledUntil: null };
+  h.failures++;
+  if (h.failures >= INVIDIOUS_FAIL_THRESHOLD) {
+    h.disabledUntil = Date.now() + INVIDIOUS_DISABLE_MS;
+    logger.warn(`[ytmp3gg] Invidious ${inst} disabled for ${INVIDIOUS_DISABLE_MS / 60_000}min`);
+  }
+  _invidiousInstanceHealth.set(inst, h);
+}
 
 async function _invidiousFallback(input, type, quality, tmpDir, onProgress, signal) {
   const videoId = _extractYouTubeId(input);
-  if (!videoId) throw new Error("Invidious: could not extract YouTube video ID");
+  if (!videoId) throw new Error("Invidious: could not extract YouTube video ID from URL");
 
   let audioUrl = null;
 
-  for (const instance of INVIDIOUS_INSTANCES) {
+  const healthyInst = INVIDIOUS_INSTANCES.filter(_isInvidiousHealthy);
+  if (healthyInst.length === 0) {
+    for (const inst of INVIDIOUS_INSTANCES) _invidiousInstanceHealth.delete(inst);
+    healthyInst.push(...INVIDIOUS_INSTANCES.slice(0, 2));
+  }
+
+  for (const instance of healthyInst) {
     if (signal?.aborted) break;
     try {
-      const res = await _withTimeout(
-        fetch(`${instance}/api/v1/videos/${videoId}?fields=adaptiveFormats,title`, {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5_000); // 5s per instance
+      let res;
+      try {
+        res = await fetch(`${instance}/api/v1/videos/${videoId}?fields=adaptiveFormats,title`, {
           headers: { "User-Agent": "Mozilla/5.0 (compatible; BoomBox/1.0)" },
-          signal,
-        }),
-        12_000,
-        "Invidious API request timed out",
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
+          signal:  controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) {
+        _recordInvidiousFailure(instance);
+        continue;
+      }
+      const data    = await res.json();
       const formats = (data.adaptiveFormats ?? [])
         .filter(f => (f.type ?? "").includes("audio"))
         .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
-      if (formats[0]?.url) { audioUrl = formats[0].url; break; }
+      if (formats[0]?.url) {
+        audioUrl = formats[0].url;
+        _recordInvidiousSuccess(instance);
+        break;
+      }
+      _recordInvidiousFailure(instance);
     } catch (e) {
-      logger.warn(`[ytmp3gg] Invidious instance ${instance} failed: ${e.message}`);
+      if (e.name === "AbortError") {
+        logger.warn(`[ytmp3gg] Invidious ${instance} timed out (5s) — skipping`);
+      } else {
+        logger.warn(`[ytmp3gg] Invidious instance ${instance} failed: ${e.message}`);
+      }
+      _recordInvidiousFailure(instance);
     }
   }
 
-  if (!audioUrl) throw new Error("Invidious: no audio stream URL found on any instance");
+  if (!audioUrl) throw new Error("Invidious: no audio stream URL found on any healthy instance");
 
   const audioFmt = type === "mp4" ? "m4a" : "mp3";
   const audioQ   = type === "mp3" ? `${quality}K` : "0";

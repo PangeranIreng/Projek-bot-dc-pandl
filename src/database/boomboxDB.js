@@ -37,6 +37,9 @@ const DEFAULT_DASHBOARD = {
 };
 
 const DEFAULT_DB = {
+  // Provider monitoring stats — persisted between restarts.
+  // Keyed by provider label (human-readable), e.g. "yt-dlp (YouTube)".
+  providerMonitor: {},
   settings: {
     freeDailyLimit: BOOMBOX_CONFIG.DEFAULT_FREE_DAILY_LIMIT,
     // V2: Per-platform channel IDs (null = belum di-setup)
@@ -119,6 +122,8 @@ export class BoomBoxDB {
       return {
         ...def,
         ...parsed,
+        // Preserve existing providerMonitor data, falling back to empty object
+        providerMonitor: { ...(def.providerMonitor ?? {}), ...(parsed.providerMonitor ?? {}) },
         settings: {
           ...def.settings,
           ...(parsed.settings ?? {}),
@@ -719,5 +724,24 @@ export class BoomBoxDB {
       durationFormat: "auto",
     };
     this._save();
+  }
+
+  // ── Provider Monitor ──────────────────────────────────────────────────────
+
+  /**
+   * Get persisted provider monitoring stats.
+   * @returns {Record<string, object>}
+   */
+  getProviderMonitor() {
+    return { ...(this._data.providerMonitor ?? {}) };
+  }
+
+  /**
+   * Persist provider monitoring stats.
+   * @param {Record<string, object>} stats
+   */
+  setProviderMonitor(stats) {
+    this._data.providerMonitor = stats;
+    this._scheduleSave(); // debounced — high-frequency, non-critical
   }
 }

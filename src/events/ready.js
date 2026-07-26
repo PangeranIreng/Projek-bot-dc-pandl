@@ -20,6 +20,7 @@ import { initWorkerManager, setWorkerManagerClient } from "../features/queue/wor
 import { cleanupStaleBoomBoxTempDirs } from "../features/boombox/handler.js";
 import { db } from "../database/db.js";
 import { runConfigValidation } from "../utils/configValidator.js";
+import { initProviderMonitor } from "../services/providerMonitor.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -42,6 +43,9 @@ export async function handleReady(client, secrets, state) {
   // Clean up any stale BoomBox temp directories left behind by a previous crash
   // or SIGKILL that prevented the normal finally-block cleanup from running.
   cleanupStaleBoomBoxTempDirs();
+
+  // Initialize provider monitor (persists stats across restarts via boombox-db.json)
+  initProviderMonitor(db);
 
   // Pre-download / version-check the yt-dlp binary once at startup so the
   // first BoomBox request doesn't pay a GitHub API round-trip, and concurrent

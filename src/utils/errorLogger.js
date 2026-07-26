@@ -6,6 +6,7 @@
  *   - Error deduplication: same (feature+stage+reason) within 5 min → skip
  *   - Queues errors that arrive before the client is ready
  *   - Fields: Feature, Stage, Reason, Suggestion, Stack, Timestamp
+ *   - V2: errorCategory, durationMs, retryCount, rootCause, activeProvider
  *
  * Exports:
  *   initErrorLogger(client)  — call once in clientReady
@@ -75,18 +76,23 @@ export function initErrorLogger(client) {
  * Returns a promise that always resolves (never rejects).
  *
  * @param {{
- *   feature:     string,
- *   reason:      string,
- *   stage:       string,
- *   suggestion?: string,
- *   user?:       string,
- *   guild?:      string,
- *   channel?:    string,
- *   command?:    string,
- *   error?:      Error,
- *   provider?:   string,
- *   status?:     string,
- *   action?:     string,
+ *   feature:         string,
+ *   reason:          string,
+ *   stage:           string,
+ *   suggestion?:     string,
+ *   user?:           string,
+ *   guild?:          string,
+ *   channel?:        string,
+ *   command?:        string,
+ *   error?:          Error,
+ *   provider?:       string,
+ *   status?:         string,
+ *   action?:         string,
+ *   errorCategory?:  string,   — e.g. "NetworkError", "CookieError", "AntiBot"
+ *   durationMs?:     number,   — time spent on the failed operation (ms)
+ *   retryCount?:     number,   — how many retries were attempted
+ *   rootCause?:      string,   — original error before translation
+ *   activeProvider?: string,   — which provider was active when error occurred
  * }} payload
  */
 export async function logError(payload) {
@@ -106,7 +112,12 @@ export async function logError(payload) {
 }
 
 async function _sendError(payload) {
-  const { feature, reason, stage, suggestion, user, guild, channel, command, error, provider, status, action } = payload ?? {};
+  const {
+    feature, reason, stage, suggestion, user, guild, channel, command, error,
+    provider, status, action,
+    // V2 extended fields
+    errorCategory, durationMs, retryCount, rootCause, activeProvider,
+  } = payload ?? {};
 
   const fields = [
     { name: "🔧 Feature",  value: String(feature || "Unknown"),                             inline: true  },
@@ -118,9 +129,30 @@ async function _sendError(payload) {
     fields.push({ name: "💡 Suggestion", value: truncate(String(suggestion), 512), inline: false });
   }
 
-  if (provider) fields.push({ name: "📡 Provider", value: String(provider), inline: true });
+  // V2: Error category — what kind of error is this?
+  if (errorCategory) fields.push({ name: "🏷️ Kategori Error",  value: String(errorCategory), inline: true });
+
+  if (provider || activeProvider) {
+    fields.push({ name: "📡 Provider", value: String(activeProvider ?? provider), inline: true });
+  }
   if (status)   fields.push({ name: "🚦 Status",   value: String(status),   inline: true });
   if (action)   fields.push({ name: "➡️ Action",   value: String(action),   inline: true });
+
+  // V2: Duration and retry count
+  if (typeof durationMs === "number") {
+    const durStr = durationMs >= 1000
+      ? `${(durationMs / 1000).toFixed(1)}s`
+      : `${durationMs}ms`;
+    fields.push({ name: "⏱️ Durasi",       value: durStr,               inline: true });
+  }
+  if (typeof retryCount === "number") {
+    fields.push({ name: "🔄 Retry",        value: String(retryCount),    inline: true });
+  }
+
+  // V2: Root cause (original error before translation)
+  if (rootCause && rootCause !== reason) {
+    fields.push({ name: "🔍 Root Cause", value: truncate(String(rootCause), 512), inline: false });
+  }
 
   if (command) fields.push({ name: "💡 Command",  value: String(command), inline: true });
   if (user)    fields.push({ name: "👤 User",     value: `<@${user}>`,    inline: true });
