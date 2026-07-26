@@ -203,7 +203,6 @@ export async function handleCookieUploadMessage(message) {
   return true;
 }
 
-/** Test cookies by running yt-dlp with --simulate on a short YouTube video. */
 /** Resolve the yt-dlp binary path (system path first, then bundled). */
 function _resolveYtdlpBinSync() {
   const BIN_DIR = path.join(PROJECT_ROOT, "bin");
@@ -222,32 +221,175 @@ function _resolveYtdlpBinSync() {
   return "yt-dlp";
 }
 
+/**
+ * Classify a yt-dlp error into one of 7 categories without exposing cookie values.
+ *
+ * Returns:
+ *   { category, embedTitle, reason, solution, conclusive }
+ *
+ * conclusive: true  → definitely a cookie problem (record as failed test)
+ * conclusive: false → inconclusive; cookies may still be valid
+ */
+function _classifyYtdlpError(rawStderr, exitCode) {
+  const raw = rawStderr ?? "";
+  const s   = raw.toLowerCase();
+
+  // ── 1. yt-dlp binary missing ────────────────────────────────────────────
+  if (exitCode === 127 || /no such file or directory|enoent/i.test(raw)) {
+    return {
+      category:   "ytdlp-missing",
+      embedTitle: "yt-dlp Tidak Ditemukan",
+      reason:     "Binary yt-dlp tidak ditemukan di sistem. Bot mungkin belum selesai download binary.",
+      solution:   "• Tunggu beberapa menit lalu coba lagi\n• Jika masalah berlanjut, restart bot",
+      conclusive: false,
+    };
+  }
+
+  // ── 2. Anti-bot / rate limit (check before auth to avoid misclassification) ─
+  if (/429|too many requests|rate.?limit|unusual traffic|automated|captcha|please verify|confirm you.re not a bot/i.test(s)) {
+    return {
+      category:   "anti-bot",
+      embedTitle: "Anti-Bot / Rate Limit",
+      reason:     "YouTube mendeteksi traffic otomatis dan membatasi akses dari IP server ini.",
+      solution:   "• Tunggu beberapa menit sebelum test ulang\n• Cookies kemungkinan **masih valid** — ini bukan masalah cookies",
+      conclusive: false,
+    };
+  }
+
+  // ── 3. Cookies expired ──────────────────────────────────────────────────
+  if (/expired|kedaluwarsa/i.test(s) &&
+      /sign in|log in|login|session|cookie|auth/i.test(s)) {
+    return {
+      category:   "cookies-expired",
+      embedTitle: "Cookies Kedaluwarsa",
+      reason:     "Session YouTube sudah expired — cookies tidak lagi diterima.",
+      solution:   "• Login ulang ke YouTube di browser\n• Ekspor cookies baru menggunakan `Get cookies.txt LOCALLY`\n• Import ulang melalui Resource Manager",
+      conclusive: true,
+    };
+  }
+
+  // ── 4. Cookies invalid / auth required ─────────────────────────────────
+  if (/sign in|log in|login|not logged in|please sign|confirm your age|requires authentication|this video requires/i.test(s)) {
+    return {
+      category:   "cookies-invalid",
+      embedTitle: "Cookies Tidak Valid",
+      reason:     "YouTube meminta sign-in — cookies tidak dikenali, salah format, atau sudah tidak berlaku.",
+      solution:   "• Pastikan kamu sudah **login** ke YouTube di browser\n• Ekspor ulang cookies menggunakan ekstensi `Get cookies.txt LOCALLY` atau `EditThisCookie`\n• Import ulang melalui Resource Manager",
+      conclusive: true,
+    };
+  }
+
+  // ── 5. Network error ────────────────────────────────────────────────────
+  if (/unable to download webpage|failed to establish|connection refused|connection reset|timed out|timeout|ssl error|getaddrinfo|eof occurred|network is unreachable|broken pipe/i.test(s)) {
+    return {
+      category:   "network",
+      embedTitle: "Network Error",
+      reason:     "Tidak dapat terhubung ke YouTube dari server.",
+      solution:   "• Periksa koneksi internet server\n• Coba lagi beberapa saat\n• Cookies tidak diubah statusnya — mungkin masih valid",
+      conclusive: false,
+    };
+  }
+
+  // ── 6. Extractor / parser error ─────────────────────────────────────────
+  if (/extractorerror|unable to extract|parsing json|parsing error|regex/i.test(s)) {
+    return {
+      category:   "extractor",
+      embedTitle: "Extractor Error",
+      reason:     "yt-dlp gagal mem-parse halaman YouTube. YouTube mungkin mengubah struktur halamannya.",
+      solution:   "• Cookies kemungkinan **masih valid** — ini bukan masalah cookies\n• Pertimbangkan untuk update yt-dlp ke versi terbaru",
+      conclusive: false,
+    };
+  }
+
+  // ── 7. Video-level error (NOT a cookies problem) ────────────────────────
+  if (/video unavailable|private video|has been removed|does not exist|this video is not available|geo.?restrict|not available in your country|age.?restrict|members?.only|premium|format is not available|requested format/i.test(s)) {
+    return {
+      category:   "video-error",
+      embedTitle: "Video Error (Bukan Masalah Cookies)",
+      reason:     "Video test tidak dapat diakses (dihapus, privat, dibatasi wilayah, atau format tidak tersedia). Ini **bukan** masalah cookies.",
+      solution:   "• Cookies kemungkinan **valid** — ini adalah error pada video test\n• Autentikasi berhasil, namun video test bermasalah",
+      conclusive: false,
+    };
+  }
+
+  // ── Unknown ─────────────────────────────────────────────────────────────
+  return {
+    category:   "unknown",
+    embedTitle: "Error Tidak Dikenal",
+    reason:     null,
+    solution:   "• Cek log bot untuk detail lebih lanjut\n• Coba test ulang beberapa saat kemudian",
+    conclusive: false,
+  };
+}
+
+/**
+ * Test cookies by fetching YouTube video metadata via yt-dlp.
+ *
+ * Uses --print "%(id)s::%(title)s" WITHOUT --simulate so that format
+ * selection is never triggered. "Requested format is not available" and
+ * similar video/format errors can never occur with this approach.
+ *
+ * Returns:
+ *   { ok: true,  title, note? }
+ *   { ok: false, category, embedTitle, reason, solution, conclusive }
+ */
 async function _testCookiesPath(cookiesPath) {
   const ytdlpBin = _resolveYtdlpBinSync();
+  // Rick Roll is highly reliable and publicly available worldwide.
   const testUrl  = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+
+  let stdout = "";
+  let stderr = "";
+  let exitCode = 0;
+
   try {
-    const { stdout, stderr } = await _execFileAsync(
+    const result = await _execFileAsync(
       ytdlpBin,
-      ["--cookies", cookiesPath, "--simulate", "--no-playlist", "--no-warnings", "--quiet", "--print", "title", testUrl],
+      [
+        "--cookies",    cookiesPath,
+        "--no-playlist",
+        "--no-warnings",
+        // Metadata-only print — does NOT trigger format selection.
+        // %(id)s and %(title)s are info-extractor fields, resolved before
+        // any download/format pipeline runs.
+        "--print",      "%(id)s::%(title)s",
+        testUrl,
+      ],
       { timeout: 30_000, env: process.env },
     );
-    const title = (stdout || "").trim();
-    const errText = (stderr || "").toLowerCase();
-    if (title && !errText.includes("sign in")) return { ok: true, title };
-    if (errText.includes("sign in") || errText.includes("login")) {
-      return { ok: false, reason: "Cookies tidak valid atau kedaluwarsa. Perbarui dari browser." };
-    }
-    return title ? { ok: true, title } : { ok: false, reason: _safeTestReason(errText) || "No output" };
+    stdout   = result.stdout ?? "";
+    stderr   = result.stderr ?? "";
+    exitCode = 0;
   } catch (err) {
-    const msg = (err.stderr || err.message || "").toLowerCase();
-    if (msg.includes("sign in") || msg.includes("cookies")) {
-      return { ok: false, reason: "Cookies tidak valid atau kedaluwarsa." };
-    }
-    if (msg.includes("not found") || msg.includes("ENOENT")) {
-      return { ok: false, reason: "yt-dlp tidak ditemukan. Bot belum selesai download binary." };
-    }
-    return { ok: false, reason: _safeTestReason(err.message) };
+    stdout   = err.stdout  ?? "";
+    stderr   = err.stderr  ?? err.message ?? "";
+    exitCode = err.code    ?? 1;
   }
+
+  // ── Parse output ─────────────────────────────────────────────────────────
+  const firstLine = (stdout.trim().split("\n")[0] ?? "").trim();
+  const sepIdx    = firstLine.indexOf("::");
+  const videoId   = sepIdx > 0 ? firstLine.slice(0, sepIdx).trim()  : "";
+  const title     = sepIdx > 0 ? firstLine.slice(sepIdx + 2).trim() : firstLine;
+
+  // A valid yt-dlp video ID is exactly 11 URL-safe characters.
+  if (videoId && /^[A-Za-z0-9_\-]{11}$/.test(videoId)) {
+    return { ok: true, title: title || videoId };
+  }
+
+  // ── Classify the error ────────────────────────────────────────────────────
+  const classification = _classifyYtdlpError(stderr, exitCode);
+
+  // Video/format errors mean auth SUCCEEDED — cookies are working.
+  if (classification.category === "video-error") {
+    return {
+      ok:    true,
+      title: "(autentikasi berhasil)",
+      note:  classification.reason,
+    };
+  }
+
+  return { ok: false, ...classification };
 }
 
 // ── Processing embed helper ───────────────────────────────────────────────────
@@ -543,16 +685,48 @@ export async function handleResourceManagerInteraction(interaction) {
 
       if (result.ok) {
         recordCookiesTest({ ok: true });
-        logger.info("[ResourceManager] Cookie test OK");
+        logger.info(`[ResourceManager] Cookie test OK — ${result.title ?? "n/a"}`);
+
+        let desc = `Cookies berhasil diverifikasi dan diterima YouTube.\n\n**Video test:** ${result.title}\n\nCookies aktif dan akan digunakan untuk semua request YouTube dan Spotify.`;
+        if (result.note) {
+          desc += `\n\n⚠️ Catatan: ${result.note}`;
+        }
+
         await interaction.editReply({
-          embeds: [_successEmbed("Cookies Valid ✅", `Cookies berhasil diverifikasi!\n\n**Video test:** ${result.title}\n\nCookies aktif dan akan digunakan untuk semua request YouTube dan Spotify.`)],
+          embeds: [_successEmbed("Cookies Valid ✅", desc)],
           components: [_backToCookiesRow()],
         });
       } else {
-        recordCookiesTest({ ok: false, reason: _safeTestReason(result.reason) });
-        logger.warn(`[ResourceManager] Cookie test FAILED: ${_safeTestReason(result.reason)}`);
+        // For conclusive failures (invalid/expired), record as failed.
+        // For inconclusive (network, anti-bot, extractor), still record for
+        // lastTestAt timestamp but with a neutral reason so panel stays 🟡.
+        const safeReason = result.conclusive
+          ? _safeTestReason(result.reason ?? result.embedTitle)
+          : `[${result.category}] ${_safeTestReason(result.reason ?? result.embedTitle)}`;
+
+        recordCookiesTest({ ok: false, reason: safeReason });
+        logger.warn(`[ResourceManager] Cookie test — ${result.category}: ${_safeTestReason(result.reason ?? result.embedTitle)}`);
+
+        // Build a category-specific embed
+        const categoryIcon = {
+          "cookies-invalid": "🔴",
+          "cookies-expired": "🔴",
+          "anti-bot":        "🟡",
+          "network":         "🟡",
+          "ytdlp-missing":   "🟡",
+          "extractor":       "🟡",
+          "video-error":     "🟡",
+          "unknown":         "🟡",
+        }[result.category] ?? "🔴";
+
+        const reasonLine = result.reason ? `**Penyebab:** ${result.reason}\n\n` : "";
+        const solutionLine = result.solution ? `**Solusi:**\n${result.solution}` : "";
+
         await interaction.editReply({
-          embeds: [_errorEmbed("Cookies Tidak Valid ❌", `${_safeTestReason(result.reason)}\n\n**Solusi:**\n• Ekspor ulang cookies dari browser\n• Pastikan kamu sudah login ke YouTube\n• Gunakan ekstensi seperti \`Get cookies.txt LOCALLY\``)],
+          embeds: [_errorEmbed(
+            `${categoryIcon} ${result.embedTitle ?? "Test Gagal"}`,
+            reasonLine + solutionLine,
+          )],
           components: [_backToCookiesRow()],
         });
       }
