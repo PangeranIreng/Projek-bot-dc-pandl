@@ -221,10 +221,13 @@ export function buildCookiesPanel() {
       statusLine
     )
     .addFields({
-      name: "ℹ️ Format",
+      name: "ℹ️ Format yang Didukung",
       value:
-        "File cookies.txt harus dalam format **Netscape** (diekspor dari browser).\n" +
-        "Gunakan ekstensi seperti `EditThisCookie` atau `Get cookies.txt LOCALLY`.",
+        "BoomBox otomatis mendeteksi dan mengkonversi semua format berikut:\n\n" +
+        "**1. Netscape cookies.txt** — ekspor dari ekstensi browser (`Get cookies.txt LOCALLY`, `EditThisCookie`)\n" +
+        "**2. Cookie Header** — satu pasang per baris (`NAMA=NILAI`)\n" +
+        "**3. Raw Browser Cookie** — satu baris panjang dipisahkan titik koma\n\n" +
+        "Owner cukup Copy → Paste. BoomBox mengurus parsing, konversi, validasi, dan penyimpanan.",
     })
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -284,10 +287,14 @@ export function buildCookiesPasteModal() {
 
   const input = new TextInputBuilder()
     .setCustomId("cookies_content")
-    .setLabel("Isi file cookies.txt (format Netscape)")
+    .setLabel("Paste cookies dalam format apapun")
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
-    .setPlaceholder("# Netscape HTTP Cookie File\n# https://curl.se/docs/http-cookies.html\n.youtube.com\tTRUE\t/\t...");
+    .setPlaceholder(
+      "Format 1 — Netscape:\n# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tFALSE\t0\tSID\t...\n\n" +
+      "Format 2 — Cookie Header (satu per baris):\nSID=...\nHSID=...\nSAPISD=...\n\n" +
+      "Format 3 — Raw Browser Cookie (satu baris):\nSID=...; HSID=...; SSID=...; SAPISID=..."
+    );
 
   modal.addComponents(new ActionRowBuilder().addComponents(input));
   return modal;

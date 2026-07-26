@@ -41,6 +41,8 @@ import {
   recordCookiesTest,
 } from "../../utils/cookiesResolver.js";
 
+import { parseCookiesAuto, formatLabel } from "../../utils/cookieParser.js";
+
 import {
   buildResourceManagerPanel,
   buildCookiesPanel,
@@ -160,20 +162,37 @@ export async function handleCookieUploadMessage(message) {
   try {
     const response = await fetch(attachment.url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const content = Buffer.from(await response.arrayBuffer()).toString("utf8");
-    const validation = validateCookiesContent(content);
-    if (!validation.ok) {
-      await message.reply(`❌ Format cookies tidak valid: ${validation.reason}`).catch(() => {});
-      return true;
-    }
-    if (!validation.hasYoutubeCookie) {
-      await message.reply("❌ File valid secara Netscape, tetapi tidak berisi cookie YouTube.").catch(() => {});
+    const rawContent = Buffer.from(await response.arrayBuffer()).toString("utf8");
+
+    // Auto-detect format and convert to Netscape
+    const parsed = parseCookiesAuto(rawContent);
+    if (!parsed.ok) {
+      await message.reply(`❌ ${parsed.reason}`).catch(() => {});
       return true;
     }
 
-    _saveCookies(content, "file");
+    // Validate the resulting Netscape content
+    const validation = validateCookiesContent(parsed.content);
+    if (!validation.ok) {
+      await message.reply(`❌ Validasi cookies gagal: ${validation.reason}`).catch(() => {});
+      return true;
+    }
+    if (!validation.hasYoutubeCookie) {
+      await message.reply("❌ Cookies berhasil diparsing, namun tidak berisi cookie domain YouTube yang dibutuhkan.").catch(() => {});
+      return true;
+    }
+
+    const sourceLabel = `file · ${formatLabel(parsed.format)}`;
+    _saveCookies(parsed.content, sourceLabel);
+
+    const countInfo = parsed.youtubeCookieCount != null
+      ? ` (${parsed.youtubeCookieCount} cookie relevan${parsed.totalParsed != null ? ` dari ${parsed.totalParsed}` : ""})`
+      : "";
+    logger.info(`[ResourceManager] Cookies imported via file (format: ${parsed.format})`);
+
     await message.reply(
-      "✅ Cookies berhasil disimpan secara permanen dan langsung diaktifkan untuk YouTube dan Spotify.\n" +
+      `✅ Cookies berhasil disimpan secara permanen dan langsung diaktifkan untuk YouTube dan Spotify.\n` +
+      `📋 Format terdeteksi: **${formatLabel(parsed.format)}**${countInfo}\n` +
       "Gunakan tombol **🧪 Test Cookies** pada panel Resource Manager.",
     ).catch(() => {});
     await message.delete().catch(() => {});
@@ -338,13 +357,24 @@ export async function handleResourceManagerInteraction(interaction) {
 
     // ── Modal: paste submit ──────────────────────────────────────────────
     if (id === "bbrm:cookies:modal:paste" && interaction.isModalSubmit()) {
-      const content = interaction.fields.getTextInputValue("cookies_content")?.trim() ?? "";
+      const rawContent = interaction.fields.getTextInputValue("cookies_content")?.trim() ?? "";
 
-      // Validate format
-      const validation = validateCookiesContent(content);
+      // Auto-detect format and convert to Netscape
+      const parsed = parseCookiesAuto(rawContent);
+      if (!parsed.ok) {
+        await interaction.reply({
+          embeds: [_errorEmbed("Cookies Tidak Dapat Diproses", parsed.reason)],
+          components: [_backToCookiesRow()],
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Validate the resulting Netscape content
+      const validation = validateCookiesContent(parsed.content);
       if (!validation.ok) {
         await interaction.reply({
-          embeds: [_errorEmbed("Format Cookies Tidak Valid", validation.reason)],
+          embeds: [_errorEmbed("Validasi Cookies Gagal", validation.reason)],
           components: [_backToCookiesRow()],
           ephemeral: true,
         });
@@ -352,7 +382,7 @@ export async function handleResourceManagerInteraction(interaction) {
       }
       if (!validation.hasYoutubeCookie) {
         await interaction.reply({
-          embeds: [_errorEmbed("Cookies YouTube Tidak Ditemukan", "Format Netscape valid, tetapi file tidak berisi cookie YouTube.")],
+          embeds: [_errorEmbed("Cookies YouTube Tidak Ditemukan", "Cookies berhasil diparsing, namun tidak berisi cookie domain YouTube yang dibutuhkan.")],
           components: [_backToCookiesRow()],
           ephemeral: true,
         });
@@ -360,8 +390,9 @@ export async function handleResourceManagerInteraction(interaction) {
       }
 
       // Save
+      const sourceLabel = `paste · ${formatLabel(parsed.format)}`;
       try {
-        _saveCookies(content, "paste");
+        _saveCookies(parsed.content, sourceLabel);
       } catch (err) {
         await interaction.reply({
           embeds: [_errorEmbed("Gagal Menyimpan Cookies", `Error: ${err.message}`)],
@@ -371,10 +402,14 @@ export async function handleResourceManagerInteraction(interaction) {
         return;
       }
 
-      logger.info("[ResourceManager] Cookies imported via paste");
+      logger.info(`[ResourceManager] Cookies imported via paste (format: ${parsed.format})`);
 
-      // Show success with option to test
-      const { embed, components } = buildCookiesPanel();
+      // Success message with detected format and cookie count
+      const countInfo = parsed.youtubeCookieCount != null
+        ? `\n🍪 Cookie relevan: **${parsed.youtubeCookieCount}**${parsed.totalParsed != null ? ` dari ${parsed.totalParsed} yang dibaca` : ""}`
+        : `\n🍪 Cookie YouTube: **${validation.youtubeCookieCount}**`;
+      const fmtInfo = `\n📋 Format terdeteksi: **${formatLabel(parsed.format)}**`;
+
       const testRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("bbrm:cookies:test").setLabel("🧪 Test Sekarang").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("bbrm:cookies:panel").setLabel("Lewati").setStyle(ButtonStyle.Secondary),
@@ -382,7 +417,12 @@ export async function handleResourceManagerInteraction(interaction) {
 
       await interaction.update({
         embeds: [
-          _successEmbed("Cookies Berhasil Disimpan", "Cookies YouTube telah disimpan dan langsung aktif untuk semua download YouTube dan Spotify.\n\nDisarankan untuk **test cookies** terlebih dahulu."),
+          _successEmbed(
+            "Cookies Berhasil Disimpan",
+            "Cookies YouTube telah disimpan dan langsung aktif untuk semua download YouTube dan Spotify." +
+            fmtInfo + countInfo +
+            "\n\nDisarankan untuk **test cookies** terlebih dahulu.",
+          ),
         ],
         components: [testRow],
       });
@@ -420,26 +460,37 @@ export async function handleResourceManagerInteraction(interaction) {
         return;
       }
 
-      // Validate format
-      const validation = validateCookiesContent(dl.content);
+      // Auto-detect format and convert to Netscape
+      const parsed = parseCookiesAuto(dl.content);
+      if (!parsed.ok) {
+        await interaction.editReply({
+          embeds: [_errorEmbed("Cookies Tidak Dapat Diproses", parsed.reason)],
+          components: [_backToCookiesRow()],
+        });
+        return;
+      }
+
+      // Validate the resulting Netscape content
+      const validation = validateCookiesContent(parsed.content);
       if (!validation.ok) {
         await interaction.editReply({
-          embeds: [_errorEmbed("Format Cookies Tidak Valid", validation.reason)],
+          embeds: [_errorEmbed("Validasi Cookies Gagal", validation.reason)],
           components: [_backToCookiesRow()],
         });
         return;
       }
       if (!validation.hasYoutubeCookie) {
         await interaction.editReply({
-          embeds: [_errorEmbed("Cookies YouTube Tidak Ditemukan", "Format Netscape valid, tetapi file tidak berisi cookie YouTube.")],
+          embeds: [_errorEmbed("Cookies YouTube Tidak Ditemukan", "Cookies berhasil diparsing, namun tidak berisi cookie domain YouTube yang dibutuhkan.")],
           components: [_backToCookiesRow()],
         });
         return;
       }
 
       // Save
+      const sourceLabel = `url · ${formatLabel(parsed.format)}`;
       try {
-        _saveCookies(dl.content, "url");
+        _saveCookies(parsed.content, sourceLabel);
       } catch (err) {
         await interaction.editReply({
           embeds: [_errorEmbed("Gagal Menyimpan Cookies", `Error: ${err.message}`)],
@@ -448,7 +499,12 @@ export async function handleResourceManagerInteraction(interaction) {
         return;
       }
 
-      logger.info("[ResourceManager] Cookies imported via URL");
+      logger.info(`[ResourceManager] Cookies imported via URL (format: ${parsed.format})`);
+
+      const countInfo = parsed.youtubeCookieCount != null
+        ? `\n🍪 Cookie relevan: **${parsed.youtubeCookieCount}**${parsed.totalParsed != null ? ` dari ${parsed.totalParsed} yang dibaca` : ""}`
+        : `\n🍪 Cookie YouTube: **${validation.youtubeCookieCount}**`;
+      const fmtInfo = `\n📋 Format terdeteksi: **${formatLabel(parsed.format)}**`;
 
       const testRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("bbrm:cookies:test").setLabel("🧪 Test Sekarang").setStyle(ButtonStyle.Success),
@@ -456,7 +512,11 @@ export async function handleResourceManagerInteraction(interaction) {
       );
 
       await interaction.editReply({
-        embeds: [_successEmbed("Cookies Berhasil Disimpan", "Cookies berhasil didownload dan disimpan. Sekarang aktif untuk YouTube dan Spotify.")],
+        embeds: [_successEmbed(
+          "Cookies Berhasil Disimpan",
+          "Cookies berhasil didownload dan disimpan. Sekarang aktif untuk YouTube dan Spotify." +
+          fmtInfo + countInfo,
+        )],
         components: [testRow],
       });
       return;
