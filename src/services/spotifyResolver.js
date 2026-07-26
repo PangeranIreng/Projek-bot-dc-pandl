@@ -151,18 +151,27 @@ export async function resolveSpotify(spotifyUrl) {
     }
   }
 
-  // Build yt-dlp ytsearch1 query — "<artist> - <title> official audio"
-  // The "official audio" suffix biases towards the correct upload and avoids
-  // fan covers or live performances as the top result.
-  const searchParts = [
-    artist,
-    artist ? "-" : "",
-    title,
-    "official audio",
-  ].filter(Boolean).join(" ");
+  // Build a prioritized list of yt-dlp ytsearch1 queries.
+  // The handler tries them in order — if one search returns nothing or fails,
+  // the next broader query is used instead of failing the whole Spotify request.
+  const searchCandidates = [];
 
-  const ytdlInput = `ytsearch1:${searchParts}`;
-  logger.info(`[Spotify] Search query: ${ytdlInput}`);
+  if (artist && title) {
+    // Primary: "Artist - Title official audio" — most specific
+    searchCandidates.push(`ytsearch1:${artist} - ${title} official audio`);
+    // Fallback 1: "Artist - Title" — without suffix (catches unlabelled uploads)
+    searchCandidates.push(`ytsearch1:${artist} - ${title}`);
+    // Fallback 2: "Title Artist" — inverted order, catches some re-uploads
+    searchCandidates.push(`ytsearch1:${title} ${artist}`);
+  } else if (title) {
+    searchCandidates.push(`ytsearch1:${title} official audio`);
+    searchCandidates.push(`ytsearch1:${title}`);
+  } else {
+    searchCandidates.push(`ytsearch1:${trackId}`);
+  }
 
-  return { trackId, title, artist, thumbnail, ytdlInput };
+  const ytdlInput = searchCandidates[0];
+  logger.info(`[Spotify] Primary search query: ${ytdlInput} (${searchCandidates.length} fallbacks available)`);
+
+  return { trackId, title, artist, thumbnail, ytdlInput, searchCandidates };
 }

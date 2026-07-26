@@ -124,7 +124,12 @@ export async function handleSetupBoomBoxInteraction(interaction) {
         );
         await interaction.update({ embeds: [buildMonitorEmbed()], components: [backRow] });
       } else if (val === "duration") {
-        const { embed, components } = buildDurationPanel();
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({ content: "❌ Tidak dapat mengambil data guild.", ephemeral: true });
+          return;
+        }
+        const { embed, components } = await buildDurationPanel(guild);
         await interaction.update({ embeds: [embed], components });
       } else if (val === "dashboard") {
         const { embed, components } = buildDashboardMainPanel();

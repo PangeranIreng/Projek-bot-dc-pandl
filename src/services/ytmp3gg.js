@@ -381,6 +381,11 @@ async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120
     "--audio-quality", audioQ,
     "--no-warnings",
     "--no-simulate",
+    // --socket-timeout: abort idle sockets after 10s so a stalled server
+    // doesn't freeze the whole slot until the process-level timeout fires.
+    // This is separate from the overall download timeout — it only fires
+    // when there is no data movement for >10s, not on large-file downloads.
+    "--socket-timeout",  "10",
     // Let yt-dlp itself retry transient network/fragment hiccups (timeouts,
     // connection resets) a couple of times BEFORE we give up on this method
     // and move to the next one — most "failures" that look like anti-bot
@@ -475,8 +480,9 @@ function _translateError(err) {
   // ── Timeout / network ── priority 4 (transient, informative)
   if (err.killed || err.code === "ETIMEDOUT" ||
       lower.includes("timed out") || lower.includes("etimedout") ||
-      lower.includes("connection reset") || lower.includes("econnreset"))
-    return make("Network timeout — download timed out, coba lagi nanti", 4);
+      lower.includes("connection reset") || lower.includes("econnreset") ||
+      lower.includes("socket timeout") || lower.includes("read timed out"))
+    return make("Network Error — koneksi timeout, coba lagi nanti", 4);
 
   // ── ffmpeg missing — priority 8 (specific, actionable)
   // yt-dlp exits with a clear message when it can't find ffmpeg.
@@ -485,20 +491,20 @@ function _translateError(err) {
 
   // ── DRM protected — priority 8
   if (lower.includes("drm") || lower.includes("widevine") || lower.includes("encrypted") || lower.includes("protection system"))
-    return make("DRM Protected — video ini dilindungi DRM dan tidak dapat diunduh", 8);
+    return make("Video Error — DRM Protected: video ini dilindungi DRM dan tidak dapat diunduh", 8);
 
   // ── Live stream — priority 8
   if (lower.includes("is a live event") || lower.includes("live stream") || lower.includes("is currently live") ||
       lower.includes("live_broadcast") || lower.includes("is live") || lower.includes("premieres"))
-    return make("Live Stream — video ini adalah siaran langsung dan tidak dapat diunduh", 8);
+    return make("Video Error — Live Stream: video ini adalah siaran langsung dan tidak dapat diunduh", 8);
 
   // ── Truly deleted — priority 9
   if (lower.includes("has been removed") || lower.includes("video_removed") || lower.includes("telah dihapus"))
-    return make("Deleted Video — video ini telah dihapus oleh pembuatnya", 9);
+    return make("Video Error — Deleted: video ini telah dihapus oleh pembuatnya", 9);
 
   // ── Private video — priority 9
   if (lower.includes("private video") || lower.includes("this account is private") || lower.includes("this video is private"))
-    return make("Private Video — video ini bersifat privat, tidak dapat diakses", 9);
+    return make("Video Error — Private: video ini bersifat privat, tidak dapat diakses", 9);
 
   // ── Anti-bot detection — priority 7
   // MUST be checked BEFORE the generic "sign in" branch below.
@@ -507,45 +513,58 @@ function _translateError(err) {
   // it as a permanent failure and abort the entire multi-method fallback chain.
   if (lower.includes("not a bot") || lower.includes("not a robot") ||
       lower.includes("confirm you're not") || lower.includes("confirm that you're not"))
-    return make("Anti-Bot Detection — YouTube meminta verifikasi bot pada client ini, mencoba metode lain...", 7);
+    return make("Anti-Bot Detection — YouTube meminta verifikasi bot, mencoba metode lain...", 7);
+
+  // ── Cookies expired — priority 6 (specific: cookie file exists but sessions are dead)
+  // Checked BEFORE generic "sign in" so cookie expiry is not misclassified.
+  if (lower.includes("cookie") && (lower.includes("expired") || lower.includes("kedaluwarsa") || lower.includes("invalid") || lower.includes("not authorized")))
+    return make("Cookies Expired — cookie file ada tapi sudah kedaluwarsa, upload cookie baru", 6);
+
+  // ── Cookies invalid format — priority 6
+  if (lower.includes("netscape http cookie file") || lower.includes("malformed cookie") || lower.includes("cookie file"))
+    return make("Cookies Invalid — format file cookie tidak valid, upload cookie baru dalam format Netscape", 6);
 
   // ── Age-restricted / sign-in required — priority 8
   if (lower.includes("age-restricted") || lower.includes("age restricted"))
-    return make("Age Restricted — video ini dibatasi usia dan memerlukan login", 8);
+    return make("Video Error — Age Restricted: video ini dibatasi usia dan memerlukan login", 8);
 
   if (lower.includes("sign in") || lower.includes("log in") || lower.includes("login required"))
-    return make("Video memerlukan login — tidak dapat diakses tanpa akun", 8);
+    return make("Video Error — Login Required: video memerlukan login untuk diakses", 8);
+
+  // ── Extractor error — priority 5 (yt-dlp extraction pipeline failed, not the video itself)
+  if (lower.includes("extractor") || lower.includes("extraction failed") || lower.includes("unable to extract"))
+    return make("Extractor Error — yt-dlp gagal mengekstrak info video, mencoba provider lain...", 5);
 
   // ── Unsupported URL — priority 6
   if (lower.includes("unsupported url"))
-    return make("Unsupported URL — link tidak dikenali oleh downloader, pastikan link valid dan publik", 6);
+    return make("Extractor Error — URL tidak dikenali oleh downloader, pastikan link valid dan publik", 6);
 
   // ── "Video unavailable" — priority 3 (ambiguous: could be PO-token rejection)
   // Kept LOW priority so anti-bot / specific errors win when multiple providers fail.
   if (lower.includes("video unavailable"))
-    return make("Video tidak tersedia — mungkin karena pembatasan akses oleh YouTube", 3);
+    return make("Video Error — Video tidak tersedia (mungkin pembatasan akses oleh YouTube)", 3);
 
-  // ── HTTP 403 — priority 5
+  // ── HTTP 403 — priority 5 (access denied, server-side — not necessarily cookie issue)
   if (lower.includes("403") || lower.includes("forbidden"))
-    return make("HTTP 403 — akses ditolak oleh server sumber", 5);
+    return make("Network Error — HTTP 403 Forbidden: akses ditolak oleh server sumber", 5);
 
   // ── Rate limited — priority 6
   if (lower.includes("429") || lower.includes("too many requests"))
-    return make("Rate limited (HTTP 429) — tunggu beberapa menit", 6);
+    return make("Network Error — Rate Limited (HTTP 429): tunggu beberapa menit lalu coba lagi", 6);
 
   // ── Region blocked — priority 8
   if (lower.includes("not available in your country") || lower.includes("unavailable in your country") ||
       lower.includes("blocked it in your country"))
-    return make("Region Blocked — video tidak tersedia di wilayah server", 8);
+    return make("Video Error — Region Blocked: video tidak tersedia di wilayah server", 8);
   if (lower.includes("copyright"))
-    return make("Region Blocked — video diblokir karena klaim copyright", 8);
+    return make("Video Error — Copyright Blocked: video diblokir karena klaim copyright", 8);
 
   // ── HTTP 404 / not found — priority 2 (very low: might be client rejection, not real 404)
   if (lower.includes("not found") || lower.includes("no such video") || lower.includes("http error 404"))
-    return make("Video tidak dapat ditemukan — pastikan link valid dan video masih tersedia", 2);
+    return make("Video Error — Tidak ditemukan: pastikan link valid dan video masih tersedia", 2);
 
-  // ── Generic — priority 1 (lowest)
-  return make(`Download gagal: ${raw.slice(0, 200)}`, 1);
+  // ── Unknown Error — priority 1 (lowest)
+  return make(`Unknown Error — Download gagal: ${raw.slice(0, 200)}`, 1);
 }
 
 /**
@@ -840,11 +859,14 @@ const YOUTUBE_METHODS = [
   ],
 ];
 
-/** Per-method timeout — dipercepat agar fallback loop tidak memblok terlalu lama.
- * Methods 1–4: 30s each (fail fast if blocked; most real downloads finish < 20s).
+/** Per-method timeout — fail fast so fallback loop stays responsive.
+ * Methods 1–3: 20s (most YouTube downloads finish in < 15s on fast paths).
+ * Methods 4–4: 30s (android client is slower to start).
  * Last method:  90s (full budget for slow connections / large files). */
 function _methodTimeout(i) {
-  return i < YOUTUBE_METHODS.length - 1 ? 30_000 : 90_000;
+  if (i < 3) return 20_000;
+  if (i < YOUTUBE_METHODS.length - 1) return 30_000;
+  return 90_000;
 }
 
 /**
@@ -1083,13 +1105,14 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
           break;
         }
         if (i < YOUTUBE_METHODS.length - 1) {
-          // Exponential backoff when YouTube returns an anti-bot challenge.
-          // Pausing before the next player-client reduces the risk of the same
-          // IP being immediately re-challenged by a different client type.
+            // FIX: Anti-bot backoff reduced from 1.5s–8s exponential to 300ms–1s flat.
+          // The old backoff (1.5+3+6+8+8 = 26.5s per chain) was the primary cause
+          // of jobs appearing frozen at "Downloading". Faster switching minimizes
+          // wasted wall-time when YouTube's PO-token gate rejects a client type.
           const isAntiBotErr = translated.message.toLowerCase().includes("anti-bot") ||
                                translated.message.toLowerCase().includes("not a bot");
           if (isAntiBotErr && !signal?.aborted) {
-            const backoffMs = Math.min(1500 * Math.pow(2, i), 8000); // 1.5s → 3s → 6s → 8s cap
+            const backoffMs = Math.min(300 * (i + 1), 1000); // 300ms → 600ms → 900ms → 1000ms cap
             logger.info(`[ytmp3gg] [Provider ${providerNum}] Anti-Bot backoff — ${backoffMs}ms sebelum method ${i + 2}`);
             await _sleep(backoffMs, signal);
             if (signal?.aborted) { bestError = Object.assign(new Error("Dibatalkan (timeout tahap)"), { name: "AbortError" }); ytdlpFailed = true; break; }
@@ -1450,7 +1473,10 @@ async function _ytdlTikTok(input, type, quality, onProgress, signal) {
 
     logger.info(`[ytmp3gg] TikTok — trying method ${i + 1}/${TIKTOK_METHODS.length}`);
     try {
-      const stdout = await _attempt(input, type, quality, TIKTOK_METHODS[i], tmpDir, 120_000, signal);
+      // FIX: First 3 methods use 45s (fast-fail); last 4 use 90s (larger files / retries).
+      // Old 120s per method = 840s max; new cap = 3×45 + 4×90 = 495s max under timeout.
+      const tiktokMethodTimeout = i < 3 ? 45_000 : 90_000;
+      const stdout = await _attempt(input, type, quality, TIKTOK_METHODS[i], tmpDir, tiktokMethodTimeout, signal);
       providerHealth.recordSuccess("yt-dlp-tiktok");
       return await _parseOutput(stdout, tmpDir, type, quality);
     } catch (err) {
@@ -1463,11 +1489,11 @@ async function _ytdlTikTok(input, type, quality, onProgress, signal) {
         break;
       }
 
-      // Exponential backoff between TikTok method switches.
-      // TikTok's CDN is aggressive with rate limiting — a small delay before
-      // trying the next app_name / UA set reduces consecutive 403 rejections.
+      // Short backoff between TikTok method switches — reduces consecutive 403s
+      // while keeping the overall fallback loop fast (not a blocking 3s+ pause).
+      // FIX: reduced from 500+500*i (max 3s) to 200*(i+1) (max 1s cap).
       if (i < TIKTOK_METHODS.length - 1 && !signal?.aborted) {
-        const backoffMs = Math.min(500 + 500 * i, 3000); // 500ms, 1s, 1.5s … 3s cap
+        const backoffMs = Math.min(200 * (i + 1), 1000); // 200ms → 400ms → 600ms → 800ms → 1s cap
         logger.debug(`[ytmp3gg] TikTok method ${i + 1} failed — backoff ${backoffMs}ms sebelum method ${i + 2}`);
         await _sleep(backoffMs, signal);
         if (signal?.aborted) { lastError = Object.assign(new Error("Dibatalkan (timeout tahap)"), { name: "AbortError" }); break; }
@@ -1601,9 +1627,11 @@ export async function getVideoInfo(url) {
         // that can solve the full SABR challenge.  See YOUTUBE_METHODS comment.
       ];
 
-  // Increased from 8s → 20s: Railway has higher latency than a local machine,
-  // and yt-dlp --simulate on YouTube can take 5-10s on first call.
-  const INFO_TIMEOUT_MS = 20_000;
+  // FIX: Reduced from 20s → 8s per method.
+  // Target: metadata done in 2-3s on warm paths. 8s gives enough headroom for
+  // high-latency environments (Railway, Replit) without wasting 20s per attempt.
+  // With 4 YouTube methods × 8s = 32s max, well within the 30s handler ceiling.
+  const INFO_TIMEOUT_MS = 8_000;
 
   for (let i = 0; i < infoMethods.length; i++) {
     const infoCookieArgs = /tiktok\.com/i.test(resolvedUrl)
@@ -1614,6 +1642,7 @@ export async function getVideoInfo(url) {
       "--no-playlist",
       "--simulate",
       "--no-warnings",
+      "--socket-timeout",    "8",  // abort stalled sockets quickly — metadata fetch must be fast
       "--extractor-retries", "1",
       "--print", "%(duration)s|||%(title)s|||%(thumbnail)s|||%(uploader)s",
       ...infoCookieArgs,

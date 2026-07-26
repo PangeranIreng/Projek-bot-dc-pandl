@@ -17,9 +17,12 @@
  */
 export const WORKER_DEFAULTS = {
   // BoomBox — no worker-level timeout; stage-level guards in handler.js own the limit.
-  youtube:    { maxConcurrent: 3, timeoutMs: 0,       maxRetries: 3 },
-  tiktok:     { maxConcurrent: 3, timeoutMs: 0,       maxRetries: 3 },
-  spotify:    { maxConcurrent: 3, timeoutMs: 0,       maxRetries: 3 },
+  // Concurrency 5: allows up to 5 simultaneous downloads per platform so a long video
+  // never blocks shorter ones. Each platform has its own pool → YouTube, TikTok, Spotify
+  // all run fully in parallel with no shared slot.
+  youtube:    { maxConcurrent: 5, timeoutMs: 0,       maxRetries: 3 },
+  tiktok:     { maxConcurrent: 5, timeoutMs: 0,       maxRetries: 3 },
+  spotify:    { maxConcurrent: 5, timeoutMs: 0,       maxRetries: 3 },
   // Feature workers — simpler operations with predictable ceilings.
   scanner:    { maxConcurrent: 5, timeoutMs: 120_000, maxRetries: 1 },
   obfuscator: { maxConcurrent: 5, timeoutMs: 60_000,  maxRetries: 1 },

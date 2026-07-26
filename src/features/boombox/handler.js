@@ -764,7 +764,10 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
         // (each 20s) plus a 30s ytdl-core fallback. The old 10s cap was
         // shorter than a single method attempt, causing "Analisis link timed
         // out" on every request regardless of the actual yt-dlp result.
-        info = await withStageTimeout(getVideoInfo(url), 90_000, "Analisis link");
+        // FIX: 30s is ample for getVideoInfo — it already tries 4 methods × 8s each
+        // (32s max). 90s was unnecessarily long and caused the "Analisis link timed out"
+        // message to appear far too late when all methods were truly blocked.
+        info = await withStageTimeout(getVideoInfo(url), 30_000, "Analisis link");
         infoMs = Date.now() - infoStart;
         logger.info(`[BoomBox] ── Fetch Video Info | ${infoMs}ms | title="${info?.title ?? "null"}" dur=${info?.duration ?? "?"}s`);
         if (info?.title || info?.duration) boomboxCache.setCachedMeta(videoId, info);
@@ -792,21 +795,54 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       await editStep(2);
       logger.info(`[BoomBox] ── Downloading | ${platform} | ${downloadUrl}`);
       const downloadStart = Date.now();
-      ytResult = await withRetry(
-        () => withStageTimeout(
-          (signal) => ytdl(
-            downloadUrl,
-            BOOMBOX_CONFIG.AUDIO_TYPE,
-            BOOMBOX_CONFIG.AUDIO_QUALITY,
-            (label) => editStep(2, label),
-            signal,
+
+      // ── Spotify: try each search candidate in sequence if the primary fails ──
+      // spotifyMeta.searchCandidates is a priority-ordered list of ytsearch1: queries.
+      // Without this loop, a single bad search result aborts the entire Spotify job.
+      const spotifySearchCandidates = spotifyMeta?.searchCandidates ?? null;
+      let spotifyDownloadErr = null;
+      if (spotifySearchCandidates && spotifySearchCandidates.length > 1) {
+        for (let si = 0; si < spotifySearchCandidates.length; si++) {
+          const candidate = spotifySearchCandidates[si];
+          if (si > 0) {
+            logger.warn(`[BoomBox] ── Spotify fallback search [${si + 1}/${spotifySearchCandidates.length}]: ${candidate}`);
+          }
+          try {
+            ytResult = await withRetry(
+              () => withStageTimeout(
+                (signal) => ytdl(candidate, BOOMBOX_CONFIG.AUDIO_TYPE, BOOMBOX_CONFIG.AUDIO_QUALITY, (label) => editStep(2, label), signal),
+                5 * 60_000, "Download audio",
+              ),
+              si === 0 ? 2 : 1,  // 2 retries on primary, 1 on fallbacks
+              `Download Spotify (candidate ${si + 1})`,
+            );
+            spotifyDownloadErr = null;
+            break; // success
+          } catch (err) {
+            spotifyDownloadErr = err;
+            logger.warn(`[BoomBox] ── Spotify search candidate ${si + 1} failed: ${err.message}`);
+          }
+        }
+        if (spotifyDownloadErr) throw spotifyDownloadErr;
+      } else {
+        // Non-Spotify or single-candidate path — unchanged behaviour
+        ytResult = await withRetry(
+          () => withStageTimeout(
+            (signal) => ytdl(
+              downloadUrl,
+              BOOMBOX_CONFIG.AUDIO_TYPE,
+              BOOMBOX_CONFIG.AUDIO_QUALITY,
+              (label) => editStep(2, label),
+              signal,
+            ),
+            5 * 60_000,
+            "Download audio",
           ),
-          5 * 60_000,
-          "Download audio",
-        ),
-        3,
-        "Download Audio",
-      );
+          3,
+          "Download Audio",
+        );
+      }
+
       downloadMs = Date.now() - downloadStart;
       tmpDir = ytResult.tmpDir;
 
