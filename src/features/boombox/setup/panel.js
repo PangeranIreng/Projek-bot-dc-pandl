@@ -34,6 +34,7 @@ function _buildMenuRow() {
         { label: "📊 Monitor",           value: "monitor",     description: "Lihat status provider, queue, cache, dan statistik" },
         { label: "⏱️ Batas Durasi",      value: "duration",    description: "Atur batas durasi audio per role" },
         { label: "🎨 Dashboard BoomBox", value: "dashboard",   description: "Atur tampilan embed BoomBox" },
+        { label: "🗄️ Resource Manager",  value: "resource",    description: "Kelola Cookies, GIF, dan status resource BoomBox" },
         { label: "🗑️ Reset Konfigurasi", value: "reset",       description: "Hapus seluruh konfigurasi BoomBox" },
       ]),
   );

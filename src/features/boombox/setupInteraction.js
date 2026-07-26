@@ -79,6 +79,8 @@ import {
   buildDurationResetEmbed,
 } from "./setup/durationSetup.js";
 import { buildMaintenancePanel, handleMaintenanceToggle } from "./setup/maintenanceSetup.js";
+import { buildResourceManagerPanel } from "./setup/resourceManager.js";
+import { handleResourceManagerInteraction } from "./resourceManagerInteraction.js";
 
 import {
   ActionRowBuilder,
@@ -126,6 +128,9 @@ export async function handleSetupBoomBoxInteraction(interaction) {
         await interaction.update({ embeds: [embed], components });
       } else if (val === "dashboard") {
         const { embed, components } = buildDashboardMainPanel();
+        await interaction.update({ embeds: [embed], components });
+      } else if (val === "resource") {
+        const { embed, components } = buildResourceManagerPanel();
         await interaction.update({ embeds: [embed], components });
       } else if (val === "reset") {
         const { embed, components } = buildDeleteConfirmPanel();
@@ -481,6 +486,12 @@ export async function handleSetupBoomBoxInteraction(interaction) {
     if (maintToggleMatch) {
       const platform = maintToggleMatch[1];
       await handleMaintenanceToggle(interaction, platform);
+      return;
+    }
+
+    // ── Resource Manager (prefix: bbrm:) ─────────────────────────────────
+    if (id.startsWith("bbrm:")) {
+      await handleResourceManagerInteraction(interaction);
       return;
     }
 

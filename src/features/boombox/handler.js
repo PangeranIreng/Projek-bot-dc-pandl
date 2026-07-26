@@ -381,7 +381,7 @@ export function cleanupStaleBoomBoxTempDirs() {
     try {
       entries = fs.readdirSync(tmpBase);
     } catch (e) {
-      logger.warn(`[BoomBox] Startup cleanup: failed to read tmpdir: ${e.message}`);
+      logger.warn(`[BoomBox] Temp cleanup: failed to read tmpdir: ${e.message}`);
       return;
     }
 
@@ -398,11 +398,20 @@ export function cleanupStaleBoomBoxTempDirs() {
     }
 
     if (cleaned > 0) {
-      logger.info(`[BoomBox] Startup cleanup: removed ${cleaned} stale temp dir(s) from ${tmpBase}`);
+      logger.info(`[BoomBox] Temp cleanup: removed ${cleaned} stale temp dir(s) from ${tmpBase}`);
     }
   } catch (e) {
-    logger.warn(`[BoomBox] Startup cleanup failed: ${e.message}`);
+    logger.warn(`[BoomBox] Temp cleanup failed: ${e.message}`);
   }
+}
+
+// ── Periodic stale-temp cleanup ───────────────────────────────────────────────
+// Supplements the startup-only run: removes any dirs that accumulate during
+// runtime crashes or SIGKILL events where the finally block never executes.
+// Runs every 30 min, unref'd so it doesn't prevent clean process exit.
+{
+  const _cleanupTimer = setInterval(cleanupStaleBoomBoxTempDirs, 30 * 60_000);
+  if (_cleanupTimer.unref) _cleanupTimer.unref();
 }
 
 // ── Discord component helpers ─────────────────────────────────────────────────

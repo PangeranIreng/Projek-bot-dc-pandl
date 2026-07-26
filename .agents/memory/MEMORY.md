@@ -20,3 +20,4 @@
 - [BoomBox ffmpeg resolution](boombox-ffmpeg-resolution.md) — ffmpeg resolved via shared src/utils/ffmpegPath.js (system→ffmpeg-static); nixpacks.toml keeps system ffmpeg as preferred on Railway; kaizenDownloader skips transcode when CDN already delivers target format.
 - [BoomBox cross-platform binary](boombox-cross-platform-binary.md) — yt-dlp: system PATH first (_USE_SYSTEM_YTDLP, no download), then bin/yt-dlp_{suffix}, then bin/yt-dlp; platform suffix auto-detected; cookies via cookiesResolver.js; env detected via envDetector.js.
 - [BoomBox HA & Self Recovery](boombox-ha-self-recovery.md) — worker stall detection via lastActivityAt + auto-restart, circuit breakers for top4top/spotify-oembed, disk space monitor added.
+- [BoomBox Resource Manager](boombox-resource-manager.md) — `bbrm:` prefix, cookie hot-reload via mutable COOKIES_ARGS array, async I/O in ytmp3gg.js, periodic + disk-pressure temp cleanup.

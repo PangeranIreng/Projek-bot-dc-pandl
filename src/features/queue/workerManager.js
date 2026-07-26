@@ -351,8 +351,16 @@ async function _runHealthCheck(client) {
   if (disk !== null && disk.used >= DISK_WARN_THRESHOLD) {
     const pct = (disk.used * 100).toFixed(1);
     const freeMB = (disk.free / 1024 / 1024).toFixed(0);
-    issues.push(`Disk: ${pct}% used (${freeMB} MB free) — cleanup may be needed`);
-    logger.warn(`[WorkerManager] ⚠ Disk usage ${pct}% — only ${freeMB} MB free in ${os.tmpdir()}`);
+    issues.push(`Disk: ${pct}% used (${freeMB} MB free) — cleanup triggered`);
+    logger.warn(`[WorkerManager] ⚠ Disk usage ${pct}% — only ${freeMB} MB free in ${os.tmpdir()} — triggering BoomBox temp cleanup`);
+    // Trigger stale temp cleanup to free disk space under pressure
+    try {
+      const { cleanupStaleBoomBoxTempDirs } = await import("../boombox/handler.js");
+      cleanupStaleBoomBoxTempDirs();
+      actions.push("Triggered BoomBox temp cleanup (disk pressure)");
+    } catch (cleanupErr) {
+      logger.warn(`[WorkerManager] Disk-pressure cleanup failed: ${cleanupErr.message}`);
+    }
   }
 
   // ── Report ────────────────────────────────────────────────────────────────

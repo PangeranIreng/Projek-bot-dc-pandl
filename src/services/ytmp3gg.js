@@ -417,7 +417,7 @@ function _isAborted(err, signal) {
  * Parse yt-dlp stdout and locate the output file.
  * @private
  */
-function _parseOutput(stdout, tmpDir, type, quality, provider = "yt-dlp") {
+async function _parseOutput(stdout, tmpDir, type, quality, provider = "yt-dlp") {
   const metaLine  = stdout.split("\n").find(l => l.includes("|||")) ?? "";
   const [, rawTitle, rawDuration, rawUploader, rawThumb] = metaLine.split("|||");
 
@@ -428,14 +428,23 @@ function _parseOutput(stdout, tmpDir, type, quality, provider = "yt-dlp") {
 
   logger.info(`[ytmp3gg] Metadata | title="${title}" duration=${duration}s uploader="${uploader}"`);
 
-  const files = fs.readdirSync(tmpDir);
+  const files = await fs.promises.readdir(tmpDir);
   if (files.length === 0) throw new Error("yt-dlp selesai tapi tidak menghasilkan file output");
 
   const localFile = path.join(tmpDir, files[0]);
-  const sizeKB    = (fs.statSync(localFile).size / 1024).toFixed(1);
+  const stat      = await fs.promises.stat(localFile);
+  const sizeKB    = (stat.size / 1024).toFixed(1);
   logger.info(`[ytmp3gg] ✅ File siap: ${localFile} (${sizeKB} KB)`);
 
   return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile, tmpDir, provider };
+}
+
+/** Async helper: clear all files inside tmpDir (not the dir itself). */
+async function _clearTmpDir(dir) {
+  try {
+    const files = await fs.promises.readdir(dir);
+    await Promise.all(files.map(f => fs.promises.unlink(path.join(dir, f)).catch(() => {})));
+  } catch { /* dir may not exist yet */ }
 }
 
 /**
@@ -930,7 +939,8 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signa
   const uploader  = details.author?.name || null;
   const thumbnail = details.thumbnails?.at(-1)?.url || null;
 
-  const sizeKB = (fs.statSync(finalFile).size / 1024).toFixed(1);
+  const _stat  = await fs.promises.stat(finalFile);
+  const sizeKB = (_stat.size / 1024).toFixed(1);
   logger.info(`[ytmp3gg] ✅ Fallback engine succeeded | title="${title}" (${sizeKB} KB)`);
 
   return { title, thumbnail, uploader, duration, type, quality: String(quality), localFile: finalFile, tmpDir, provider: "ytdl-core" };
@@ -950,8 +960,8 @@ async function _ytdlCoreFallback(input, type, quality, tmpDir, onProgress, signa
 // Throws AggregateError (with .errors array) when both fail.
 //
 async function _runParallelRace(input, type, quality, signal) {
-  const raceTmpA = fs.mkdtempSync(path.join(os.tmpdir(), "bb-race-ytdlp-"));
-  const raceTmpB = fs.mkdtempSync(path.join(os.tmpdir(), "bb-race-ytdlc-"));
+  const raceTmpA = await fs.promises.mkdtemp(path.join(os.tmpdir(), "bb-race-ytdlp-"));
+  const raceTmpB = await fs.promises.mkdtemp(path.join(os.tmpdir(), "bb-race-ytdlc-"));
 
   const ctrlA = new AbortController();
   const ctrlB = new AbortController();
@@ -964,9 +974,9 @@ async function _runParallelRace(input, type, quality, signal) {
   const cleanupB = () => { try { fs.rmSync(raceTmpB, { recursive: true, force: true }); } catch {} };
 
   const pA = _attempt(input, type, quality, YOUTUBE_METHODS[0], raceTmpA, 30_000, ctrlA.signal)
-    .then((stdout) => {
+    .then(async (stdout) => {
       ctrlB.abort();
-      const result = _parseOutput(stdout, raceTmpA, type, quality, "yt-dlp (race)");
+      const result = await _parseOutput(stdout, raceTmpA, type, quality, "yt-dlp (race)");
       setTimeout(cleanupB, 500); // let ytdl-core settle before cleanup
       return { winner: "yt-dlp", result };
     });
@@ -991,7 +1001,7 @@ async function _runParallelRace(input, type, quality, signal) {
 }
 
 async function _ytdlYouTube(input, type, quality, onProgress, signal) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-"));
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-"));
 
   // bestError tracks the MOST INFORMATIVE error seen so far across all providers.
   // Each translated error carries a `.priority` (1–9); we keep the highest.
@@ -1046,7 +1056,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
         break;
       }
       if (i > 0) {
-        try { for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f)); } catch {}
+        await _clearTmpDir(tmpDir);
         await onProgress?.("Trying another method...");
       }
 
@@ -1055,7 +1065,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
         const stdout = await _attempt(input, type, quality, YOUTUBE_METHODS[i], tmpDir, _methodTimeout(i), signal);
         logger.info(`[ytmp3gg] [Provider ${providerNum}] yt-dlp (YouTube) method ${i + 1}/${YOUTUBE_METHODS.length} | Status: SUCCESS`);
         providerHealth.recordSuccess("yt-dlp-youtube");
-        return _parseOutput(stdout, tmpDir, type, quality, `yt-dlp/method${i + 1}`);
+        return await _parseOutput(stdout, tmpDir, type, quality, `yt-dlp/method${i + 1}`);
       } catch (err) {
         if (_isAborted(err, signal)) { bestError = err; ytdlpFailed = true; break; }
         const translated = _translateError(err);
@@ -1109,7 +1119,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
     throw bestError;
   }
 
-  try { for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f)); } catch {}
+  await _clearTmpDir(tmpDir);
 
   // ── Provider 2: @distube/ytdl-core ───────────────────────────────────────
   providerNum++;
@@ -1132,7 +1142,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
 
   // ── Provider 3: Kaizen API ────────────────────────────────────────────────
   providerNum++;
-  try { for (const f of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, f)); } catch {}
+  await _clearTmpDir(tmpDir);
 
   if (providerHealth.shouldSkip("kaizenapi")) {
     logger.warn(`[ytmp3gg] [Provider ${providerNum}] Kaizen API | Status: OFFLINE | Reason: 5x consecutive failure — switch to next`);
@@ -1156,7 +1166,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
   // ── Provider 4: Piped (public YouTube frontend) ───────────────────────────
   providerNum++;
   if (!signal?.aborted) {
-    const pipedTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-piped-"));
+    const pipedTmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-piped-"));
     await onProgress?.("Trying Piped API...");
     logger.info(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: Trying`);
     try {
@@ -1174,7 +1184,7 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
   // ── Provider 5: Invidious (public YouTube alternative API) ────────────────
   providerNum++;
   if (!signal?.aborted) {
-    const invTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-inv-"));
+    const invTmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-inv-"));
     await onProgress?.("Trying Invidious API...");
     logger.info(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: Trying`);
     try {
@@ -1263,7 +1273,7 @@ async function _pipedFallback(input, type, quality, tmpDir, onProgress, signal) 
     maxBuffer: 1 * 1024 * 1024,
   });
 
-  const files = fs.readdirSync(tmpDir).filter(f => /^audio\./.test(f));
+  const files = (await fs.promises.readdir(tmpDir)).filter(f => /^audio\./.test(f));
   if (files.length === 0) throw new Error("Piped: no output file produced by yt-dlp");
 
   return {
@@ -1339,7 +1349,7 @@ async function _invidiousFallback(input, type, quality, tmpDir, onProgress, sign
     maxBuffer: 1 * 1024 * 1024,
   });
 
-  const files = fs.readdirSync(tmpDir).filter(f => /^audio\./.test(f));
+  const files = (await fs.promises.readdir(tmpDir)).filter(f => /^audio\./.test(f));
   if (files.length === 0) throw new Error("Invidious: no output file produced by yt-dlp");
 
   return {
@@ -1419,7 +1429,7 @@ const TIKTOK_METHODS = [
 ];
 
 async function _ytdlTikTok(input, type, quality, onProgress, signal) {
-  const tmpDir    = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-"));
+  const tmpDir    = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-"));
   let   lastError = new Error("TikTok download gagal setelah semua metode dicoba");
 
   if (providerHealth.shouldSkip("yt-dlp-tiktok")) {
@@ -1432,11 +1442,7 @@ async function _ytdlTikTok(input, type, quality, onProgress, signal) {
     if (signal?.aborted) { lastError = new Error("Dibatalkan (timeout tahap)"); lastError.name = "AbortError"; break; }
     // Clean partial files from the previous failed attempt
     if (i > 0) {
-      try {
-        for (const f of fs.readdirSync(tmpDir)) {
-          fs.unlinkSync(path.join(tmpDir, f));
-        }
-      } catch {}
+      await _clearTmpDir(tmpDir);
       await onProgress?.("Trying another method...");
     }
 
@@ -1444,7 +1450,7 @@ async function _ytdlTikTok(input, type, quality, onProgress, signal) {
     try {
       const stdout = await _attempt(input, type, quality, TIKTOK_METHODS[i], tmpDir, 120_000, signal);
       providerHealth.recordSuccess("yt-dlp-tiktok");
-      return _parseOutput(stdout, tmpDir, type, quality);
+      return await _parseOutput(stdout, tmpDir, type, quality);
     } catch (err) {
       if (_isAborted(err, signal)) { lastError = err; break; }
       lastError = _translateError(err);

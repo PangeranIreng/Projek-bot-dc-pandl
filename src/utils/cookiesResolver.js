@@ -1,26 +1,22 @@
 /**
  * cookiesResolver.js — YouTube cookies support for yt-dlp anti-bot bypass.
  *
- * Checks (in order):
- *   1. YOUTUBE_COOKIES env var — path to an existing cookies.txt file on disk
- *   2. cookies.txt  in the project root — auto-detected, no config needed
+ * Resolution order (highest priority first):
+ *   1. MANAGED_COOKIES_PATH (cookies.txt in project root, uploaded via Resource Manager)
+ *   2. YOUTUBE_COOKIES env var — absolute or project-root-relative path
+ *   3. cookies.txt in project root — auto-detected, no config needed
  *
- * If no cookies file is found, COOKIES_ARGS is [] and yt-dlp runs without
- * cookies. This is the normal case — cookies are optional anti-bot assistance,
- * NOT a hard requirement. The bot continues through its full fallback chain
- * whether cookies are present or not.
- *
- * To enable cookies on Railway / Pterodactyl:
- *   1. Export your YouTube cookies from a browser (EditThisCookie / yt-dlp
- *      --cookies-from-browser) as a Netscape-format cookies.txt file.
- *   2. Either:
- *      (a) Set YOUTUBE_COOKIES=/absolute/path/to/cookies.txt as an env var, or
- *      (b) Drop the file as  cookies.txt  in the project root directory.
+ * Hot-reload: call reloadCookies() after uploading or deleting a cookies file.
+ * COOKIES_ARGS is mutated in-place so all callers see the updated value immediately
+ * without needing to re-import the module.
  *
  * Exports:
- *   COOKIES_ARGS   string[]   ["--cookies", "/path"] or []
- *   hasCookies     boolean    true when a valid cookies file was found
- *   COOKIES_PATH   string|null  resolved path, or null
+ *   COOKIES_ARGS          string[]    ["--cookies", "/path"] or [] — MUTATED IN PLACE on reload
+ *   hasCookies            boolean     true when a valid cookies file was found (snapshot at last reload)
+ *   COOKIES_PATH          string|null resolved path at last reload
+ *   MANAGED_COOKIES_PATH  string      fixed path for Resource Manager uploads
+ *   reloadCookies()       void        re-scan and update COOKIES_ARGS in-place
+ *   getCookiesStatus()    object      full status object for display panels
  */
 
 import fs   from "node:fs";
@@ -31,33 +27,111 @@ import { logger } from "./logger.js";
 const __dirname    = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.join(__dirname, "..", "..");
 
+/** Fixed path where Resource Manager uploads cookies files. */
+export const MANAGED_COOKIES_PATH = path.join(PROJECT_ROOT, "cookies.txt");
+
+/** Fixed path for cookie metadata (upload time, source). */
+const META_PATH = path.join(PROJECT_ROOT, "data", "cookies-meta.json");
+
+// ── Internal mutable state ────────────────────────────────────────────────────
+
+let _cookiesPath = null;
+let _cookiesSource = null; // "managed" | "env" | "root" | null
+
 function _resolveCookiesPath() {
-  // ── 1. Explicit YOUTUBE_COOKIES env var ──────────────────────────────────
+  // ── 1. Managed cookies (uploaded via Resource Manager = project root cookies.txt)
+  if (fs.existsSync(MANAGED_COOKIES_PATH)) {
+    return { path: MANAGED_COOKIES_PATH, source: "managed" };
+  }
+
+  // ── 2. Explicit YOUTUBE_COOKIES env var ──────────────────────────────────
   const envVal = process.env.YOUTUBE_COOKIES?.trim();
   if (envVal) {
-    // Support both absolute and project-root-relative paths
     const resolved = path.isAbsolute(envVal) ? envVal : path.join(PROJECT_ROOT, envVal);
     if (fs.existsSync(resolved)) {
-      logger.info(`[cookiesResolver] YouTube cookies: ${resolved} (via YOUTUBE_COOKIES env)`);
-      return resolved;
+      return { path: resolved, source: "env" };
     }
     logger.warn(`[cookiesResolver] YOUTUBE_COOKIES is set but file not found: ${resolved} — continuing without cookies`);
   }
 
-  // ── 2. cookies.txt in project root ────────────────────────────────────────
-  const rootCookies = path.join(PROJECT_ROOT, "cookies.txt");
-  if (fs.existsSync(rootCookies)) {
-    logger.info(`[cookiesResolver] YouTube cookies: ${rootCookies} (project root)`);
-    return rootCookies;
+  return { path: null, source: null };
+}
+
+/** Reload cookie state and mutate COOKIES_ARGS in-place. */
+export function reloadCookies() {
+  const { path: p, source } = _resolveCookiesPath();
+  _cookiesPath   = p;
+  _cookiesSource = source;
+
+  // Mutate COOKIES_ARGS in-place so all existing importers see the new value
+  COOKIES_ARGS.length = 0;
+  if (p) {
+    COOKIES_ARGS.push("--cookies", p);
+    logger.info(`[cookiesResolver] Cookies reloaded: ${p} (source: ${source})`);
   }
 
-  // No cookies available — yt-dlp will run unauthenticated.
-  // This is normal and the bot will use its full provider fallback chain.
+  // Re-export snapshot values (these are module-level, used at call time by callers)
+  // Note: hasCookies and COOKIES_PATH are reassigned below; callers that spread
+  // COOKIES_ARGS inside functions will see the updated array content.
+}
+
+/** Load cookie upload metadata from disk (returns null if not present). */
+export function getCookiesMeta() {
+  try {
+    if (fs.existsSync(META_PATH)) {
+      return JSON.parse(fs.readFileSync(META_PATH, "utf8"));
+    }
+  } catch {/* ignore */}
   return null;
 }
 
-export const COOKIES_PATH = _resolveCookiesPath();
-export const hasCookies   = COOKIES_PATH !== null;
+/** Persist cookie upload metadata. */
+export function saveCookiesMeta(meta) {
+  try {
+    fs.mkdirSync(path.dirname(META_PATH), { recursive: true });
+    fs.writeFileSync(META_PATH, JSON.stringify(meta, null, 2), "utf8");
+  } catch (err) {
+    logger.warn(`[cookiesResolver] Could not save cookies meta: ${err.message}`);
+  }
+}
 
-/** Drop into any yt-dlp args array: `[...COOKIES_ARGS, ...otherArgs]` */
-export const COOKIES_ARGS = hasCookies ? ["--cookies", COOKIES_PATH] : [];
+/** Delete cookie metadata. */
+export function clearCookiesMeta() {
+  try { if (fs.existsSync(META_PATH)) fs.unlinkSync(META_PATH); } catch {/* ignore */}
+}
+
+/**
+ * Full status object for display panels.
+ * @returns {{ hasCookies: boolean, path: string|null, source: string|null,
+ *             sizeBytes: number|null, meta: object|null }}
+ */
+export function getCookiesStatus() {
+  let sizeBytes = null;
+  if (_cookiesPath) {
+    try { sizeBytes = fs.statSync(_cookiesPath).size; } catch {/* file may have been deleted */}
+  }
+  return {
+    hasCookies: _cookiesPath !== null && sizeBytes !== null,
+    path:       _cookiesPath,
+    source:     _cookiesSource,
+    sizeBytes,
+    meta:       getCookiesMeta(),
+  };
+}
+
+// ── Exported live-binding constants ───────────────────────────────────────────
+
+/**
+ * MUTABLE array — callers that spread this inside functions see updates immediately.
+ * Never reassign this export; mutate its contents via reloadCookies().
+ */
+export const COOKIES_ARGS = [];
+
+// Initialize at module load
+reloadCookies();
+
+/** Snapshot of hasCookies at last reload — use getCookiesStatus() for live state. */
+export const hasCookies   = _cookiesPath !== null;
+
+/** Snapshot of resolved path at last reload — use getCookiesStatus() for live state. */
+export const COOKIES_PATH = _cookiesPath;
