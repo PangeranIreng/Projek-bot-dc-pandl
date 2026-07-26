@@ -376,8 +376,14 @@ export async function handleSetupBoomBoxInteraction(interaction) {
 
     if (id === "bbsetup:dur:rolesel" && interaction.isStringSelectMenu()) {
       const roleId = interaction.values[0];
-      const role   = interaction.guild?.roles.cache.get(roleId)
-                  ?? await interaction.guild?.roles.fetch(roleId).catch(() => null);
+      if (!interaction.guild) {
+        await interaction.reply({ content: "❌ Tidak dapat mengambil data guild.", ephemeral: true });
+        return;
+      }
+      let role = interaction.guild.roles.cache.get(roleId) ?? null;
+      if (!role) {
+        try { role = await interaction.guild.roles.fetch(roleId); } catch { role = null; }
+      }
       if (!role) {
         await interaction.reply({ content: "❌ Role tidak ditemukan.", ephemeral: true });
         return;
@@ -391,8 +397,13 @@ export async function handleSetupBoomBoxInteraction(interaction) {
     if (durSetMatch) {
       const [, roleId, minutesStr] = durSetMatch;
       const minutes = Number(minutesStr);
-      const role    = interaction.guild?.roles.cache.get(roleId)
-                   ?? await interaction.guild?.roles.fetch(roleId).catch(() => null);
+      let role = null;
+      if (interaction.guild) {
+        role = interaction.guild.roles.cache.get(roleId) ?? null;
+        if (!role) {
+          try { role = await interaction.guild.roles.fetch(roleId); } catch { role = null; }
+        }
+      }
       db.setRoleLimit(roleId, minutes);
 
       const backRow = new ActionRowBuilder().addComponents(
@@ -424,8 +435,13 @@ export async function handleSetupBoomBoxInteraction(interaction) {
     const durResetMatch = /^bbsetup:dur:reset:(\d+)$/.exec(id);
     if (durResetMatch) {
       const roleId = durResetMatch[1];
-      const role   = interaction.guild?.roles.cache.get(roleId)
-                  ?? await interaction.guild?.roles.fetch(roleId).catch(() => null);
+      let role = null;
+      if (interaction.guild) {
+        role = interaction.guild.roles.cache.get(roleId) ?? null;
+        if (!role) {
+          try { role = await interaction.guild.roles.fetch(roleId); } catch { role = null; }
+        }
+      }
       db.deleteRoleLimit(roleId);
 
       const backRow = new ActionRowBuilder().addComponents(
@@ -456,8 +472,13 @@ export async function handleSetupBoomBoxInteraction(interaction) {
         return;
       }
 
-      const role = interaction.guild?.roles.cache.get(roleId)
-                ?? await interaction.guild?.roles.fetch(roleId).catch(() => null);
+      let role = null;
+      if (interaction.guild) {
+        role = interaction.guild.roles.cache.get(roleId) ?? null;
+        if (!role) {
+          try { role = await interaction.guild.roles.fetch(roleId); } catch { role = null; }
+        }
+      }
       db.setRoleLimit(roleId, minutes);
 
       const backRow = new ActionRowBuilder().addComponents(

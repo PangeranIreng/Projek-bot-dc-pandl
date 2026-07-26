@@ -32,13 +32,28 @@ const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60];
 // ── Panel Utama Batas Durasi ──────────────────────────────────────────────────
 
 export async function buildDurationPanel(guild) {
+  // Guard: guild harus valid sebelum akses roles
+  if (!guild) throw new Error("Guild tidak tersedia — tidak dapat memuat panel durasi.");
+
   const roleLimits = db.getRoleLimits();
-  const guildRoles = await guild.roles.fetch();
+
+  // Fetch roles dengan graceful fallback ke cache jika API gagal
+  let guildRoles;
+  try {
+    guildRoles = await guild.roles.fetch();
+  } catch (fetchErr) {
+    // Jika fetch gagal, gunakan cache yang tersedia
+    guildRoles = guild.roles?.cache ?? null;
+    if (!guildRoles || guildRoles.size === 0) {
+      throw new Error(`Gagal memuat role guild: ${fetchErr.message}`);
+    }
+  }
+  if (!guildRoles) throw new Error("Daftar role guild tidak tersedia.");
 
   // Filter: skip @everyone dan bot roles, sort by position descending
   const relevantRoles = guildRoles
     .filter(r => !r.managed && r.id !== guild.id)
-    .sort((a, b) => b.position - a.position);
+    .sort((a, b) => (b.position ?? 0) - (a.position ?? 0));
 
   const lines = [];
   for (const [id, role] of relevantRoles) {

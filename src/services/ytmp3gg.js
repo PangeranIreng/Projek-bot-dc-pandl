@@ -1105,15 +1105,21 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
           break;
         }
         if (i < YOUTUBE_METHODS.length - 1) {
-            // FIX: Anti-bot backoff reduced from 1.5s–8s exponential to 300ms–1s flat.
-          // The old backoff (1.5+3+6+8+8 = 26.5s per chain) was the primary cause
-          // of jobs appearing frozen at "Downloading". Faster switching minimizes
-          // wasted wall-time when YouTube's PO-token gate rejects a client type.
-          const isAntiBotErr = translated.message.toLowerCase().includes("anti-bot") ||
-                               translated.message.toLowerCase().includes("not a bot");
-          if (isAntiBotErr && !signal?.aborted) {
-            const backoffMs = Math.min(300 * (i + 1), 1000); // 300ms → 600ms → 900ms → 1000ms cap
-            logger.info(`[ytmp3gg] [Provider ${providerNum}] Anti-Bot backoff — ${backoffMs}ms sebelum method ${i + 2}`);
+            // Backoff strategy per error type before switching to next method:
+          //   HTTP 429 (rate limited) — exponential: 2s → 4s → 8s → 10s cap
+          //   Anti-bot — flat: 300ms → 600ms → 1s cap (fast client rotation)
+          //   Other    — no delay (fail fast, move to next method immediately)
+          const msgLower = translated.message.toLowerCase();
+          const is429 = msgLower.includes("rate limited") || msgLower.includes("429");
+          const isAntiBotErr = msgLower.includes("anti-bot") || msgLower.includes("not a bot");
+          if (is429 && !signal?.aborted) {
+            const backoffMs = Math.min(2_000 * Math.pow(2, i), 10_000); // 2s → 4s → 8s → 10s cap
+            logger.info(`[ytmp3gg] [Provider ${providerNum}] HTTP 429 Rate Limit — waiting ${backoffMs}ms sebelum method ${i + 2}`);
+            await _sleep(backoffMs, signal);
+            if (signal?.aborted) { bestError = Object.assign(new Error("Dibatalkan (timeout tahap)"), { name: "AbortError" }); ytdlpFailed = true; break; }
+          } else if (isAntiBotErr && !signal?.aborted) {
+            const backoffMs = Math.min(300 * (i + 1), 1000); // 300ms → 600ms → 900ms → 1s cap
+            logger.info(`[ytmp3gg] [Provider ${providerNum}] Anti-Bot Detection — ${backoffMs}ms sebelum method ${i + 2}`);
             await _sleep(backoffMs, signal);
             if (signal?.aborted) { bestError = Object.assign(new Error("Dibatalkan (timeout tahap)"), { name: "AbortError" }); ytdlpFailed = true; break; }
           }
@@ -1189,8 +1195,11 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
   }
 
   // ── Provider 4: Piped (public YouTube frontend) ───────────────────────────
+  // SKIP for ytsearch1:/ytsearch: queries — Piped needs a real video ID, not
+  // a text search string. Spotify and other search-based inputs hit this path.
   providerNum++;
-  if (!signal?.aborted) {
+  const _isSearchQuery = /^ytsearch\d*:/i.test(input);
+  if (!signal?.aborted && !_isSearchQuery) {
     const pipedTmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-piped-"));
     await onProgress?.("Trying Piped API...");
     logger.info(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: Trying`);
@@ -1204,11 +1213,14 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
       bestError = _betterError(bestError, Object.assign(pipedErr, { priority: pipedErr.priority ?? 2 }));
       try { fs.rmSync(pipedTmpDir, { recursive: true, force: true }); } catch {}
     }
+  } else if (_isSearchQuery) {
+    logger.info(`[ytmp3gg] [Provider ${providerNum}] Piped | Status: SKIPPED | Reason: search query tidak memiliki video ID langsung`);
   }
 
   // ── Provider 5: Invidious (public YouTube alternative API) ────────────────
+  // SKIP for ytsearch1:/ytsearch: queries — same reason as Piped above.
   providerNum++;
-  if (!signal?.aborted) {
+  if (!signal?.aborted && !_isSearchQuery) {
     const invTmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-inv-"));
     await onProgress?.("Trying Invidious API...");
     logger.info(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: Trying`);
@@ -1222,6 +1234,8 @@ async function _ytdlYouTube(input, type, quality, onProgress, signal) {
       bestError = _betterError(bestError, Object.assign(invErr, { priority: invErr.priority ?? 2 }));
       try { fs.rmSync(invTmpDir, { recursive: true, force: true }); } catch {}
     }
+  } else if (_isSearchQuery) {
+    logger.info(`[ytmp3gg] [Provider ${providerNum}] Invidious | Status: SKIPPED | Reason: search query tidak memiliki video ID langsung`);
   }
 
   // ── All providers exhausted — throw the most informative error ────────────
@@ -1419,7 +1433,17 @@ const TIKTOK_METHODS = [
     "--add-headers", "Referer:https://www.tiktok.com/",
   ],
 
-  // ── Method 4: Trill + bestaudio format + mobile UA
+  // ── Method 4: Trill + api-t.tiktok.com hostname override (bypass CDN 403)
+  // api-t.tiktok.com adalah endpoint API TikTok yang lebih jarang di-rate-limit
+  // dibanding endpoint default — efektif untuk HTTP 403 dari CDN.
+  [
+    "--extractor-args", "tiktok:app_name=trill,api_hostname=api-t.tiktok.com",
+    "--no-check-certificates",
+    "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "--add-headers", "Referer:https://www.tiktok.com/",
+  ],
+
+  // ── Method 5: Trill + bestaudio format + mobile UA
   [
     "--extractor-args", "tiktok:app_name=trill",
     "--no-check-certificates",
@@ -1428,17 +1452,25 @@ const TIKTOK_METHODS = [
     "--add-headers", "Referer:https://www.tiktok.com/",
   ],
 
-  // ── Method 5: Standard (no special flags) — fallback ke plain yt-dlp default
+  // ── Method 6: Standard (no special flags) — fallback ke plain yt-dlp default
   [],
 
-  // ── Method 6: Skip cert check + Chrome desktop UA + TikTok Referer (non-Trill)
+  // ── Method 7: Skip cert check + Chrome desktop UA + TikTok Referer (non-Trill)
   [
     "--no-check-certificates",
     "--add-headers", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "--add-headers", "Referer:https://www.tiktok.com/",
   ],
 
-  // ── Method 7: Extended retries + TikTok iOS UA
+  // ── Method 8: Lite + api-t.tiktok.com — kombinasi alternatif untuk 403
+  [
+    "--extractor-args", "tiktok:app_name=lite,api_hostname=api-t.tiktok.com",
+    "--no-check-certificates",
+    "--add-headers", "User-Agent:Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
+    "--add-headers", "Referer:https://www.tiktok.com/",
+  ],
+
+  // ── Method 9: Extended retries + TikTok iOS UA
   // NOTE: yt-dlp retry-sleep format is "exp=BASE[:MAX]" — "exponential=..." is
   // an invalid expression in all modern yt-dlp versions and causes the
   // "invalid http retry sleep expression" warning + silently falls back to no

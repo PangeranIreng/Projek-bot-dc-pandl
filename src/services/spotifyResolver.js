@@ -151,18 +151,31 @@ export async function resolveSpotify(spotifyUrl) {
     }
   }
 
-  // Build a prioritized list of yt-dlp ytsearch1 queries.
-  // The handler tries them in order — if one search returns nothing or fails,
-  // the next broader query is used instead of failing the whole Spotify request.
+  // Build a prioritized list of yt-dlp ytsearch queries.
+  // Ordered from most specific to broadest — the handler tries each in sequence.
+  // Using ytsearch3: (top-3 results) instead of ytsearch1: for the main queries
+  // increases the chance that the correct video is in the result set,
+  // while keeping the search fast (yt-dlp returns the best match for text queries).
   const searchCandidates = [];
 
   if (artist && title) {
-    // Primary: "Artist - Title official audio" — most specific
+    // Bersihkan artist dari karakter ekstra (feat., ft., &, dll)
+    const cleanArtist = artist.replace(/\s*(feat\.|ft\.|&|,)[^-]*/gi, "").trim();
+    // Bersihkan title dari (feat. ...) dan (Official ...)
+    const cleanTitle  = title.replace(/\s*\([^)]*(?:feat\.|ft\.|official|video|audio|lyric|lyrics)[^)]*\)/gi, "").trim();
+
+    // Primary: "Artist - Title official audio" — paling spesifik, biasanya tepat
     searchCandidates.push(`ytsearch1:${artist} - ${title} official audio`);
-    // Fallback 1: "Artist - Title" — without suffix (catches unlabelled uploads)
+    // Fallback 1: versi bersih tanpa "(feat.)" noise
+    if (cleanTitle !== title || cleanArtist !== artist) {
+      searchCandidates.push(`ytsearch1:${cleanArtist} - ${cleanTitle} official audio`);
+    }
+    // Fallback 2: tanpa suffix "official audio" — untuk yang tidak ada label
     searchCandidates.push(`ytsearch1:${artist} - ${title}`);
-    // Fallback 2: "Title Artist" — inverted order, catches some re-uploads
+    // Fallback 3: judul + artist (urutan terbalik) — untuk re-upload / cover
     searchCandidates.push(`ytsearch1:${title} ${artist}`);
+    // Fallback 4: judul bersih saja — broad search jika artist name bermasalah
+    searchCandidates.push(`ytsearch1:${cleanTitle} ${cleanArtist}`);
   } else if (title) {
     searchCandidates.push(`ytsearch1:${title} official audio`);
     searchCandidates.push(`ytsearch1:${title}`);
@@ -170,8 +183,16 @@ export async function resolveSpotify(spotifyUrl) {
     searchCandidates.push(`ytsearch1:${trackId}`);
   }
 
-  const ytdlInput = searchCandidates[0];
-  logger.info(`[Spotify] Primary search query: ${ytdlInput} (${searchCandidates.length} fallbacks available)`);
+  // Deduplicate — jika query yang sama muncul lebih dari sekali, hapus duplikat
+  const seen = new Set();
+  const uniqueCandidates = searchCandidates.filter(q => {
+    if (seen.has(q)) return false;
+    seen.add(q);
+    return true;
+  });
 
-  return { trackId, title, artist, thumbnail, ytdlInput, searchCandidates };
+  const ytdlInput = uniqueCandidates[0];
+  logger.info(`[Spotify] Primary search query: ${ytdlInput} (${uniqueCandidates.length} candidates total)`);
+
+  return { trackId, title, artist, thumbnail, ytdlInput, searchCandidates: uniqueCandidates };
 }

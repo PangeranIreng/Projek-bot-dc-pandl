@@ -16,8 +16,13 @@
 import { logError } from "../utils/errorLogger.js";
 import { logger }   from "../utils/logger.js";
 
-const FAILURE_THRESHOLD = 5;              // consecutive failures -> OFFLINE
-const RECOVERY_MS       = 10 * 60 * 1000; // 10 minutes before auto-retry
+// Lebih toleran: butuh 8 kegagalan berturut-turut (bukan 5) sebelum OFFLINE.
+// Ini mencegah provider dimatikan hanya karena satu burst failure sementara.
+const FAILURE_THRESHOLD = 8;
+
+// Recovery lebih cepat: 5 menit (bukan 10 menit).
+// Provider yang sudah kembali hidup setelah cooldown langsung dicoba kembali.
+const RECOVERY_MS       = 5 * 60 * 1000;
 
 /** Human-friendly labels for Error Log / monitoring display. */
 const PROVIDER_LABELS = {
