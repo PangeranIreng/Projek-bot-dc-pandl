@@ -11,6 +11,7 @@ import { handleHesuCommand }         from "../features/scanner/hesuCommand.js";
 import { handleBoomBoxMessage }      from "../features/boombox/handler.js";
 import { handleTicketThreadMessage } from "../features/ticket/handler.js";
 import { handleLuaToolsMessage }     from "../features/luatools/handler.js";
+import { handleCookieUploadMessage } from "../features/boombox/resourceManagerInteraction.js";
 import { threadDB }              from "../database/threadDB.js";
 
 // Dedup guard: Discord can occasionally fire messageCreate twice for the same
@@ -34,6 +35,10 @@ export async function handleMessageCreate(message, secrets) {
     if (processedMessageIds.size > MAX_DEDUP_SIZE) {
       processedMessageIds.delete(processedMessageIds.values().next().value);
     }
+
+    // Resource Manager file imports are handled before all feature routers so
+    // cookies never enter the BoomBox queue or scanner pipeline.
+    if (await handleCookieUploadMessage(message)) return;
 
     // Auto Thread
     if (!message.channel?.isThread() && threadDB.isEnabled(message.channelId)) {

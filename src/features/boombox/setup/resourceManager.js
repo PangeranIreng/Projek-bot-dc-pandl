@@ -90,10 +90,16 @@ export function buildResourceManagerPanel() {
   }
 
   // ── Cookie status ──
-  const cookOk   = cookieStatus.hasCookies;
-  const cookLine = cookOk
-    ? `🟢 Aktif • ${_formatBytes(cookieStatus.sizeBytes)}` + (cookieStatus.meta?.uploadedAt ? ` • ${_formatDate(cookieStatus.meta.uploadedAt)}` : "")
-    : "🔴 Tidak ada cookies";
+  const cookIcon = {
+    valid: "🟢 Valid",
+    expired: "🔴 Expired",
+    unverified: "🟡 Belum dites",
+    missing: "🟡 Belum Ada",
+  }[cookieStatus.status] ?? "🟡 Belum Ada";
+  const cookLine = cookieStatus.hasCookies
+    ? `${cookIcon} • ${_formatBytes(cookieStatus.sizeBytes)}` +
+      (cookieStatus.meta?.uploadedAt ? ` • upload ${_formatDate(cookieStatus.meta.uploadedAt)}` : "")
+    : cookIcon;
 
   // ── GIF status ──
   const gifEnabled = dashboard.showGif;
@@ -185,18 +191,22 @@ export function buildCookiesPanel() {
   const meta = st.meta;
 
   let statusLine;
-  if (st.hasCookies) {
+   if (st.hasCookies) {
+    const statusLabel = {
+      valid: "🟢 **Valid**",
+      expired: "🔴 **Expired**",
+      unverified: "🟡 **Belum dites**",
+    }[st.status] ?? "🟡 **Belum dites**";
     statusLine =
-      `🟢 **Aktif**\n` +
-      `📁 Path: \`${st.path}\`\n` +
+      `${statusLabel}\n` +
       `📦 Ukuran: ${_formatBytes(st.sizeBytes)}\n` +
       (meta?.uploadedAt ? `🕐 Diupload: ${_formatDate(meta.uploadedAt)}\n` : "") +
-      (meta?.source === "managed" || st.source === "managed" ? "📌 Source: Upload manual (Resource Manager)" :
-       st.source === "env"     ? "📌 Source: Environment variable `YOUTUBE_COOKIES`" :
-       "📌 Source: `cookies.txt` (project root)");
+      (meta?.lastUsedAt ? `▶️ Terakhir dipakai: ${_formatDate(meta.lastUsedAt)}\n` : "▶️ Terakhir dipakai: —\n") +
+      `📌 Metode import: ${meta?.source ?? st.source ?? "—"}\n` +
+      (meta?.lastTestAt ? `🧪 Test terakhir: ${_formatDate(meta.lastTestAt)}` : "🧪 Test terakhir: belum dilakukan");
   } else {
     statusLine =
-      "🔴 **Tidak ada cookies**\n\n" +
+      "🟡 **Belum Ada**\n\n" +
       "Tanpa cookies, BoomBox menggunakan fallback chain penuh untuk YouTube.\n" +
       "Cookies membantu bypass anti-bot YouTube.";
   }
@@ -225,6 +235,10 @@ export function buildCookiesPanel() {
       .setLabel("📋 Upload (Paste)")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(false),
+    new ButtonBuilder()
+      .setCustomId("bbrm:cookies:upload:file")
+      .setLabel("📎 Upload File")
+      .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId("bbrm:cookies:upload:url")
       .setLabel("🔗 Upload dari URL")

@@ -29,9 +29,12 @@ description: Architecture of the /setup → BoomBox → Resource Manager feature
 - Never reassign `COOKIES_ARGS` — only mutate its contents
 
 ### Cookie Upload Methods
-1. **Paste**: Discord modal → validates Netscape format → saves to `cookies.txt` → `reloadCookies()`
-2. **URL**: Downloads via HTTPS (max 2 MB, 15 s timeout) → validates → saves → reloads
-3. **Test**: Runs `yt-dlp --simulate` on a known video with cookies; checks output for sign-in errors
+1. **File (recommended)**: Owner presses the file button, then sends one `.txt` attachment in the same channel. The bot validates it in memory, atomically saves it, and deletes the source message when permitted.
+2. **Paste**: Discord modal → validates Netscape format → saves to `cookies.txt` → `reloadCookies()`
+3. **URL**: Downloads in memory (max 2 MB, 15 s timeout) → validates → atomically saves → no URL is retained
+4. **Test**: Runs `yt-dlp --simulate` on a known video with cookies; checks output for sign-in errors and stores only sanitized test status
+
+Cookie metadata includes upload time, import method, last-used time, and test status. Cookie contents and sensitive token values are never logged or shown. The shared cookie args are suppressed for TikTok; YouTube and Spotify use the same managed file.
 
 **Why:** Cookies are optional anti-bot assistance. One file covers both YouTube and Spotify. TikTok does not use YouTube cookies.
 

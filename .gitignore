@@ -4,6 +4,11 @@ node_modules/
 # environment
 .env
 
+# sensitive BoomBox cookie material and metadata
+cookies.txt
+data/cookies-meta.json
+cookies.txt.*.tmp
+
 # runtime data (downloads, cache, temp files)
 storage/cache/*
 storage/temp/*

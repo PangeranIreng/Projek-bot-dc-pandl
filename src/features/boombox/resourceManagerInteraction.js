@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { logger } from "../../utils/logger.js";
 import { db }     from "../../database/db.js";
+import { isOwner } from "../../middleware/permissions.js";
 
 import {
   MANAGED_COOKIES_PATH,
@@ -36,6 +37,8 @@ import {
   getCookiesStatus,
   saveCookiesMeta,
   clearCookiesMeta,
+  validateCookiesContent,
+  recordCookiesTest,
 } from "../../utils/cookiesResolver.js";
 
 import {
@@ -57,24 +60,10 @@ const FOOTER = "BoomBox • Resource Manager";
 const COLOR  = 0x5865f2;
 
 const _execFileAsync = promisify(execFile);
+const MAX_COOKIE_BYTES = 2 * 1024 * 1024;
+const pendingFileUploads = new Map();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Validate that a string looks like a Netscape cookies file. */
-function _validateCookiesFormat(content) {
-  const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
-  // Must have at least one non-comment line with 7 tab-separated fields
-  const dataLines = lines.filter(l => !l.startsWith("#"));
-  if (dataLines.length === 0) return { ok: false, reason: "File tidak mengandung data cookie (hanya komentar atau kosong)." };
-
-  const sampleLine = dataLines[0];
-  const fields = sampleLine.split("\t");
-  if (fields.length < 7) {
-    return { ok: false, reason: "Format tidak valid. Pastikan file adalah format Netscape (tab-separated, 7 kolom per baris)." };
-  }
-
-  return { ok: true };
-}
 
 /** Download content from a URL. Returns { ok, content, reason }. */
 function _downloadUrl(url, maxBytes = 2 * 1024 * 1024) {
@@ -105,9 +94,94 @@ function _downloadUrl(url, maxBytes = 2 * 1024 * 1024) {
 /** Save cookies content to disk and reload the resolver. */
 function _saveCookies(content, source) {
   fs.mkdirSync(path.dirname(MANAGED_COOKIES_PATH), { recursive: true });
-  fs.writeFileSync(MANAGED_COOKIES_PATH, content, "utf8");
-  saveCookiesMeta({ uploadedAt: Date.now(), source, size: Buffer.byteLength(content, "utf8") });
+  const tempPath = `${MANAGED_COOKIES_PATH}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, content, { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(tempPath, MANAGED_COOKIES_PATH);
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch {}
+  }
+  saveCookiesMeta({
+    uploadedAt: Date.now(),
+    source,
+    size: Buffer.byteLength(content, "utf8"),
+    lastTestAt: null,
+    lastTestOk: null,
+    lastTestReason: null,
+  });
   reloadCookies();
+}
+
+function _safeTestReason(reason) {
+  return String(reason ?? "Cookies tidak lolos test")
+    .replace(/(--cookies(?:-from-browser)?\s+)(\S+)/gi, "$1[redacted]")
+    .replace(/(?:sid|sapisid|hsid|ssid|__secure-[a-z0-9_-]+)=\S+/gi, "[redacted]")
+    .slice(0, 240);
+}
+
+function _queueFileUpload(interaction) {
+  const key = `${interaction.user.id}:${interaction.channelId}`;
+  pendingFileUploads.set(key, { expiresAt: Date.now() + 120_000 });
+  const timer = setTimeout(() => pendingFileUploads.delete(key), 120_000);
+  timer.unref?.();
+}
+
+/**
+ * Discord modals cannot contain file inputs. After the owner presses
+ * "Upload File", accept one .txt attachment in the same channel, validate it
+ * in memory, persist it atomically, and remove the source message.
+ */
+export async function handleCookieUploadMessage(message) {
+  if (message.author?.bot || !message.attachments?.size) return false;
+  const key = `${message.author.id}:${message.channelId}`;
+  const pending = pendingFileUploads.get(key);
+  if (!pending || pending.expiresAt < Date.now()) {
+    pendingFileUploads.delete(key);
+    return false;
+  }
+  pendingFileUploads.delete(key);
+
+  if (message.attachments.size !== 1) {
+    await message.reply("❌ Upload cookies ditolak. Kirim tepat satu file `.txt`.").catch(() => {});
+    return true;
+  }
+
+  const attachment = message.attachments.first();
+  const fileName = String(attachment?.name ?? "").toLowerCase();
+  if (!attachment || !fileName.endsWith(".txt")) {
+    await message.reply("❌ Upload cookies ditolak. Kirim satu file `.txt` berformat Netscape.").catch(() => {});
+    return true;
+  }
+  if (attachment.size > MAX_COOKIE_BYTES) {
+    await message.reply("❌ Upload cookies ditolak. Ukuran maksimum file adalah 2 MB.").catch(() => {});
+    return true;
+  }
+
+  try {
+    const response = await fetch(attachment.url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const content = Buffer.from(await response.arrayBuffer()).toString("utf8");
+    const validation = validateCookiesContent(content);
+    if (!validation.ok) {
+      await message.reply(`❌ Format cookies tidak valid: ${validation.reason}`).catch(() => {});
+      return true;
+    }
+    if (!validation.hasYoutubeCookie) {
+      await message.reply("❌ File valid secara Netscape, tetapi tidak berisi cookie YouTube.").catch(() => {});
+      return true;
+    }
+
+    _saveCookies(content, "file");
+    await message.reply(
+      "✅ Cookies berhasil disimpan secara permanen dan langsung diaktifkan untuk YouTube dan Spotify.\n" +
+      "Gunakan tombol **🧪 Test Cookies** pada panel Resource Manager.",
+    ).catch(() => {});
+    await message.delete().catch(() => {});
+  } catch (err) {
+    logger.warn(`[ResourceManager] Cookie file import failed: ${_safeTestReason(err.message)}`);
+    await message.reply("❌ File cookies tidak dapat diproses. Pastikan attachment dapat diakses dan tidak corrupt.").catch(() => {});
+  }
+  return true;
 }
 
 /** Test cookies by running yt-dlp with --simulate on a short YouTube video. */
@@ -139,12 +213,12 @@ async function _testCookiesPath(cookiesPath) {
       { timeout: 30_000, env: process.env },
     );
     const title = (stdout || "").trim();
-    const errText = (stderr || stderr || "").toLowerCase();
+    const errText = (stderr || "").toLowerCase();
     if (title && !errText.includes("sign in")) return { ok: true, title };
     if (errText.includes("sign in") || errText.includes("login")) {
       return { ok: false, reason: "Cookies tidak valid atau kedaluwarsa. Perbarui dari browser." };
     }
-    return title ? { ok: true, title } : { ok: false, reason: errText.slice(0, 200) || "No output" };
+    return title ? { ok: true, title } : { ok: false, reason: _safeTestReason(errText) || "No output" };
   } catch (err) {
     const msg = (err.stderr || err.message || "").toLowerCase();
     if (msg.includes("sign in") || msg.includes("cookies")) {
@@ -153,7 +227,7 @@ async function _testCookiesPath(cookiesPath) {
     if (msg.includes("not found") || msg.includes("ENOENT")) {
       return { ok: false, reason: "yt-dlp tidak ditemukan. Bot belum selesai download binary." };
     }
-    return { ok: false, reason: err.message?.slice(0, 200) ?? "Unknown error" };
+    return { ok: false, reason: _safeTestReason(err.message) };
   }
 }
 
@@ -200,6 +274,13 @@ export async function handleResourceManagerInteraction(interaction) {
   const id = interaction.customId ?? "";
 
   try {
+    if (id.startsWith("bbrm:cookies:") && !isOwner(interaction.member)) {
+      await interaction.reply({
+        content: "❌ Hanya Owner yang dapat mengelola YouTube Cookies.",
+        ephemeral: true,
+      });
+      return;
+    }
 
     // ── Resource Manager main panel ──────────────────────────────────────
     if (id === "bbrm:resource:panel") {
@@ -237,6 +318,18 @@ export async function handleResourceManagerInteraction(interaction) {
       return;
     }
 
+    // ── Upload: file attachment ──────────────────────────────────────────
+    if (id === "bbrm:cookies:upload:file") {
+      _queueFileUpload(interaction);
+      await interaction.reply({
+        content:
+          "📎 Kirim **satu file `.txt`** cookies.txt di channel ini dalam 2 menit.\n" +
+          "File akan divalidasi, disimpan aman, lalu pesan attachment dihapus bila bot memiliki izin.",
+        ephemeral: true,
+      });
+      return;
+    }
+
     // ── Upload: URL ──────────────────────────────────────────────────────
     if (id === "bbrm:cookies:upload:url") {
       await interaction.showModal(buildCookiesUrlModal());
@@ -248,10 +341,18 @@ export async function handleResourceManagerInteraction(interaction) {
       const content = interaction.fields.getTextInputValue("cookies_content")?.trim() ?? "";
 
       // Validate format
-      const validation = _validateCookiesFormat(content);
+      const validation = validateCookiesContent(content);
       if (!validation.ok) {
         await interaction.reply({
           embeds: [_errorEmbed("Format Cookies Tidak Valid", validation.reason)],
+          components: [_backToCookiesRow()],
+          ephemeral: true,
+        });
+        return;
+      }
+      if (!validation.hasYoutubeCookie) {
+        await interaction.reply({
+          embeds: [_errorEmbed("Cookies YouTube Tidak Ditemukan", "Format Netscape valid, tetapi file tidak berisi cookie YouTube.")],
           components: [_backToCookiesRow()],
           ephemeral: true,
         });
@@ -270,7 +371,7 @@ export async function handleResourceManagerInteraction(interaction) {
         return;
       }
 
-      logger.info(`[ResourceManager] Cookies diupload via paste oleh ${interaction.user.tag}`);
+      logger.info("[ResourceManager] Cookies imported via paste");
 
       // Show success with option to test
       const { embed, components } = buildCookiesPanel();
@@ -304,7 +405,7 @@ export async function handleResourceManagerInteraction(interaction) {
 
       // Show processing state
       await interaction.update({
-        embeds: [_processingEmbed("Mendownload Cookies...", `Mendownload dari:\n\`${url}\`\n\nHarap tunggu sebentar...`)],
+        embeds: [_processingEmbed("Mendownload Cookies...", "Mengambil file cookies dari URL. URL tidak disimpan setelah proses selesai.\n\nHarap tunggu sebentar...")],
         components: [],
       });
 
@@ -320,10 +421,17 @@ export async function handleResourceManagerInteraction(interaction) {
       }
 
       // Validate format
-      const validation = _validateCookiesFormat(dl.content);
+      const validation = validateCookiesContent(dl.content);
       if (!validation.ok) {
         await interaction.editReply({
           embeds: [_errorEmbed("Format Cookies Tidak Valid", validation.reason)],
+          components: [_backToCookiesRow()],
+        });
+        return;
+      }
+      if (!validation.hasYoutubeCookie) {
+        await interaction.editReply({
+          embeds: [_errorEmbed("Cookies YouTube Tidak Ditemukan", "Format Netscape valid, tetapi file tidak berisi cookie YouTube.")],
           components: [_backToCookiesRow()],
         });
         return;
@@ -340,7 +448,7 @@ export async function handleResourceManagerInteraction(interaction) {
         return;
       }
 
-      logger.info(`[ResourceManager] Cookies didownload dari URL oleh ${interaction.user.tag}: ${url}`);
+      logger.info("[ResourceManager] Cookies imported via URL");
 
       const testRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("bbrm:cookies:test").setLabel("🧪 Test Sekarang").setStyle(ButtonStyle.Success),
@@ -374,15 +482,17 @@ export async function handleResourceManagerInteraction(interaction) {
       const result = await _testCookiesPath(st.path);
 
       if (result.ok) {
-        logger.info(`[ResourceManager] Cookie test OK — title: ${result.title}`);
+        recordCookiesTest({ ok: true });
+        logger.info("[ResourceManager] Cookie test OK");
         await interaction.editReply({
           embeds: [_successEmbed("Cookies Valid ✅", `Cookies berhasil diverifikasi!\n\n**Video test:** ${result.title}\n\nCookies aktif dan akan digunakan untuk semua request YouTube dan Spotify.`)],
           components: [_backToCookiesRow()],
         });
       } else {
-        logger.warn(`[ResourceManager] Cookie test FAILED: ${result.reason}`);
+        recordCookiesTest({ ok: false, reason: _safeTestReason(result.reason) });
+        logger.warn(`[ResourceManager] Cookie test FAILED: ${_safeTestReason(result.reason)}`);
         await interaction.editReply({
-          embeds: [_errorEmbed("Cookies Tidak Valid ❌", `${result.reason}\n\n**Solusi:**\n• Ekspor ulang cookies dari browser\n• Pastikan kamu sudah login ke YouTube\n• Gunakan ekstensi seperti \`Get cookies.txt LOCALLY\``)],
+          embeds: [_errorEmbed("Cookies Tidak Valid ❌", `${_safeTestReason(result.reason)}\n\n**Solusi:**\n• Ekspor ulang cookies dari browser\n• Pastikan kamu sudah login ke YouTube\n• Gunakan ekstensi seperti \`Get cookies.txt LOCALLY\``)],
           components: [_backToCookiesRow()],
         });
       }

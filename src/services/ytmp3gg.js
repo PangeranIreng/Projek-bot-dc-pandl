@@ -24,7 +24,7 @@ import { kaizenDownload }      from "./kaizenDownloader.js";
 import { logger }              from "../utils/logger.js";
 import * as providerHealth     from "./providerHealth.js";
 import { FFMPEG_PATH, ffmpegAvailable } from "../utils/ffmpegPath.js";
-import { COOKIES_ARGS, hasCookies }     from "../utils/cookiesResolver.js";
+import { COOKIES_ARGS, hasCookies, markCookiesUsed } from "../utils/cookiesResolver.js";
 import { ENV_INFO }                     from "../utils/envDetector.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -370,9 +370,11 @@ async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120
   const audioFmt = type === "mp4" ? "m4a" : "mp3";
   const audioQ   = type === "mp3" ? `${quality}K` : "0";
 
+  const cookieArgs = /tiktok\.com/i.test(input) ? [] : COOKIES_ARGS;
+  if (cookieArgs.length > 0) markCookiesUsed();
   const args = [
     "--ffmpeg-location", FFMPEG_PATH,
-    ...COOKIES_ARGS,      // YouTube cookies for anti-bot bypass ([] when not available)
+    ...cookieArgs,        // YouTube cookies for YouTube/Spotify paths only
     "--no-playlist",
     "--extract-audio",
     "--audio-format",  audioFmt,
@@ -392,7 +394,7 @@ async function _attempt(input, type, quality, extraArgs, tmpDir, timeoutMs = 120
     input,
   ];
 
-  logger.debug(`[ytmp3gg] Args: ${args.join(" ")}`);
+  logger.debug(`[ytmp3gg] Running yt-dlp attempt (cookies=${cookieArgs.length > 0})`);
 
   const { stdout, stderr } = await execFileAsync(BIN_PATH, args, {
     timeout:   timeoutMs,
@@ -1604,13 +1606,17 @@ export async function getVideoInfo(url) {
   const INFO_TIMEOUT_MS = 20_000;
 
   for (let i = 0; i < infoMethods.length; i++) {
+    const infoCookieArgs = /tiktok\.com/i.test(resolvedUrl)
+      ? []
+      : COOKIES_ARGS;
+    if (infoCookieArgs.length > 0) markCookiesUsed();
     const args = [
       "--no-playlist",
       "--simulate",
       "--no-warnings",
       "--extractor-retries", "1",
       "--print", "%(duration)s|||%(title)s|||%(thumbnail)s|||%(uploader)s",
-      ...COOKIES_ARGS,    // cookies for anti-bot bypass ([] when not configured)
+      ...infoCookieArgs,
       ...infoMethods[i],
       resolvedUrl,
     ];

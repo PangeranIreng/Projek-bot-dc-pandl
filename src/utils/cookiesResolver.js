@@ -37,6 +37,95 @@ const META_PATH = path.join(PROJECT_ROOT, "data", "cookies-meta.json");
 
 let _cookiesPath = null;
 let _cookiesSource = null; // "managed" | "env" | "root" | null
+let _validation = null;
+let _lastUsedWriteTimer = null;
+
+const MAX_COOKIE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Validate Netscape cookie content without ever returning the cookie values.
+ * The returned summary is safe for status panels and logs.
+ */
+export function validateCookiesContent(content) {
+  if (typeof content !== "string" || !content.trim()) {
+    return { ok: false, reason: "File kosong atau tidak dapat dibaca." };
+  }
+  if (Buffer.byteLength(content, "utf8") > MAX_COOKIE_BYTES) {
+    return { ok: false, reason: "File terlalu besar (maksimum 2 MB)." };
+  }
+
+  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const dataLines = lines
+    .map((line) => line.trimEnd())
+    .filter((line) => {
+      const trimmed = line.trimStart();
+      return trimmed && (!trimmed.startsWith("#") || trimmed.startsWith("#HttpOnly_"));
+    });
+
+  if (dataLines.length === 0) {
+    return { ok: false, reason: "File tidak mengandung data cookie (hanya komentar atau kosong)." };
+  }
+
+  let youtubeCookieCount = 0;
+  let activeExpiryCount = 0;
+  let maxExpiresAt = null;
+
+  for (let index = 0; index < dataLines.length; index++) {
+    const fields = dataLines[index].split("\t");
+    if (fields.length !== 7) {
+      return {
+        ok: false,
+        reason: `Baris cookie ke-${index + 1} tidak valid. Format Netscape harus memiliki tepat 7 kolom yang dipisahkan tab.`,
+      };
+    }
+
+    const [rawDomain, includeSubdomains, cookiePath, secure, expiry, name, value] = fields;
+    const domain = rawDomain.replace(/^#HttpOnly_/i, "").toLowerCase();
+    if (!domain || !/^[a-z0-9.-]+$/.test(domain)) {
+      return { ok: false, reason: `Domain pada baris ke-${index + 1} tidak valid.` };
+    }
+    if (!["TRUE", "FALSE"].includes(includeSubdomains.toUpperCase())) {
+      return { ok: false, reason: `Kolom subdomain pada baris ke-${index + 1} harus TRUE atau FALSE.` };
+    }
+    if (!cookiePath.startsWith("/")) {
+      return { ok: false, reason: `Path pada baris ke-${index + 1} harus diawali /.` };
+    }
+    if (!["TRUE", "FALSE"].includes(secure.toUpperCase())) {
+      return { ok: false, reason: `Kolom secure pada baris ke-${index + 1} harus TRUE atau FALSE.` };
+    }
+    if (!/^\d+$/.test(expiry)) {
+      return { ok: false, reason: `Expiry pada baris ke-${index + 1} harus berupa angka.` };
+    }
+    if (!name || value === undefined) {
+      return { ok: false, reason: `Nama cookie pada baris ke-${index + 1} kosong.` };
+    }
+
+    if (domain === "youtube.com" || domain.endsWith(".youtube.com")) youtubeCookieCount++;
+    const expiresAt = Number(expiry) * 1000;
+    if (expiresAt === 0 || expiresAt > Date.now()) activeExpiryCount++;
+    if (expiresAt > (maxExpiresAt ?? 0)) maxExpiresAt = expiresAt;
+  }
+
+  return {
+    ok: true,
+    youtubeCookieCount,
+    hasYoutubeCookie: youtubeCookieCount > 0,
+    activeExpiryCount,
+    expiresAt: maxExpiresAt,
+  };
+}
+
+function _inspectCookiesPath(cookiePath) {
+  try {
+    const stat = fs.statSync(cookiePath);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_COOKIE_BYTES) {
+      return { ok: false, reason: "File cookies kosong, bukan file biasa, atau terlalu besar." };
+    }
+    return validateCookiesContent(fs.readFileSync(cookiePath, "utf8"));
+  } catch (err) {
+    return { ok: false, reason: `File cookies tidak dapat dibaca: ${err.message}` };
+  }
+}
 
 function _resolveCookiesPath() {
   // ── 1. Managed cookies (uploaded via Resource Manager = project root cookies.txt)
@@ -60,14 +149,18 @@ function _resolveCookiesPath() {
 /** Reload cookie state and mutate COOKIES_ARGS in-place. */
 export function reloadCookies() {
   const { path: p, source } = _resolveCookiesPath();
-  _cookiesPath   = p;
-  _cookiesSource = source;
+  const validation = p ? _inspectCookiesPath(p) : null;
+  _cookiesPath   = p && validation?.ok ? p : null;
+  _cookiesSource = p && validation?.ok ? source : null;
+  _validation    = validation;
 
   // Mutate COOKIES_ARGS in-place so all existing importers see the new value
   COOKIES_ARGS.length = 0;
-  if (p) {
-    COOKIES_ARGS.push("--cookies", p);
-    logger.info(`[cookiesResolver] Cookies reloaded: ${p} (source: ${source})`);
+  if (_cookiesPath) {
+    COOKIES_ARGS.push("--cookies", _cookiesPath);
+    logger.info(`[cookiesResolver] Cookies loaded (source: ${source})`);
+  } else if (p) {
+    logger.warn(`[cookiesResolver] Cookies ignored: ${validation?.reason ?? "format tidak valid"}`);
   }
 
   // Re-export snapshot values (these are module-level, used at call time by callers)
@@ -89,10 +182,37 @@ export function getCookiesMeta() {
 export function saveCookiesMeta(meta) {
   try {
     fs.mkdirSync(path.dirname(META_PATH), { recursive: true });
-    fs.writeFileSync(META_PATH, JSON.stringify(meta, null, 2), "utf8");
+    const tmpPath = `${META_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(meta, null, 2), { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(tmpPath, META_PATH);
   } catch (err) {
+    try { fs.unlinkSync(`${META_PATH}.tmp`); } catch {}
     logger.warn(`[cookiesResolver] Could not save cookies meta: ${err.message}`);
   }
+}
+
+/** Update last-used metadata without writing on every download request. */
+export function markCookiesUsed() {
+  if (!_cookiesPath) return;
+  const current = getCookiesMeta() ?? {};
+  const next = { ...current, lastUsedAt: Date.now() };
+  if (_lastUsedWriteTimer) return;
+  _lastUsedWriteTimer = setTimeout(() => {
+    _lastUsedWriteTimer = null;
+    saveCookiesMeta(next);
+  }, 30_000);
+  _lastUsedWriteTimer.unref?.();
+}
+
+/** Persist the result of the explicit cookie test without exposing cookie data. */
+export function recordCookiesTest({ ok, reason = null }) {
+  const current = getCookiesMeta() ?? {};
+  saveCookiesMeta({
+    ...current,
+    lastTestAt: Date.now(),
+    lastTestOk: Boolean(ok),
+    lastTestReason: ok ? null : String(reason ?? "Cookies tidak lolos test").slice(0, 240),
+  });
 }
 
 /** Delete cookie metadata. */
@@ -110,12 +230,25 @@ export function getCookiesStatus() {
   if (_cookiesPath) {
     try { sizeBytes = fs.statSync(_cookiesPath).size; } catch {/* file may have been deleted */}
   }
+  const meta = getCookiesMeta();
+  const expiredByFile = Boolean(_validation?.ok && _validation.activeExpiryCount === 0);
+  const expiredByTest = meta?.lastTestOk === false &&
+    /expired|kedaluwarsa|tidak valid/i.test(meta.lastTestReason ?? "");
+  const status = !_cookiesPath || sizeBytes === null
+    ? "missing"
+    : expiredByFile || expiredByTest
+      ? "expired"
+      : meta?.lastTestOk === true
+        ? "valid"
+        : "unverified";
   return {
     hasCookies: _cookiesPath !== null && sizeBytes !== null,
     path:       _cookiesPath,
     source:     _cookiesSource,
     sizeBytes,
-    meta:       getCookiesMeta(),
+    status,
+    validation: _validation,
+    meta,
   };
 }
 
