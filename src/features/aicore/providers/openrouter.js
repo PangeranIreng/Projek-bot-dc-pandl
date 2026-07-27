@@ -6,9 +6,10 @@
  */
 import OpenAI from "openai";
 
-export const PROVIDER_ID   = "openrouter";
-export const PROVIDER_NAME = "OpenRouter";
-export const DEFAULT_MODEL = "openai/gpt-4o-mini";
+export const PROVIDER_ID     = "openrouter";
+export const PROVIDER_NAME   = "OpenRouter";
+export const DEFAULT_MODEL   = "openai/gpt-4o-mini";
+export const SUPPORTS_VISION = true; // Vision support depends on the chosen model
 export const MODELS = [
   "openai/gpt-4o-mini",
   "openai/gpt-4o",
@@ -24,6 +25,16 @@ const BASE_URL = "https://openrouter.ai/api/v1";
 export function detectFromKey(apiKey) {
   const v = String(apiKey || "").trim();
   return v.startsWith("sk-or-");
+}
+
+/**
+ * Returns true if the given model name is compatible with this provider.
+ * OpenRouter uses the "vendor/model" format (e.g. "openai/gpt-4o-mini").
+ */
+export function isCompatibleModel(model) {
+  const m = String(model || "").trim();
+  // OpenRouter models always contain a "/" separator (e.g. "openai/gpt-4o")
+  return MODELS.includes(m) || m.includes("/");
 }
 
 export function validateKeyFormat(apiKey) {

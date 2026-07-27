@@ -6,9 +6,10 @@
  */
 import OpenAI from "openai";
 
-export const PROVIDER_ID   = "openai";
-export const PROVIDER_NAME = "OpenAI";
-export const DEFAULT_MODEL = "gpt-4o-mini";
+export const PROVIDER_ID     = "openai";
+export const PROVIDER_NAME   = "OpenAI";
+export const DEFAULT_MODEL   = "gpt-4o-mini";
+export const SUPPORTS_VISION = true;
 export const MODELS = [
   "gpt-4o",
   "gpt-4o-mini",
@@ -26,6 +27,16 @@ export const MODELS = [
 export function detectFromKey(apiKey) {
   const v = String(apiKey || "").trim();
   return v.startsWith("sk-") && !v.startsWith("sk-ant-") && !v.startsWith("sk-or-");
+}
+
+/**
+ * Returns true if the given model name is compatible with this provider.
+ * Used when switching providers to decide whether to keep the current model
+ * or reset to the default.
+ */
+export function isCompatibleModel(model) {
+  const m = String(model || "").trim();
+  return MODELS.includes(m) || m.startsWith("gpt-") || m.startsWith("o1-") || m.startsWith("o3-") || m.startsWith("o4-");
 }
 
 export function validateKeyFormat(apiKey) {

@@ -5,9 +5,10 @@
  * Key pattern: AIza…
  */
 
-export const PROVIDER_ID   = "gemini";
-export const PROVIDER_NAME = "Google Gemini";
-export const DEFAULT_MODEL = "gemini-2.0-flash";
+export const PROVIDER_ID     = "gemini";
+export const PROVIDER_NAME   = "Google Gemini";
+export const DEFAULT_MODEL   = "gemini-2.0-flash";
+export const SUPPORTS_VISION = true;
 export const MODELS = [
   "gemini-2.0-flash",
   "gemini-2.0-flash-lite",
@@ -21,6 +22,14 @@ const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 export function detectFromKey(apiKey) {
   return String(apiKey || "").trim().startsWith("AIza");
+}
+
+/**
+ * Returns true if the given model name is compatible with this provider.
+ */
+export function isCompatibleModel(model) {
+  const m = String(model || "").trim();
+  return MODELS.includes(m) || m.startsWith("gemini-");
 }
 
 export function validateKeyFormat(apiKey) {

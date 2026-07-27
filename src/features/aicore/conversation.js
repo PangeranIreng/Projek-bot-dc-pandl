@@ -11,8 +11,8 @@
  *
  * Rate limiting (layered):
  *   1. Per-user cooldown (3 s) — stops individual spam
- *   2. Per-channel sliding window (10 msg / 60 s) — stops flood
- *   3. AI Core's own global limiter (8 req / min) — provider quota guard
+ *   2. Per-channel sliding window (3 msg / 60 s) — stops flood
+ *   3. AI Core's own global limiter (3 req / min) — provider quota guard
  *
  * 429 handling:
  *   One retry after 5 s exponential backoff; on second failure → structured
@@ -263,10 +263,11 @@ export async function handleAIConversationMessage(message) {
 
   } catch (err) {
     const providerReason = redact(String(err?.providerReason || err?.message || "Unknown error")).slice(0, 280);
-    const category = err?.providerCategory || "unknown";
-    const httpStatus = err?.httpStatus ?? null;
-    const isRateLimit = category === "rate_limit_429" || httpStatus === 429;
-    const isLocalLimit = /rate limit reached|concurrent_limit/i.test(`${err?.message ?? ""}${category}`);
+    const category      = err?.providerCategory || "unknown";
+    const httpStatus    = err?.httpStatus ?? null;
+    const isRateLimit   = category === "rate_limit_429" || httpStatus === 429;
+    const isQuota       = category === "quota_exhausted";
+    const isLocalLimit  = /rate limit reached|concurrent_limit/i.test(`${err?.message ?? ""}${category}`);
     const retryAfterSec = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
 
     logger.warn(`[AI Conversation] Failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${providerReason}`);
@@ -274,9 +275,13 @@ export async function handleAIConversationMessage(message) {
     // User-facing reply
     if (isLocalLimit) {
       await message.reply("⏳ AI Core sedang sibuk memproses request lain. Coba lagi dalam beberapa detik.").catch(() => {});
+    } else if (isQuota) {
+      await message.reply(
+        `❌ **Quota Provider Habis** (HTTP 429)\nQuota atau billing provider habis. Periksa dashboard provider Anda.\nReason: ${providerReason}`
+      ).catch(() => {});
     } else if (isRateLimit) {
       await message.reply(
-        `❌ **Rate Limit / Quota** (HTTP 429)\nProvider membatasi permintaan.${retryAfterSec ? ` Retry-After: ${retryAfterSec}s.` : " Coba lagi dalam beberapa menit."}\nReason: ${providerReason}`
+        `❌ **Rate Limit** (HTTP 429)\nProvider membatasi permintaan.${retryAfterSec ? ` Retry-After: ${retryAfterSec}s.` : " Coba lagi dalam beberapa menit."}\nReason: ${providerReason}`
       ).catch(() => {});
     } else if (httpStatus) {
       await message.reply(`❌ **Provider Error** (HTTP ${httpStatus})\n${providerReason}`).catch(() => {});

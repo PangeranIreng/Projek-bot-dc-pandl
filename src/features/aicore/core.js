@@ -91,8 +91,16 @@ function getActiveApiKey() {
   // has not yet been confirmed. Block it from use — any request would route the
   // key to an unverified endpoint. The owner must call setActiveProvider() first.
   if (cfg.keyStatus === "provider_selection_needed") return null;
-  // Fallback chain: secure storage → OPENAI_API_KEY env var (legacy)
-  return aiCoreDB.getApiKey() || process.env.OPENAI_API_KEY?.trim() || null;
+  // Prefer the encrypted key from secure storage.
+  const stored = aiCoreDB.getApiKey();
+  if (stored) return stored;
+  // Legacy env-var fallback: OPENAI_API_KEY is only valid when the configured
+  // provider is "openai". Never send an OpenAI key to Gemini/Anthropic/Groq/etc.
+  const provider = cfg.provider || "openai";
+  if (provider === "openai") {
+    return process.env.OPENAI_API_KEY?.trim() || null;
+  }
+  return null;
 }
 
 function providerLabel() {
@@ -165,7 +173,13 @@ function providerErrorCategory(error, { modelRequest = false } = {}) {
       ? "model_404"
       : "endpoint_404";
   }
-  if (status === 429) return "rate_limit_429";
+  if (status === 429) {
+    // Distinguish temporary rate limit from permanent quota/billing exhaustion.
+    if (/quota|exceeded|insufficient_quota|billing|credit|payment|balance|debit/i.test(message)) {
+      return "quota_exhausted";
+    }
+    return "rate_limit_429";
+  }
   if (status === 400) return "invalid_request_400";
   if (status >= 500)  return `provider_${status}`;
   if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) return "timeout";
@@ -190,7 +204,11 @@ function classifyProviderError(error, { modelRequest = false } = {}) {
   }
   if (status === 404) return "The provider endpoint was not found (HTTP 404).";
   if (status === 429 || code.includes("rate") || /rate limit|quota|too many request/.test(message)) {
-    return `Provider rate limit or quota reached${status ? ` (HTTP ${status})` : ""}.`;
+    const isQuotaExhausted = /quota|exceeded|insufficient_quota|billing|credit|payment|balance|debit/i.test(message);
+    if (isQuotaExhausted) {
+      return `Provider quota habis atau ada masalah billing${status ? ` (HTTP ${status})` : ""}. Periksa saldo/billing di dashboard provider.`;
+    }
+    return `Provider rate limit reached${status ? ` (HTTP ${status})` : ""}. Coba lagi dalam beberapa saat.`;
   }
   if (status === 400) return "Provider rejected the request format (HTTP 400).";
   if (status >= 500)  return `Provider service error (HTTP ${status}).`;
@@ -466,13 +484,12 @@ export async function updateProviderApiKey(apiKey) {
     activeApiKey  = value;
 
     const cfg = config();
+    // Switch to the new provider's default model if the current model is not
+    // compatible with the new provider (avoids sending gpt-4-turbo to Gemini, etc.)
+    const keepModel = detected.isCompatibleModel(cfg.model || "");
     aiCoreDB.updateConfig({
       provider:             detected.PROVIDER_ID,
-      // Switch to the new provider's default model if the current model is still
-      // the OpenAI built-in default and we switched to a different provider
-      model:                cfg.model === "gpt-4o-mini" && detected.PROVIDER_ID !== "openai"
-                              ? detected.DEFAULT_MODEL
-                              : cfg.model,
+      model:                keepModel ? cfg.model : detected.DEFAULT_MODEL,
       keyStatus:            "key_stored_not_tested",
       providerStatus:       "not_tested",
       providerStatusReason: null,
@@ -553,11 +570,10 @@ export function setActiveProvider(providerId) {
     activeAdapter = adapter;
   }
 
-  // Switch to the new provider's default model when the current model clearly
-  // belongs to a different provider's namespace (e.g. "gpt-*" → Gemini switch)
-  const currentModel      = cfg.model || "";
-  const needsModelUpdate  = !adapter.MODELS.some((m) => currentModel.startsWith(m.split("/")[0]));
-  const newModel          = needsModelUpdate ? adapter.DEFAULT_MODEL : currentModel;
+  // Switch to the new provider's default model when the current model is not
+  // compatible with the new provider (e.g. "gpt-4-turbo" → Gemini switch)
+  const currentModel   = cfg.model || "";
+  const newModel       = adapter.isCompatibleModel(currentModel) ? currentModel : adapter.DEFAULT_MODEL;
 
   aiCoreDB.updateConfig({
     provider:             adapter.PROVIDER_ID,
@@ -911,7 +927,18 @@ export async function recordError(payload = {}) {
 
 export async function investigate({ query, image }) {
   const cfg     = config();
+  const adapter = activeAdapter ?? resolveAdapter();
   const context = cfg.codeAnalysis ? relevantContext(query) : "";
+
+  // Check vision support — if provider doesn't support vision, strip the image
+  // and prepend a clear warning so the user knows their image was not analyzed.
+  let effectiveImage = image;
+  let visionNote = "";
+  if (image && adapter.SUPPORTS_VISION === false) {
+    effectiveImage = null;
+    visionNote = `\n\n⚠️ **Vision tidak didukung oleh ${adapter.PROVIDER_NAME}.** Gambar tidak dapat dianalisis. Ganti provider ke OpenAI / Google Gemini / Anthropic untuk mengaktifkan vision analysis.`;
+  }
+
   const messages = [
     {
       role:    "system",
@@ -921,7 +948,7 @@ export async function investigate({ query, image }) {
       role:    "user",
       content: [
         { type: "text", text: `PERTANYAAN:\n${redact(query)}\n\nPROJECT EXCERPTS:\n${context || "Tidak ada excerpt yang cocok."}` },
-        ...(image ? [{ type: "image_url", image_url: { url: image } }] : []),
+        ...(effectiveImage ? [{ type: "image_url", image_url: { url: effectiveImage } }] : []),
       ],
     },
   ];
@@ -930,9 +957,9 @@ export async function investigate({ query, image }) {
       errorId: "INVESTIGATION",
       feature: "Project Investigation",
       reason:  `Pertanyaan: ${query}`,
-    })}`;
+    })}${visionNote}`;
   }
-  return redact(await requestModel(messages));
+  return redact(await requestModel(messages)) + visionNote;
 }
 
 export async function generateFixPrompt(errorId) {
@@ -1010,23 +1037,26 @@ export async function handleAICoreMessage(message) {
     return true;
   }
 
-  const err           = lastErr;
+  const err            = lastErr;
   const providerReason = String(err?.providerReason || err?.message || "Unknown error").slice(0, 300);
-  const category      = err?.providerCategory || "unknown";
-  const httpStatus    = err?.httpStatus ?? null;
-  const isRateLimit   = category === "rate_limit_429" || httpStatus === 429;
-  const isBusy        = category === "concurrent_limit";
-  const retryAfterSec = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
+  const category       = err?.providerCategory || "unknown";
+  const httpStatus     = err?.httpStatus ?? null;
+  const isRateLimit    = category === "rate_limit_429" || httpStatus === 429;
+  const isQuota        = category === "quota_exhausted";
+  const isBusy         = category === "concurrent_limit";
+  const retryAfterSec  = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
 
   logger.warn(`[AI Core] Investigation failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${redact(providerReason)}`);
 
   const userMessage = isBusy
     ? "⏳ AI Core sedang memproses request lain. Coba lagi dalam beberapa detik."
-    : isRateLimit
-      ? `❌ **AI Core — Rate Limit** (HTTP 429)\nProvider membatasi request.${retryAfterSec ? ` Retry-After: ${retryAfterSec}s.` : " Coba lagi dalam beberapa menit."}\nReason: ${redact(providerReason)}`
-      : httpStatus
-        ? `❌ **AI Core — Provider Error** (HTTP ${httpStatus})\n${redact(providerReason)}`
-        : `❌ **AI Core — Investigation Gagal**\n${redact(providerReason)}`;
+    : isQuota
+      ? `❌ **AI Core — Quota Habis** (HTTP 429)\nQuota atau billing provider habis. Periksa dashboard provider Anda.\nReason: ${redact(providerReason)}`
+      : isRateLimit
+        ? `❌ **AI Core — Rate Limit** (HTTP 429)\nProvider membatasi request.${retryAfterSec ? ` Retry-After: ${retryAfterSec}s.` : " Coba lagi dalam beberapa menit."}\nReason: ${redact(providerReason)}`
+        : httpStatus
+          ? `❌ **AI Core — Provider Error** (HTTP ${httpStatus})\n${redact(providerReason)}`
+          : `❌ **AI Core — Investigation Gagal**\n${redact(providerReason)}`;
   await message.reply(userMessage).catch(() => {});
 
   if (!isBusy) {

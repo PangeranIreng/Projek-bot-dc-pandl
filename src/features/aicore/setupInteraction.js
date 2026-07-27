@@ -9,6 +9,7 @@ import {
   rebuildKnowledge, isAICoreAllowed, generateFixPrompt,
   getProviderConfiguration, updateProviderApiKey, removeProviderApiKey,
   testProviderConnection, validateProviderModel, setActiveProvider,
+  redact,
 } from "./core.js";
 import { clearConversationHistory, getConversationStats } from "./conversation.js";
 import { logger } from "../../utils/logger.js";
@@ -341,10 +342,52 @@ export async function handleAICoreInteraction(interaction) {
     // ── AI settings ──────────────────────────────────────────────────────────
     if (id === "aicore:provider:settings") {
       const cfg   = getAICoreConfig();
-      const modal = new ModalBuilder().setCustomId("aicore:modal:config").setTitle("AI Core Configuration");
-      const limits = new TextInputBuilder().setCustomId("limits").setLabel("Timeout ms, max response chars").setStyle(TextInputStyle.Short).setRequired(true).setValue(`${cfg.timeoutMs}, ${cfg.maxResponse}`);
-      const flags  = new TextInputBuilder().setCustomId("flags").setLabel("error,investigation,code,vision,conversation (on/off)").setStyle(TextInputStyle.Short).setRequired(true).setValue([cfg.errorAnalysis, cfg.investigation, cfg.codeAnalysis, cfg.visionAnalysis, cfg.conversation].map((v) => v ? "on" : "off").join(","));
-      modal.addComponents(new ActionRowBuilder().addComponents(limits), new ActionRowBuilder().addComponents(flags));
+      const modal = new ModalBuilder().setCustomId("aicore:modal:config").setTitle("⚙️ AI Core Settings");
+
+      const timeout = new TextInputBuilder()
+        .setCustomId("timeout")
+        .setLabel("Timeout (ms) — antara 5000 dan 120000")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setValue(String(cfg.timeoutMs ?? 30000));
+
+      const maxTok = new TextInputBuilder()
+        .setCustomId("maxtokens")
+        .setLabel("Max response tokens — antara 300 dan 4000")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setValue(String(cfg.maxResponse ?? 1800));
+
+      const ana1 = new TextInputBuilder()
+        .setCustomId("analysis1")
+        .setLabel("Error & Investigation (on/off, on/off)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("Error Analysis, lalu Investigation — contoh: on, on")
+        .setValue(`${cfg.errorAnalysis ? "on" : "off"}, ${cfg.investigation ? "on" : "off"}`);
+
+      const ana2 = new TextInputBuilder()
+        .setCustomId("analysis2")
+        .setLabel("Code & Vision Analysis (on/off, on/off)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("Code Analysis, lalu Vision Analysis — contoh: on, on")
+        .setValue(`${cfg.codeAnalysis ? "on" : "off"}, ${cfg.visionAnalysis ? "on" : "off"}`);
+
+      const conv = new TextInputBuilder()
+        .setCustomId("conversation")
+        .setLabel("AI Conversation (on/off)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setValue(cfg.conversation ? "on" : "off");
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(timeout),
+        new ActionRowBuilder().addComponents(maxTok),
+        new ActionRowBuilder().addComponents(ana1),
+        new ActionRowBuilder().addComponents(ana2),
+        new ActionRowBuilder().addComponents(conv),
+      );
       await interaction.showModal(modal);
       return;
     }
@@ -403,9 +446,13 @@ export async function handleAICoreInteraction(interaction) {
     }
 
   } catch (err) {
-    logger.warn(`[AI Core] Setup interaction failed: ${err.message}`);
+    logger.warn(`[AI Core] Setup interaction failed (${id}): ${err.message}`);
+    const safe   = redact(String(err?.providerReason || err?.message || "Unknown error")).slice(0, 300);
     const method = interaction.deferred ? "editReply" : interaction.replied ? "followUp" : "reply";
-    await interaction[method]({ content: "❌ AI Core setup gagal diproses.", ephemeral: true }).catch(() => {});
+    await interaction[method]({
+      content: `❌ **AI Core setup gagal diproses.**\n> ${safe}`,
+      ephemeral: true,
+    }).catch(() => {});
   }
 }
 
@@ -488,16 +535,21 @@ export async function handleAICoreModal(interaction) {
 
   // AI settings
   if (interaction.customId === "aicore:modal:config") {
-    const [timeoutMs, maxResponse] = interaction.fields.getTextInputValue("limits").split(",").map((v) => Number.parseInt(v.trim(), 10));
-    const flags = interaction.fields.getTextInputValue("flags").split(",").map((v) => v.trim().toLowerCase() === "on");
+    const parseOnOff  = (v) => String(v ?? "").trim().toLowerCase() === "on";
+    const parseTwo    = (raw) => String(raw ?? "").split(",").map((v) => parseOnOff(v));
+    const timeoutMs   = Number.parseInt(interaction.fields.getTextInputValue("timeout").trim(),   10);
+    const maxResponse = Number.parseInt(interaction.fields.getTextInputValue("maxtokens").trim(), 10);
+    const [errorAnalysis, investigation] = parseTwo(interaction.fields.getTextInputValue("analysis1"));
+    const [codeAnalysis, visionAnalysis] = parseTwo(interaction.fields.getTextInputValue("analysis2"));
+    const conversation = parseOnOff(interaction.fields.getTextInputValue("conversation"));
     updateAICoreConfig({
       timeoutMs:    Number.isFinite(timeoutMs)   ? Math.min(120_000, Math.max(5_000, timeoutMs))   : 30_000,
       maxResponse:  Number.isFinite(maxResponse) ? Math.min(4_000,   Math.max(300,   maxResponse)) : 1_800,
-      errorAnalysis:    flags[0] ?? true,
-      investigation:    flags[1] ?? true,
-      codeAnalysis:     flags[2] ?? true,
-      visionAnalysis:   flags[3] ?? true,
-      conversation:     flags[4] ?? true,
+      errorAnalysis,
+      investigation,
+      codeAnalysis,
+      visionAnalysis,
+      conversation,
     });
     await interaction.reply({ content: "✅ AI Core configuration disimpan secara persistent.", ephemeral: true });
   }

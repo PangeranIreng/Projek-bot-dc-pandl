@@ -6,9 +6,10 @@
  */
 import OpenAI from "openai";
 
-export const PROVIDER_ID   = "groq";
-export const PROVIDER_NAME = "Groq";
-export const DEFAULT_MODEL = "llama-3.1-8b-instant";
+export const PROVIDER_ID     = "groq";
+export const PROVIDER_NAME   = "Groq";
+export const DEFAULT_MODEL   = "llama-3.1-8b-instant";
+export const SUPPORTS_VISION = false; // Groq strips image parts — vision not supported on most models
 export const MODELS = [
   "llama-3.1-8b-instant",
   "llama-3.3-70b-versatile",
@@ -23,6 +24,22 @@ const BASE_URL = "https://api.groq.com/openai/v1";
 
 export function detectFromKey(apiKey) {
   return String(apiKey || "").trim().startsWith("gsk_");
+}
+
+/**
+ * Returns true if the given model name is compatible with this provider.
+ */
+export function isCompatibleModel(model) {
+  const m = String(model || "").trim();
+  return (
+    MODELS.includes(m) ||
+    m.startsWith("llama-") ||
+    m.startsWith("llama3-") ||
+    m.startsWith("mixtral-") ||
+    m.startsWith("gemma") ||
+    m.startsWith("distil-") ||
+    m.startsWith("whisper-")
+  );
 }
 
 export function validateKeyFormat(apiKey) {

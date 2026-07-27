@@ -5,9 +5,10 @@
  * Key pattern: sk-ant-…
  */
 
-export const PROVIDER_ID   = "anthropic";
-export const PROVIDER_NAME = "Anthropic Claude";
-export const DEFAULT_MODEL = "claude-3-5-haiku-20241022";
+export const PROVIDER_ID     = "anthropic";
+export const PROVIDER_NAME   = "Anthropic Claude";
+export const DEFAULT_MODEL   = "claude-3-5-haiku-20241022";
+export const SUPPORTS_VISION = true;
 export const MODELS = [
   "claude-3-5-haiku-20241022",
   "claude-3-5-sonnet-20241022",
@@ -22,6 +23,14 @@ const ANTHROPIC_VER   = "2023-06-01";
 
 export function detectFromKey(apiKey) {
   return String(apiKey || "").trim().startsWith("sk-ant-");
+}
+
+/**
+ * Returns true if the given model name is compatible with this provider.
+ */
+export function isCompatibleModel(model) {
+  const m = String(model || "").trim();
+  return MODELS.includes(m) || m.startsWith("claude-");
 }
 
 export function validateKeyFormat(apiKey) {
