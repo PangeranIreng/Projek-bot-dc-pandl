@@ -54,7 +54,13 @@ function encryptionSecret() {
 
 function encryptionKey() {
   const secret = encryptionSecret();
-  if (!secret) throw new Error("Secure AI credential storage is unavailable");
+  if (!secret) {
+    const err = new Error(
+      "Secure AI credential storage is unavailable — SESSION_SECRET or AI_CORE_ENCRYPTION_KEY is not configured."
+    );
+    err.code = "AI_STORAGE";
+    throw err;
+  }
   return crypto.scryptSync(secret, "ai-core-provider-credential", 32);
 }
 

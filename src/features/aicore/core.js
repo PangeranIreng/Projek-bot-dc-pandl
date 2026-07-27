@@ -116,7 +116,7 @@ function classifyProviderError(error, { modelRequest = false } = {}) {
   const message = providerErrorText(error);
   if (code === "ai_key_format") return "API key format is invalid.";
   if (code === "ai_storage") return "Secure credential storage failed.";
-  if (status === 401 || /authentication|api key|credential|unauthorized/.test(message)) {
+  if (status === 401 || /authentication failed|invalid api key|incorrect api key|unauthorized/.test(message)) {
     return `Provider authentication failed${status ? ` (HTTP ${status})` : ""}.`;
   }
   if (status === 403 || /permission|forbidden/.test(message)) {
@@ -443,14 +443,37 @@ export async function updateProviderApiKey(apiKey) {
 
     return getProviderConfiguration();
   } catch (error) {
-    const safe = safeProviderError(error);
-    // Restore previous state fully — never overwrite an existing valid key on failure
-    aiCoreDB.updateConfig({
-      keyStatus: previousConfig.keyStatus || (aiCoreDB.hasStoredApiKey() ? "key_stored_not_tested" : "no_key_stored"),
-      providerStatus: previousConfig.providerStatus,
-      providerStatusReason: previousConfig.providerStatusReason,
-      providerCheckedAt: previousConfig.providerCheckedAt,
-    });
+    // Restore previous state fully — never drop an existing valid key because a new one fails.
+    // NOTE: this function makes NO HTTP requests, so safeProviderError (designed for HTTP errors)
+    // must NOT be used here. Classify errors directly to avoid misclassification.
+    try {
+      aiCoreDB.updateConfig({
+        keyStatus: previousConfig.keyStatus || (aiCoreDB.hasStoredApiKey() ? "key_stored_not_tested" : "no_key_stored"),
+        providerStatus: previousConfig.providerStatus,
+        providerStatusReason: previousConfig.providerStatusReason,
+        providerCheckedAt: previousConfig.providerCheckedAt,
+      });
+    } catch (_) { /* ignore config-restore failure */ }
+
+    const code = String(error?.code || "").toLowerCase();
+
+    // Format errors already have a clear message; rethrow as-is.
+    if (code === "ai_key_format") {
+      error.providerCategory = "invalid_key_format";
+      error.providerStatus = "not_configured";
+      error.providerReason = error.message;
+      throw error;
+    }
+
+    // Storage errors (encryption unavailable, write/read mismatch).
+    const storageMsg = code === "ai_storage"
+      ? (error.message || "Secure credential storage failed.")
+      : `Key storage failed: ${String(error?.message || "Unknown error.").slice(0, 180)}`;
+    const safe = new Error(storageMsg);
+    safe.providerCategory = "secure_storage";
+    safe.providerStatus = "not_configured";
+    safe.providerReason = storageMsg;
+    logger.warn(`[AI Core] Key save error (${code || "unknown"}): ${redact(storageMsg)}`);
     throw safe;
   }
 }
