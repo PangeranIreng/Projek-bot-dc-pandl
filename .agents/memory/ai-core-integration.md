@@ -14,3 +14,15 @@ duplicating those paths would risk breaking BoomBox, scanner, and admin features
 **How to apply:** Add new AI capabilities behind the existing AI Core service,
 keep investigation channel-scoped, redact secrets before persistence/provider
 calls, and preserve a local fallback when the model provider is unavailable.
+
+Provider credentials may be managed from the Owner-only AI Configuration panel:
+validate before commit, encrypt at rest with `AI_CORE_ENCRYPTION_KEY` or
+`SESSION_SECRET`, hot-reload the provider client, and fall back to
+`OPENAI_API_KEY` when no stored credential exists.
+
+**Why:** The bot needs Discord-based key rotation without exposing credentials in
+messages or logs, while existing deployments must continue working unchanged.
+
+**How to apply:** Keep provider status and masked key metadata in the AI Core
+config, never persist plaintext credentials, preserve the existing key on failed
+replacement validation, and keep removal limited to provider credentials.

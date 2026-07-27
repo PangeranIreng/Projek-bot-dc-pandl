@@ -7,6 +7,8 @@ import { isOwner } from "../../middleware/permissions.js";
 import {
   getAICoreStatus, getAICoreConfig, updateAICoreConfig,
   rebuildKnowledge, isAICoreAllowed, generateFixPrompt,
+  getProviderConfiguration, updateProviderApiKey, removeProviderApiKey,
+  testProviderConnection, validateProviderModel,
 } from "./core.js";
 import { logger } from "../../utils/logger.js";
 
@@ -31,7 +33,7 @@ function panelEmbed(note = "") {
       { name: "Error Analyzer", value: cfg.errorAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
       { name: "Vision Analyzer", value: cfg.visionAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
       { name: "Fix Generator", value: "🟢 ENABLED", inline: true },
-      { name: "Provider", value: status.providerReady ? `🟢 ${cfg.provider} / ${cfg.model}` : "🔴 OPENAI_API_KEY belum tersedia", inline: true },
+      { name: "Provider", value: `${providerStatusLabel(status.providerStatus)} ${cfg.provider} / ${cfg.model}`, inline: true },
       { name: "❌ Error AI Channel", value: cfg.errorChannelId ? `<#${cfg.errorChannelId}>` : "Belum diatur", inline: false },
       { name: "💬 Investigation Channel", value: cfg.investigationChannelId ? `<#${cfg.investigationChannelId}>` : "Belum diatur", inline: false },
       { name: "🔐 Access", value: cfg.accessMode === "owner" ? "Owner Only" : cfg.accessMode, inline: true },
@@ -51,6 +53,54 @@ function panelComponents() {
       new ButtonBuilder().setCustomId("aicore:knowledge").setLabel("🧠 Rebuild Project Knowledge").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("aicore:test").setLabel("🧪 Test Core").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("aicore:back").setLabel("🔙 Kembali").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function providerStatusLabel(status) {
+  return {
+    configured: "🟢 CONFIGURED",
+    validating: "🟡 VALIDATING",
+    invalid: "🔴 INVALID",
+    provider_error: "🟠 PROVIDER ERROR",
+    connected: "🟢 CONNECTED",
+    not_configured: "🔴 NOT CONFIGURED",
+  }[status] || "🟡 UNKNOWN";
+}
+
+function providerConfigEmbed(note = "") {
+  const cfg = getProviderConfiguration();
+  return new EmbedBuilder()
+    .setColor(COLOR)
+    .setTitle("⚙️ AI CONFIGURATION")
+    .setDescription(`${note ? `${note}\n\n` : ""}Pengaturan provider AI Core disimpan secara aman dan hanya dapat dikelola Owner.`)
+    .addFields(
+      { name: "Provider", value: `🟢 ${cfg.provider}`, inline: true },
+      { name: "API Key", value: `${providerStatusLabel(cfg.status)}\n${cfg.apiKeyMask}`, inline: true },
+      { name: "Connection", value: providerStatusLabel(cfg.status), inline: true },
+      { name: "Model", value: `\`${cfg.model}\``, inline: true },
+      { name: "Error Analysis", value: cfg.errorAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Investigation", value: cfg.investigation ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Code Analysis", value: cfg.codeAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Vision Analysis", value: cfg.visionAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Fix Generator", value: "🟢 ON", inline: true },
+      ...(cfg.statusReason ? [{ name: "Provider note", value: cfg.statusReason, inline: false }] : []),
+    )
+    .setFooter({ text: "API key tidak pernah ditampilkan lengkap atau dikirim ke channel." })
+    .setTimestamp();
+}
+
+function providerConfigComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("aicore:provider:apikey").setLabel("🔑 Change API Key").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("aicore:provider:test").setLabel("🧪 Test Connection").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("aicore:provider:model").setLabel("🧠 Change Model").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("aicore:provider:settings").setLabel("⚙️ AI Settings").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("aicore:provider:remove").setLabel("🗑️ Remove API Key").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 AI Core").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -127,13 +177,69 @@ export async function handleAICoreInteraction(interaction) {
       return;
     }
     if (id === "aicore:config") {
+      await interaction.update({ embeds: [providerConfigEmbed()], components: providerConfigComponents() });
+      return;
+    }
+    if (id === "aicore:provider:apikey") {
+      const modal = new ModalBuilder().setCustomId("aicore:modal:apikey").setTitle("🔐 UPDATE AI API KEY");
+      const key = new TextInputBuilder()
+        .setCustomId("apiKey")
+        .setLabel("Masukkan API key baru")
+        .setPlaceholder("API key diproses privat dan tidak dikirim sebagai message")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMinLength(20);
+      modal.addComponents(new ActionRowBuilder().addComponents(key));
+      await interaction.showModal(modal);
+      return;
+    }
+    if (id === "aicore:provider:model") {
+      const cfg = getProviderConfiguration();
+      const modal = new ModalBuilder().setCustomId("aicore:modal:model").setTitle("🧠 SELECT AI MODEL");
+      const model = new TextInputBuilder()
+        .setCustomId("model")
+        .setLabel("Model provider")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setValue(cfg.model || "gpt-5.4-mini");
+      modal.addComponents(new ActionRowBuilder().addComponents(model));
+      await interaction.showModal(modal);
+      return;
+    }
+    if (id === "aicore:provider:settings") {
       const cfg = getAICoreConfig();
       const modal = new ModalBuilder().setCustomId("aicore:modal:config").setTitle("AI Core Configuration");
-      const model = new TextInputBuilder().setCustomId("model").setLabel("Model").setStyle(TextInputStyle.Short).setRequired(true).setValue(cfg.model);
       const limits = new TextInputBuilder().setCustomId("limits").setLabel("Timeout ms, max response chars").setStyle(TextInputStyle.Short).setRequired(true).setValue(`${cfg.timeoutMs}, ${cfg.maxResponse}`);
       const flags = new TextInputBuilder().setCustomId("flags").setLabel("error, investigation, code, vision (on/off)").setStyle(TextInputStyle.Short).setRequired(true).setValue([cfg.errorAnalysis, cfg.investigation, cfg.codeAnalysis, cfg.visionAnalysis].map((v) => v ? "on" : "off").join(","));
-      modal.addComponents(new ActionRowBuilder().addComponents(model), new ActionRowBuilder().addComponents(limits), new ActionRowBuilder().addComponents(flags));
+      modal.addComponents(new ActionRowBuilder().addComponents(limits), new ActionRowBuilder().addComponents(flags));
       await interaction.showModal(modal);
+      return;
+    }
+    if (id === "aicore:provider:test") {
+      await interaction.deferReply({ ephemeral: true });
+      const result = await testProviderConnection();
+      await interaction.editReply({
+        content: result.ok
+          ? `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nStatus: 🟢 SUCCESS\nAI Core: 🟢 READY\nModel: \`${result.configuration.model}\``
+          : `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nStatus: 🔴 FAILED\nReason: ${result.reason}`,
+      });
+      return;
+    }
+    if (id === "aicore:provider:remove") {
+      await interaction.update({
+        embeds: [new EmbedBuilder().setColor(COLOR).setTitle("⚠️ REMOVE AI API KEY?").setDescription("API key provider akan dihapus dari secure storage. Project Knowledge, channel configuration, error history, dan AI Core tetap dipertahankan.")],
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("aicore:provider:remove:confirm").setLabel("🗑️ Remove permanently").setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("aicore:config").setLabel("Batal").setStyle(ButtonStyle.Secondary),
+          ),
+        ],
+      });
+      return;
+    }
+    if (id === "aicore:provider:remove:confirm") {
+      removeProviderApiKey();
+      await interaction.update({ embeds: [providerConfigEmbed("✅ API key dihapus. AI Core tetap berjalan dalam fallback/local mode.")], components: providerConfigComponents() });
       return;
     }
     if (id === "aicore:knowledge") {
@@ -156,7 +262,7 @@ export async function handleAICoreInteraction(interaction) {
       await interaction.reply({ content: `✅ Test selesai. ${sent} channel berhasil diuji.`, ephemeral: true });
     }
   } catch (err) {
-    logger.warn(`[AI Core] Setup interaction failed: ${err.message}`);
+    logger.warn("[AI Core] Setup interaction failed.");
     const method = interaction.deferred ? "editReply" : interaction.replied ? "followUp" : "reply";
     await interaction[method]({ content: "❌ AI Core setup gagal diproses.", ephemeral: true }).catch(() => {});
   }
@@ -175,12 +281,37 @@ export async function handleAICoreModal(interaction) {
     await interaction.reply({ content: `✅ AI Core access disimpan: **${mode}**.`, ephemeral: true });
     return;
   }
+  if (interaction.customId === "aicore:modal:apikey") {
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const apiKey = interaction.fields.getTextInputValue("apiKey");
+      const result = await updateProviderApiKey(apiKey);
+      await interaction.editReply({
+        content: `✅ **AI API KEY UPDATED**\nProvider: **${result.provider}**\nStatus: 🟢 Connected\nModel: \`${result.model}\`\nAPI Key: ${result.apiKeyMask}\nAI Core: 🟢 ONLINE`,
+      });
+    } catch {
+      await interaction.editReply({
+        content: "❌ **API KEY VALIDATION FAILED**\nProvider: **OpenAI**\nStatus: 🔴 Connection failed\nReason: Provider rejected the credentials or connection failed.",
+      });
+    }
+    return;
+  }
+  if (interaction.customId === "aicore:modal:model") {
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const model = interaction.fields.getTextInputValue("model").trim();
+      await validateProviderModel(model);
+      updateAICoreConfig({ model });
+      await interaction.editReply({ content: `✅ Model berhasil disimpan: \`${model}\`.` });
+    } catch (error) {
+      await interaction.editReply({ content: `❌ Model tidak dapat divalidasi. ${String(error.message || "Provider rejected the model.").slice(0, 240)}` });
+    }
+    return;
+  }
   if (interaction.customId === "aicore:modal:config") {
-    const model = interaction.fields.getTextInputValue("model").trim().slice(0, 80);
     const [timeoutMs, maxResponse] = interaction.fields.getTextInputValue("limits").split(",").map((v) => Number.parseInt(v.trim(), 10));
     const flags = interaction.fields.getTextInputValue("flags").split(",").map((v) => v.trim().toLowerCase() === "on");
     updateAICoreConfig({
-      model: model || "gpt-5.4-mini",
       timeoutMs: Number.isFinite(timeoutMs) ? Math.min(120000, Math.max(5000, timeoutMs)) : 30000,
       maxResponse: Number.isFinite(maxResponse) ? Math.min(4000, Math.max(300, maxResponse)) : 1800,
       errorAnalysis: flags[0] ?? true,

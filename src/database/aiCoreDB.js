@@ -5,6 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ERROR_LOG_CHANNEL_ID } from "../../config/channels.js";
 
@@ -20,6 +21,9 @@ const DEFAULT_DB = {
     allowedUserIds: [],
     provider: "openai",
     model: "gpt-5.4-mini",
+    providerStatus: "not_configured",
+    providerStatusReason: null,
+    providerCheckedAt: null,
     timeoutMs: 30000,
     maxResponse: 1800,
     errorAnalysis: true,
@@ -27,6 +31,7 @@ const DEFAULT_DB = {
     codeAnalysis: true,
     visionAnalysis: true,
   },
+  providerCredential: null,
   projectKnowledge: {
     builtAt: null,
     summary: null,
@@ -39,6 +44,47 @@ const DEFAULT_DB = {
 
 function clone(value) {
   return structuredClone(value);
+}
+
+function encryptionSecret() {
+  const secret = process.env.AI_CORE_ENCRYPTION_KEY || process.env.SESSION_SECRET;
+  return secret && secret.trim() ? secret : null;
+}
+
+function encryptionKey() {
+  const secret = encryptionSecret();
+  if (!secret) throw new Error("Secure AI credential storage is unavailable");
+  return crypto.scryptSync(secret, "ai-core-provider-credential", 32);
+}
+
+function encryptSecret(value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  return {
+    algorithm: "aes-256-gcm",
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+  };
+}
+
+function decryptSecret(record) {
+  if (!record?.iv || !record?.tag || !record?.ciphertext) return null;
+  try {
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm",
+      encryptionKey(),
+      Buffer.from(record.iv, "base64"),
+    );
+    decipher.setAuthTag(Buffer.from(record.tag, "base64"));
+    return Buffer.concat([
+      decipher.update(Buffer.from(record.ciphertext, "base64")),
+      decipher.final(),
+    ]).toString("utf8");
+  } catch {
+    return null;
+  }
 }
 
 export class AICoreDB {
@@ -59,6 +105,7 @@ export class AICoreDB {
         ...clone(DEFAULT_DB),
         ...parsed,
         config: { ...clone(DEFAULT_DB.config), ...(parsed.config ?? {}) },
+        providerCredential: parsed.providerCredential ?? null,
         projectKnowledge: {
           ...clone(DEFAULT_DB.projectKnowledge),
           ...(parsed.projectKnowledge ?? {}),
@@ -84,6 +131,24 @@ export class AICoreDB {
 
   getConfig() {
     return clone(this._data.config);
+  }
+
+  hasStoredApiKey() {
+    return Boolean(this._data.providerCredential?.ciphertext);
+  }
+
+  getApiKey() {
+    return decryptSecret(this._data.providerCredential);
+  }
+
+  saveApiKey(apiKey) {
+    this._data.providerCredential = encryptSecret(apiKey);
+    this._save();
+  }
+
+  removeApiKey() {
+    this._data.providerCredential = null;
+    this._save();
   }
 
   updateConfig(patch) {

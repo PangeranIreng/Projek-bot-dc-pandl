@@ -15,6 +15,8 @@ import { logger } from "../../utils/logger.js";
 
 let client = null;
 let openai = null;
+let runtimeApiKey = null;
+let openaiApiKey = null;
 const recentRequests = [];
 const activeErrorAnalyses = new Set();
 const MAX_REQUESTS_PER_MINUTE = 8;
@@ -32,11 +34,48 @@ export function redact(value) {
 }
 
 function providerReady() {
-  return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
+  return Boolean(getActiveApiKey());
 }
 
 function config() {
   return aiCoreDB.getConfig();
+}
+
+function getActiveApiKey() {
+  if (runtimeApiKey) return runtimeApiKey;
+  return aiCoreDB.getApiKey() || process.env.OPENAI_API_KEY?.trim() || null;
+}
+
+function providerLabel() {
+  return config().provider === "openai" ? "OpenAI" : String(config().provider || "OpenAI");
+}
+
+function keyMask(apiKey) {
+  if (!apiKey) return "Not configured";
+  const suffix = apiKey.slice(-4);
+  return `Configured ••••${suffix}`;
+}
+
+function classifyProviderError(error) {
+  const status = Number(error?.status);
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  if (status === 401 || status === 403 || /auth|api key|credential|unauthorized|forbidden/.test(message)) {
+    return "Provider rejected the credentials.";
+  }
+  if (status === 429 || code.includes("rate") || message.includes("rate limit")) {
+    return "Provider rate limit reached.";
+  }
+  if (/model|not_found/.test(message) || status === 404) {
+    return "The selected model is unavailable.";
+  }
+  if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) {
+    return "Provider request timed out.";
+  }
+  if (/network|fetch|econn|socket|dns/.test(message)) {
+    return "Provider network request failed.";
+  }
+  return "Provider connection failed.";
 }
 
 function canUseAI(member) {
@@ -85,9 +124,17 @@ export function initAICore(discordClient) {
 export function getAICoreStatus() {
   const cfg = config();
   const knowledge = aiCoreDB.getKnowledge();
+  const activeKey = getActiveApiKey();
+  const currentProviderStatus = activeKey
+    ? (cfg.providerStatus === "not_configured" ? "configured" : (cfg.providerStatus || "configured"))
+    : "not_configured";
   return {
     online: Boolean(client),
     providerReady: providerReady(),
+    providerStatus: currentProviderStatus,
+    providerStatusReason: activeKey ? (cfg.providerStatusReason || null) : null,
+    providerKeyMask: keyMask(activeKey),
+    providerSource: runtimeApiKey ? "runtime" : aiCoreDB.hasStoredApiKey() ? "secure_storage" : activeKey ? "environment" : "none",
     knowledgeReady: Boolean(knowledge.builtAt && knowledge.files.length),
     fileCount: knowledge.summary?.fileCount ?? knowledge.files.length,
     errorChannelId: cfg.errorChannelId,
@@ -111,14 +158,154 @@ export function updateAICoreConfig(patch) {
   return aiCoreDB.updateConfig(safe);
 }
 
+export function getProviderConfiguration() {
+  const cfg = config();
+  const activeKey = getActiveApiKey();
+  const storedStatus = cfg.providerStatus === "not_configured" && activeKey
+    ? "configured"
+    : (cfg.providerStatus || "not_configured");
+  return {
+    provider: providerLabel(),
+    model: cfg.model,
+    apiKeyConfigured: Boolean(activeKey),
+    apiKeyMask: keyMask(activeKey),
+    source: runtimeApiKey ? "runtime" : aiCoreDB.hasStoredApiKey() ? "secure_storage" : activeKey ? "environment" : "none",
+    status: activeKey ? storedStatus : "not_configured",
+    statusReason: activeKey ? (cfg.providerStatusReason || null) : null,
+    checkedAt: cfg.providerCheckedAt || null,
+    errorAnalysis: cfg.errorAnalysis,
+    investigation: cfg.investigation,
+    codeAnalysis: cfg.codeAnalysis,
+    visionAnalysis: cfg.visionAnalysis,
+  };
+}
+
+function validateApiKeyFormat(apiKey) {
+  const value = String(apiKey || "").trim();
+  if (!value || value.length < 20 || /\s/.test(value)) {
+    throw new Error("API key format is invalid.");
+  }
+  return value;
+}
+
+async function checkProvider(apiKey) {
+  const candidate = new OpenAI({
+    apiKey,
+    timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
+  });
+  await candidate.models.list();
+  return candidate;
+}
+
+export async function validateProviderModel(model) {
+  const name = String(model || "").trim().slice(0, 80);
+  if (!name) throw new Error("Model is required.");
+  const apiKey = getActiveApiKey();
+  if (!apiKey) throw new Error("No AI provider API key is configured.");
+  const candidate = await checkProvider(apiKey);
+  try {
+    await candidate.models.retrieve(name);
+    return true;
+  } catch (error) {
+    throw new Error(classifyProviderError(error));
+  }
+}
+
+export async function updateProviderApiKey(apiKey) {
+  let candidate;
+  const previousConfig = aiCoreDB.getConfig();
+  try {
+    const value = validateApiKeyFormat(apiKey);
+    aiCoreDB.updateConfig({
+      providerStatus: "validating",
+      providerStatusReason: null,
+      providerCheckedAt: new Date().toISOString(),
+    });
+    candidate = await checkProvider(value);
+    aiCoreDB.saveApiKey(value);
+    runtimeApiKey = value;
+    openai = candidate;
+    openaiApiKey = value;
+    aiCoreDB.updateConfig({
+      providerStatus: "connected",
+      providerStatusReason: null,
+      providerCheckedAt: new Date().toISOString(),
+    });
+    return getProviderConfiguration();
+  } catch (error) {
+    const hadExistingKey = Boolean(getActiveApiKey());
+    aiCoreDB.updateConfig(hadExistingKey
+      ? {
+          providerStatus: previousConfig.providerStatus,
+          providerStatusReason: previousConfig.providerStatusReason,
+          providerCheckedAt: previousConfig.providerCheckedAt,
+        }
+      : {
+          providerStatus: "invalid",
+          providerStatusReason: classifyProviderError(error),
+          providerCheckedAt: new Date().toISOString(),
+        });
+    throw new Error(classifyProviderError(error));
+  }
+}
+
+export function removeProviderApiKey() {
+  runtimeApiKey = null;
+  openai = null;
+  openaiApiKey = null;
+  aiCoreDB.removeApiKey();
+  aiCoreDB.updateConfig({
+    providerStatus: process.env.OPENAI_API_KEY?.trim() ? "configured" : "not_configured",
+    providerStatusReason: null,
+    providerCheckedAt: null,
+  });
+  return getProviderConfiguration();
+}
+
+export async function testProviderConnection() {
+  const apiKey = getActiveApiKey();
+  if (!apiKey) {
+    aiCoreDB.updateConfig({ providerStatus: "not_configured", providerStatusReason: null });
+    return { ok: false, reason: "No AI provider API key is configured.", configuration: getProviderConfiguration() };
+  }
+  try {
+    aiCoreDB.updateConfig({
+      providerStatus: "validating",
+      providerStatusReason: null,
+      providerCheckedAt: new Date().toISOString(),
+    });
+    const candidate = await checkProvider(apiKey);
+    openai = candidate;
+    openaiApiKey = apiKey;
+    aiCoreDB.updateConfig({
+      providerStatus: "connected",
+      providerStatusReason: null,
+      providerCheckedAt: new Date().toISOString(),
+    });
+    return { ok: true, reason: null, configuration: getProviderConfiguration() };
+  } catch (error) {
+    const reason = classifyProviderError(error);
+    aiCoreDB.updateConfig({
+      providerStatus: error?.status === 429 ? "provider_error" : "invalid",
+      providerStatusReason: reason,
+      providerCheckedAt: new Date().toISOString(),
+    });
+    return { ok: false, reason, configuration: getProviderConfiguration() };
+  }
+}
+
 export function rebuildKnowledge() {
   return rebuildProjectIndex();
 }
 
 async function requestModel(messages, maxTokens = config().maxResponse) {
-  if (!providerReady()) throw new Error("OPENAI_API_KEY is not configured");
+  const apiKey = getActiveApiKey();
+  if (!apiKey) throw new Error("AI provider is not configured");
   if (!withinRateLimit()) throw new Error("AI rate limit reached; try again shortly");
-  if (!openai) openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!openai || openaiApiKey !== apiKey) {
+    openai = new OpenAI({ apiKey });
+    openaiApiKey = apiKey;
+  }
   const cfg = config();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(5000, Number(cfg.timeoutMs) || 30000));
@@ -177,7 +364,7 @@ async function analyzeError(record) {
     const updated = aiCoreDB.updateError(record.errorId, { analysis: redact(analysis), status: "fix_suggested" }) || record;
     await sendErrorAnalysis(updated);
   } catch (err) {
-    logger.warn(`[AI Core] Error analysis skipped: ${err.message}`);
+    logger.warn(`[AI Core] Error analysis skipped: ${redact(err.message)}`);
   } finally {
     activeErrorAnalyses.delete(record.errorId);
   }
@@ -323,7 +510,7 @@ export async function handleAICoreMessage(message) {
     const answer = await investigate({ query, image });
     await message.reply(truncate(answer, 3900)).catch(() => {});
   } catch (err) {
-    logger.warn(`[AI Core] Investigation failed: ${err.message}`);
+    logger.warn(`[AI Core] Investigation failed: ${redact(err.message)}`);
     await message.reply("❌ AI Core tidak dapat menyelesaikan investigation ini. Periksa konfigurasi provider dan coba lagi.").catch(() => {});
   }
   return true;
