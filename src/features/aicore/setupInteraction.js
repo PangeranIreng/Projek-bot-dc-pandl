@@ -63,6 +63,8 @@ function providerStatusLabel(status) {
     validating: "🟡 VALIDATING",
     invalid: "🔴 INVALID",
     provider_error: "🟠 PROVIDER ERROR",
+    model_error: "🔴 MODEL ERROR",
+    network_error: "🟠 NETWORK ERROR",
     connected: "🟢 CONNECTED",
     not_configured: "🔴 NOT CONFIGURED",
   }[status] || "🟡 UNKNOWN";

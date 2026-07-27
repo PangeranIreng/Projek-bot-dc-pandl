@@ -26,3 +26,14 @@ messages or logs, while existing deployments must continue working unchanged.
 **How to apply:** Keep provider status and masked key metadata in the AI Core
 config, never persist plaintext credentials, preserve the existing key on failed
 replacement validation, and keep removal limited to provider credentials.
+
+Provider status must distinguish an unavailable model, provider-side failure,
+and network failure (`model_error`, `provider_error`, `network_error`) rather
+than treating every failed request as an invalid credential.
+
+**Why:** A valid credential can fail for reasons unrelated to authentication,
+and the owner-facing dashboard needs to direct troubleshooting correctly.
+
+**How to apply:** Set the status from provider/model/network error properties
+on connection, model validation, and real AI requests; successful requests
+should restore `connected`.

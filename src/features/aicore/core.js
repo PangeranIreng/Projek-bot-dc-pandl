@@ -78,6 +78,19 @@ function classifyProviderError(error) {
   return "Provider connection failed.";
 }
 
+function classifyProviderStatus(error) {
+  const status = Number(error?.status);
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  if (status === 404 || /model|not_found/.test(message)) return "model_error";
+  if (
+    error?.name === "AbortError" ||
+    code.includes("timeout") ||
+    /timeout|network|fetch|econn|socket|dns/.test(message)
+  ) return "network_error";
+  return "provider_error";
+}
+
 function canUseAI(member) {
   const cfg = config();
   if (!member) return false;
@@ -110,6 +123,17 @@ function makeErrorId(payload, hash) {
 
 export function initAICore(discordClient) {
   client = discordClient;
+  const activeKey = getActiveApiKey();
+  if (activeKey) {
+    openai = new OpenAI({
+      apiKey: activeKey,
+      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
+    });
+    openaiApiKey = activeKey;
+  } else {
+    openai = null;
+    openaiApiKey = null;
+  }
   const knowledge = aiCoreDB.getKnowledge();
   if (!knowledge.builtAt || !knowledge.files.length) {
     try {
@@ -207,6 +231,11 @@ export async function validateProviderModel(model) {
     await candidate.models.retrieve(name);
     return true;
   } catch (error) {
+    aiCoreDB.updateConfig({
+      providerStatus: classifyProviderStatus(error),
+      providerStatusReason: classifyProviderError(error),
+      providerCheckedAt: new Date().toISOString(),
+    });
     throw new Error(classifyProviderError(error));
   }
 }
@@ -241,7 +270,7 @@ export async function updateProviderApiKey(apiKey) {
           providerCheckedAt: previousConfig.providerCheckedAt,
         }
       : {
-          providerStatus: "invalid",
+          providerStatus: classifyProviderStatus(error),
           providerStatusReason: classifyProviderError(error),
           providerCheckedAt: new Date().toISOString(),
         });
@@ -286,7 +315,7 @@ export async function testProviderConnection() {
   } catch (error) {
     const reason = classifyProviderError(error);
     aiCoreDB.updateConfig({
-      providerStatus: error?.status === 429 ? "provider_error" : "invalid",
+      providerStatus: classifyProviderStatus(error),
       providerStatusReason: reason,
       providerCheckedAt: new Date().toISOString(),
     });
@@ -316,9 +345,19 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
       max_completion_tokens: Math.min(4000, Math.max(300, Number(maxTokens) || 1800)),
     }, { signal: controller.signal });
     aiCoreDB.incrementStat("aiRequests");
+    aiCoreDB.updateConfig({
+      providerStatus: "connected",
+      providerStatusReason: null,
+      providerCheckedAt: new Date().toISOString(),
+    });
     return response.choices?.[0]?.message?.content?.trim() || "AI provider returned an empty response.";
   } catch (err) {
     aiCoreDB.incrementStat("failedRequests");
+    aiCoreDB.updateConfig({
+      providerStatus: classifyProviderStatus(err),
+      providerStatusReason: classifyProviderError(err),
+      providerCheckedAt: new Date().toISOString(),
+    });
     throw err;
   } finally {
     clearTimeout(timeout);
