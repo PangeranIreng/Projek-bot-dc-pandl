@@ -69,6 +69,13 @@ function keyDiagnostics(apiKey, extra = {}) {
   };
 }
 
+function apiKeyHash(apiKey) {
+  const value = String(apiKey || "");
+  return value
+    ? crypto.createHash("sha256").update(value, "utf8").digest("hex")
+    : null;
+}
+
 function providerErrorStatus(error) {
   return Number.isFinite(Number(error?.status)) ? Number(error.status) : null;
 }
@@ -159,7 +166,11 @@ function safeProviderError(error, options = {}) {
 
 function logProviderDiagnostic(stage, apiKey, extra = {}) {
   if (process.env.AI_CORE_DIAGNOSTICS !== "true") return;
-  logger.info(`[AI Core] ${stage}`, keyDiagnostics(apiKey, extra));
+  logger.info(`[AI Core] ${stage}`, {
+    ...keyDiagnostics(apiKey),
+    apiKeySha256: apiKeyHash(apiKey),
+    ...extra,
+  });
 }
 
 function canUseAI(member) {
@@ -295,6 +306,9 @@ async function checkProvider(apiKey) {
     logProviderDiagnostic("Provider client initialized", apiKey, {
       clientInitialized: true,
       runtimeConfigLoaded: true,
+      checkProviderApiKeySha256: apiKeyHash(apiKey),
+      baseURL: candidate.baseURL,
+      sdkUsage: "openai.models.list",
     });
   } catch (error) {
     logProviderDiagnostic("Provider client initialization failed", apiKey, {
@@ -320,6 +334,8 @@ async function checkProvider(apiKey) {
       requestStarted: true,
       requestCompleted: true,
       httpStatus: 200,
+      baseURL: candidate.baseURL,
+      endpoint: "/v1/models",
       providerErrorCategory: null,
     });
     return candidate;
@@ -329,6 +345,9 @@ async function checkProvider(apiKey) {
       requestStarted: true,
       requestCompleted: false,
       httpStatus: providerErrorStatus(error),
+      checkProviderApiKeySha256: apiKeyHash(apiKey),
+      baseURL: candidate.baseURL,
+      endpoint: "/v1/models",
       providerErrorCategory: providerErrorCategory(error),
     });
     throw error;
@@ -370,8 +389,11 @@ export async function updateProviderApiKey(apiKey) {
   let candidate;
   const previousConfig = aiCoreDB.getConfig();
   try {
+    const rawInputApiKeySha256 = apiKeyHash(apiKey);
     const value = validateApiKeyFormat(apiKey);
     logProviderDiagnostic("Provider key validation started", value, {
+      inputApiKeySha256: rawInputApiKeySha256,
+      validatedApiKeySha256: apiKeyHash(value),
       runtimeConfigLoaded: false,
       storageWriteSuccess: false,
       storageReadSuccess: false,
@@ -389,6 +411,11 @@ export async function updateProviderApiKey(apiKey) {
     logProviderDiagnostic("Provider credential persistence checked", value, {
       storageWriteSuccess,
       storageReadSuccess,
+      inputApiKeySha256: rawInputApiKeySha256,
+      validatedApiKeySha256: apiKeyHash(value),
+      checkProviderApiKeySha256: apiKeyHash(value),
+      storedApiKeySha256: storageReadValue ? apiKeyHash(storageReadValue) : null,
+      decryptedApiKeySha256: storageReadValue ? apiKeyHash(storageReadValue) : null,
     });
     if (!storageWriteSuccess || !storageReadSuccess) {
       const storageError = new Error("Secure credential storage failed.");
@@ -401,6 +428,11 @@ export async function updateProviderApiKey(apiKey) {
     logProviderDiagnostic("Provider runtime configuration loaded", value, {
       runtimeConfigLoaded: getActiveApiKey() === value,
       clientInitialized: Boolean(openai && openaiApiKey === value),
+      inputApiKeySha256: apiKeyHash(value),
+      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
+      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
+      openaiApiKeySha256: apiKeyHash(openaiApiKey),
+      baseURL: openai?.baseURL ?? null,
     });
     aiCoreDB.updateConfig({
       providerStatus: "connected",
@@ -460,6 +492,13 @@ export async function testProviderConnection() {
     const candidate = await checkProvider(apiKey);
     openai = candidate;
     openaiApiKey = apiKey;
+    logProviderDiagnostic("Provider runtime connection checked", apiKey, {
+      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
+      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
+      openaiApiKeySha256: apiKeyHash(openaiApiKey),
+      baseURL: candidate.baseURL,
+      endpoint: "/v1/models",
+    });
     aiCoreDB.updateConfig({
       providerStatus: "connected",
       providerStatusReason: null,
@@ -493,6 +532,14 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     openaiApiKey = apiKey;
   }
   const cfg = config();
+  logProviderDiagnostic("Model request prepared", apiKey, {
+    runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
+    getActiveApiKeySha256: apiKeyHash(apiKey),
+    openaiApiKeySha256: apiKeyHash(openaiApiKey),
+    baseURL: openai?.baseURL ?? null,
+    endpoint: "/v1/chat/completions",
+    model: cfg.model || "gpt-5.4-mini",
+  });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(5000, Number(cfg.timeoutMs) || 30000));
   try {
@@ -507,9 +554,28 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
       providerStatusReason: null,
       providerCheckedAt: new Date().toISOString(),
     });
+    logProviderDiagnostic("Model request completed", apiKey, {
+      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
+      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
+      openaiApiKeySha256: apiKeyHash(openaiApiKey),
+      baseURL: openai?.baseURL ?? null,
+      endpoint: "/v1/chat/completions",
+      model: cfg.model || "gpt-5.4-mini",
+      httpStatus: 200,
+    });
     return response.choices?.[0]?.message?.content?.trim() || "AI provider returned an empty response.";
   } catch (err) {
     const safe = safeProviderError(err, { modelRequest: true });
+    logProviderDiagnostic("Model request failed", apiKey, {
+      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
+      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
+      openaiApiKeySha256: apiKeyHash(openaiApiKey),
+      baseURL: openai?.baseURL ?? null,
+      endpoint: "/v1/chat/completions",
+      model: cfg.model || "gpt-5.4-mini",
+      httpStatus: providerErrorStatus(err),
+      providerErrorCategory: providerErrorCategory(err, { modelRequest: true }),
+    });
     aiCoreDB.incrementStat("failedRequests");
     aiCoreDB.updateConfig({
       providerStatus: safe.providerStatus,

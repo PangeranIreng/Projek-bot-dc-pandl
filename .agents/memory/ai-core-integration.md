@@ -48,3 +48,15 @@ network related.
 
 **How to apply:** Keep diagnostics opt-in, never log authorization headers or
 full keys, and distinguish provider endpoint 404s from model 404s.
+
+The OpenAI JavaScript SDK client constructor does not make an HTTP request.
+With `openai` 6.x, `models.list()` reaches `/v1/models` and chat completions
+reach `/v1/chat/completions`; a 401 from the former is an authentication
+rejection after client construction, not a constructor or model-name failure.
+
+**Why:** This separates credential-flow defects from provider-side rejection
+without guessing at or replacing the credential.
+
+**How to apply:** Trace the credential with opt-in SHA-256 fingerprints at the
+modal, validation, secure-storage, runtime, and request boundaries; validate a
+configured model separately after `/v1/models` succeeds.
