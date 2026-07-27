@@ -1,0 +1,494 @@
+TUGAS KHUSUS - PERBAIKAN TOTAL SISTEM BOOMBOX (PRODUCTION STABILITY)
+
+JANGAN MENAMBAH FITUR BARU.
+
+JANGAN MENGUBAH FITUR YANG SUDAH BERJALAN.
+
+JANGAN MENGUBAH COMMAND.
+
+FOKUS HANYA MEMPERBAIKI DAN MEMPERKUAT SISTEM BOOMBOX AGAR STABIL UNTUK BOT PUBLIK.
+
+==========================================================
+AUDIT
+==========================================================
+
+Baca seluruh source BoomBox terlebih dahulu.
+
+Audit seluruh file yang berhubungan dengan:
+
+BoomBox
+
+Queue
+
+Downloader
+
+yt-dlp
+
+Analytzy
+
+HTTP Request
+
+Worker
+
+Concurrency
+
+Stream
+
+FFmpeg
+
+Timeout
+
+Retry
+
+Error Handler
+
+Promise
+
+Async
+
+Scheduler
+
+Monitoring
+
+Logs
+
+Cari seluruh kemungkinan penyebab BoomBox bisa stuck.
+
+JANGAN langsung mengubah kode sebelum audit selesai.
+
+==========================================================
+TARGET
+==========================================================
+
+BoomBox HARUS tetap berjalan 24/7.
+
+BoomBox TIDAK BOLEH berhenti hanya karena satu provider error.
+
+BoomBox HARUS bisa dipakai banyak user secara bersamaan.
+
+BoomBox HARUS tetap berjalan walaupun Scanner Keylogger sedang melakukan scan.
+
+BoomBox tidak boleh mengganggu Scanner.
+
+Scanner tidak boleh mengganggu BoomBox.
+
+Semua fitur harus berjalan bersamaan.
+
+==========================================================
+PROVIDER SYSTEM
+==========================================================
+
+Gunakan sistem Multi Provider.
+
+Prioritas:
+
+1. Analytzy (Utama)
+
+↓
+
+2. yt-dlp Local
+
+↓
+
+3. Backup API 1
+
+↓
+
+4. Backup API 2
+
+↓
+
+5. Backup API 3 (jika memang sudah ada di project)
+
+JANGAN hanya bergantung pada satu provider.
+
+==========================================================
+FALLBACK
+==========================================================
+
+Jika Analytzy gagal:
+
+Timeout
+
+HTTP Error
+
+429
+
+403
+
+Cloudflare
+
+Download gagal
+
+Video info gagal
+
+Network Error
+
+DNS Error
+
+Socket Error
+
+langsung pindah ke provider berikutnya.
+
+JANGAN berhenti.
+
+JANGAN membuat Queue macet.
+
+==========================================================
+HEALTH CHECK
+==========================================================
+
+Buat sistem Health Check.
+
+Misal:
+
+Analytzy gagal 5 kali berturut-turut.
+
+↓
+
+Status provider menjadi:
+
+OFFLINE
+
+Selama OFFLINE:
+
+BoomBox JANGAN lagi mencoba Analytzy.
+
+Langsung gunakan provider berikutnya.
+
+Setelah beberapa menit (misal 10 menit):
+
+Bot otomatis mencoba Analytzy lagi.
+
+Jika berhasil:
+
+Status menjadi:
+
+ONLINE
+
+Jika gagal lagi:
+
+Tetap OFFLINE.
+
+Tidak perlu restart bot.
+
+Tidak perlu command manual.
+
+==========================================================
+QUEUE
+==========================================================
+
+Queue harus benar-benar stabil.
+
+Setiap Job memiliki:
+
+Timeout
+
+Retry
+
+Cancel
+
+Cleanup
+
+Finally
+
+Apapun hasil Job:
+
+SUCCESS
+
+FAILED
+
+TIMEOUT
+
+CANCEL
+
+Slot Queue WAJIB dilepas.
+
+Tidak boleh ada Queue Lock.
+
+Tidak boleh ada Queue Stuck.
+
+==========================================================
+TIMEOUT
+==========================================================
+
+Jangan menggunakan timeout yang membuat Queue berhenti.
+
+Timeout hanya menghentikan Job tersebut.
+
+Bukan seluruh BoomBox.
+
+==========================================================
+YT-DLP
+==========================================================
+
+Jangan download yt-dlp setiap request.
+
+Jika binary sudah ada:
+
+Langsung gunakan.
+
+Jika binary tidak ada:
+
+Download sekali.
+
+Simpan.
+
+Gunakan kembali.
+
+Jika gagal download:
+
+Gunakan provider berikutnya.
+
+==========================================================
+DOWNLOAD
+==========================================================
+
+Gunakan kualitas audio yang ringan.
+
+Target:
+
+128 kbps
+
+atau kualitas terendah yang masih layak.
+
+Prioritaskan:
+
+Ukuran kecil
+
+Cepat
+
+Stabil
+
+Bukan kualitas tinggi.
+
+==========================================================
+ERROR LOG
+==========================================================
+
+Semua kegagalan provider WAJIB masuk Error Logs.
+
+Contoh:
+
+Feature : BoomBox
+
+Provider : Analytzy
+
+Status : OFFLINE
+
+Reason : Consecutive Timeout
+
+Action : Switch to yt-dlp
+
+Time :
+
+==========================================================
+
+Jika yt-dlp gagal:
+
+Feature : BoomBox
+
+Provider : yt-dlp
+
+Status : ERROR
+
+Reason :
+
+Action : Switch to Backup API 1
+
+==========================================================
+
+Jika Backup berhasil:
+
+Feature : BoomBox
+
+Provider : Backup API 1
+
+Status : SUCCESS
+
+Fallback : YES
+
+==========================================================
+MONITORING
+==========================================================
+
+Monitoring BoomBox juga harus mengetahui:
+
+Provider Aktif
+
+Provider Offline
+
+Provider Recovery
+
+Jumlah Timeout
+
+Jumlah Retry
+
+Namun Monitoring TIDAK BOLEH spam.
+
+==========================================================
+PERFORMANCE
+==========================================================
+
+BoomBox harus mampu dipakai banyak user.
+
+Scanner tetap berjalan.
+
+Monitoring tetap berjalan.
+
+Ticket tetap berjalan.
+
+Premium tetap berjalan.
+
+Tidak boleh saling blocking.
+
+==========================================================
+ASYNC
+==========================================================
+
+Audit seluruh Promise.
+
+Audit seluruh async.
+
+Audit seluruh await.
+
+Pastikan semua Promise:
+
+resolve
+
+reject
+
+finally
+
+ditangani dengan benar.
+
+==========================================================
+MEMORY LEAK
+==========================================================
+
+Cari:
+
+Memory Leak
+
+Dangling Promise
+
+Zombie Worker
+
+Zombie Queue
+
+Unclosed Stream
+
+Unclosed File
+
+Temp File
+
+Lalu perbaiki.
+
+==========================================================
+RETRY
+==========================================================
+
+Retry hanya dilakukan pada Provider yang sama maksimal beberapa kali.
+
+Jika masih gagal:
+
+Pindah provider.
+
+Jangan Retry tanpa batas.
+
+==========================================================
+TEST
+==========================================================
+
+Setelah selesai:
+
+Uji:
+
+20 Request BoomBox bersamaan.
+
+Scanner melakukan scan bersamaan.
+
+Monitoring aktif.
+
+Premium aktif.
+
+Pastikan:
+
+Tidak ada Queue macet.
+
+Tidak ada Slot yang terkunci.
+
+Tidak ada Memory Leak.
+
+Tidak ada Promise menggantung.
+
+Tidak ada Worker menggantung.
+
+==========================================================
+VERIFIKASI
+==========================================================
+
+Pastikan:
+
+✓ BoomBox tetap berjalan walaupun Analytzy mati.
+
+✓ BoomBox tetap berjalan walaupun yt-dlp gagal.
+
+✓ BoomBox tetap berjalan menggunakan Backup Provider.
+
+✓ Queue tetap berjalan.
+
+✓ Scanner tetap berjalan.
+
+✓ Monitoring tetap berjalan.
+
+✓ Error Logs lengkap.
+
+✓ Tidak ada duplicate monitoring.
+
+✓ Tidak ada BoomBox Stuck.
+
+==========================================================
+LAPORAN AKHIR
+==========================================================
+
+Jangan berhenti sebelum selesai.
+
+Berikan laporan:
+
+1. Penyebab BoomBox stuck.
+
+2. Semua bug yang ditemukan.
+
+3. Semua bug yang diperbaiki.
+
+4. Provider yang digunakan.
+
+5. Sistem fallback yang diterapkan.
+
+6. Sistem Health Check yang diterapkan.
+
+7. Sistem Queue yang diperbaiki.
+
+8. Sistem Retry yang diperbaiki.
+
+9. Sistem Timeout yang diperbaiki.
+
+10. Konfirmasi BoomBox siap digunakan banyak user.
+
+11. Konfirmasi BoomBox tetap berjalan walaupun Analytzy OFFLINE.
+
+12. Konfirmasi Scanner tetap bisa berjalan bersamaan.
+
+13. Konfirmasi project tetap kompatibel dengan:
+
+- Replit
+- GitHub
+- Panel Pedro
+- Pterodactyl
+
+SELESAIKAN SAMPAI TUNTAS.
+
+JANGAN MENGUBAH FITUR LAIN.
+
+FOKUS HANYA PADA STABILITAS BOOMBOX DAN MEMASTIKAN BOT TETAP BERJALAN NORMAL UNTUK PENGGUNA PUBLIK.

@@ -1,0 +1,281 @@
+Lakukan perubahan HANYA pada fitur BoomBox TikTok dan optimasi performa. Jangan mengubah pipeline YouTube yang saat ini sudah stabil, jangan mengubah struktur project, jangan mengubah startup, package.json, ataupun kompatibilitas Replit, GitHub, Panel Pedro/Pterodactyl.
+
+=========================
+TARGET
+=========================
+
+Fokus utama:
+
+1. Support semua format URL TikTok.
+2. Optimasi performa BoomBox.
+3. UI/UX BoomBox lebih rapi.
+4. Jangan tampilkan error teknis ke publik.
+5. Jangan merusak fitur YouTube yang sudah berjalan.
+
+=========================
+TIKTOK SUPPORT
+=========================
+
+Tambahkan support seluruh format URL TikTok berikut:
+
+- https://www.tiktok.com/@username/video/xxxxxxxx
+- https://vt.tiktok.com/xxxxxxxx
+- https://vm.tiktok.com/xxxxxxxx
+- https://m.tiktok.com/xxxxxxxx
+- Share Link Android
+- Share Link iPhone
+- URL dengan query parameter panjang.
+
+Contoh yang HARUS DIDUKUNG:
+
+https://www.tiktok.com/@farisii174/video/7661119186889903376?_r=1&u_code=edihaf9c3gh726&region=ID&mid=7641492462762085138&preview_pb=0&sharer_language=id&_d=f16ghcf45hi3f6&share_item_id=7661119186889903376&source=h5_t&timestamp=1784143580&user_id=7359273229695140869&sec_user_id=MS4wLjABAAAAvrhT900rBP9_owGHd-8afuG4VPZQ-zL05zYOT3GahxHSckQQDcGuD2kVt7yfT-cz&social_share_type=0&utm_source=copy&utm_campaign=client_share&utm_medium=android&share_iid=7661910375173261074&share_link_id=a170ee9f-288c-45bf-b9be-369c067d2b61&share_app_id=1180&ugbiz_name=MAIN&ug_btm=b2001&sp_root_share_link_id=a170ee9f-288c-45bf-b9be-369c067d2b61
+
+=========================
+NORMALIZE URL
+=========================
+
+Sebelum downloader dijalankan:
+
+- Normalize URL.
+- Hapus query parameter yang tidak diperlukan.
+- Follow redirect otomatis.
+- Ambil canonical video URL.
+- Baru kirim ke downloader/provider.
+
+Jangan menganggap URL panjang sebagai Unsupported URL.
+
+=========================
+PROVIDER
+=========================
+
+Jika provider pertama gagal:
+
+JANGAN kirim error ke user.
+
+Langsung otomatis lanjut:
+
+Provider 1
+↓
+
+Provider 2
+↓
+
+Provider 3
+↓
+
+Provider 4
+
+Jika salah satu berhasil:
+
+anggap sukses.
+
+User tidak boleh tahu provider sebelumnya gagal.
+
+=========================
+PERFORMA
+=========================
+
+Percepat BoomBox.
+
+Optimasi:
+
+- timeout provider
+- retry
+- queue
+- async
+- stream
+- upload
+
+Target:
+
+BoomBox normal selesai sekitar 5–10 detik.
+
+Kurangi waktu tunggu yang tidak perlu.
+
+Jangan ada loading berhenti lama.
+
+=========================
+YOUTUBE
+=========================
+
+JANGAN mengubah pipeline YouTube.
+
+Tetap gunakan download Audio Only.
+
+Gunakan kualitas MP3 paling rendah yang tersedia (sekitar 128 kbps atau terendah yang didukung provider).
+
+Jangan download audio kualitas tinggi karena hanya memperlambat proses.
+
+=========================
+PUBLIC ERROR
+=========================
+
+Jika semua provider gagal:
+
+JANGAN tampilkan:
+
+- Stack Trace
+- Unsupported URL
+- Provider Error
+- Internal Error
+
+JANGAN tampilkan tombol Detail.
+
+Cukup reply user:
+
+⚠️ @user
+
+BoomBox sedang mengalami gangguan.
+
+Laporan otomatis telah dikirim ke Owner & Developer.
+
+Silakan coba beberapa saat lagi.
+
+=========================
+ERROR LOG
+=========================
+
+Semua detail error:
+
+Stack Trace
+
+Provider
+
+Response
+
+Internal Error
+
+tetap masuk ke channel Error Log.
+
+=========================
+BUTTON
+=========================
+
+Hapus tombol:
+
+🔎 Detail
+
+dari channel BoomBox.
+
+Biarkan hanya:
+
+Open
+
+Copy URL
+
+untuk hasil sukses.
+
+=========================
+MENTION USER
+=========================
+
+Semua hasil:
+
+Success
+
+Failed
+
+Warning
+
+harus reply sekaligus mention user yang mengirim link.
+
+=========================
+LOADING
+=========================
+
+Processing dibuat lebih realistis.
+
+Contoh stage:
+
+Connecting...
+
+Reading Metadata...
+
+Downloading Audio...
+
+Uploading BoomBox...
+
+Verifying...
+
+Gunakan spinner/progress yang sederhana.
+
+Edit satu pesan selama proses.
+
+Jika selesai:
+
+hapus embed processing.
+
+Kirim embed hasil final.
+
+=========================
+FOOTER
+=========================
+
+Gunakan footer global.
+
+Format:
+
+Powered by PangeranAsisten | BoomBox
+
+Jangan gunakan:
+
+Powered by Pangeran Assistant AI
+
+=========================
+JANGAN DIUBAH
+=========================
+
+Jangan mengubah:
+
+- Pipeline YouTube
+- Provider YouTube
+- Slash Command lain
+- Scanner
+- Ticket
+- AI
+- Database
+- Premium
+- Limit
+- Handler selain yang berhubungan dengan BoomBox
+- Struktur project
+
+=========================
+COMPATIBILITY
+=========================
+
+Pastikan tetap kompatibel dengan:
+
+- Replit
+- GitHub
+- Panel Pedro
+- Pterodactyl
+
+=========================
+SEBELUM SELESAI
+=========================
+
+Lakukan testing:
+
+✓ YouTube
+
+✓ TikTok vt
+
+✓ TikTok vm
+
+✓ TikTok www
+
+✓ TikTok m
+
+✓ TikTok share link Android
+
+✓ TikTok share link iPhone
+
+✓ URL TikTok panjang seperti contoh di atas
+
+✓ BoomBox Success
+
+✓ BoomBox Failed
+
+✓ Error Log
+
+✓ Pastikan tidak ada regresi pada fitur YouTube.

@@ -1,0 +1,428 @@
+TUGAS KHUSUS - BOOMBOX UI/UX + PERFORMANCE + TIKTOK SUPPORT
+
+PENTING
+
+JANGAN melakukan refactor project.
+
+JANGAN mengubah struktur project.
+
+JANGAN mengubah command BoomBox yang sudah ada.
+
+JANGAN mengubah sistem upload Top4Top.
+
+JANGAN mengubah sistem Queue kecuali optimasi.
+
+JANGAN mengubah Scanner.
+
+JANGAN mengubah Ticket.
+
+JANGAN mengubah Premium.
+
+JANGAN mengubah Monitoring selain yang diminta.
+
+Fokus hanya pada:
+
+✔ UI BoomBox
+✔ UX BoomBox
+✔ TikTok Support
+✔ Performance
+✔ Error Handling
+
+==========================================================
+TARGET
+==========================================================
+
+BoomBox harus terasa seperti bot profesional.
+
+Cepat.
+
+Rapi.
+
+Tidak spam.
+
+Tidak bikin channel penuh.
+
+Tidak bikin user bingung.
+
+==========================================================
+1. REPLY USER
+==========================================================
+
+Saat user mengirim link BoomBox.
+
+Bot WAJIB reply ke pesan user.
+
+Bukan kirim pesan baru.
+
+Contoh:
+
+User:
+
+https://youtu....
+
+↓
+
+Bot reply:
+
+@User
+
+🎵 Sedang membuat BoomBox...
+
+==========================================================
+2. LOADING REALISTIS
+==========================================================
+
+Gunakan hanya SATU embed.
+
+Jangan spam banyak pesan.
+
+Embed tersebut di-edit terus.
+
+Gunakan spinner unicode.
+
+Contoh:
+
+⠋
+⠙
+⠹
+⠸
+⠼
+⠴
+⠦
+⠧
+⠇
+⠏
+
+Spinner berubah setiap edit.
+
+==========================================================
+3. TAHAP LOADING
+==========================================================
+
+Contoh:
+
+⠋ Menghubungkan...
+
+↓
+
+⠹ Mengambil Metadata...
+
+↓
+
+⠼ Menyiapkan Audio...
+
+↓
+
+⠦ Upload BoomBox...
+
+↓
+
+⠇ Verifikasi Link...
+
+↓
+
+Selesai.
+
+Jangan menambahkan delay.
+
+Jika tahap selesai lebih cepat langsung pindah.
+
+==========================================================
+4. HAPUS EMBED PROSES
+==========================================================
+
+Saat BoomBox berhasil.
+
+Embed Processing langsung DIHAPUS.
+
+Setelah dihapus.
+
+Bot mengirim embed baru.
+
+Contoh:
+
+@User
+
+━━━━━━━━━━━━━━━━━━
+
+✅ BoomBox Berhasil
+
+🎵 Judul
+
+⏱ Durasi
+
+🔗 BoomBox URL
+
+━━━━━━━━━━━━━━━━━━
+
+Powered by PangeranAsisten | BoomBox
+
+Jadi channel bersih.
+
+Tidak ada embed loading yang tertinggal.
+
+==========================================================
+5. ERROR USER
+==========================================================
+
+Jika gagal.
+
+Embed Processing dihapus.
+
+Bot reply user:
+
+@User
+
+⚠️ BoomBox sedang mengalami gangguan.
+
+Laporan otomatis telah dikirim ke Owner & Developer.
+
+Silakan coba beberapa saat lagi.
+
+Powered by PangeranAsisten | BoomBox
+
+Jangan tampilkan:
+
+Stack Trace
+
+Provider
+
+API
+
+Internal Error
+
+==========================================================
+6. ERROR LOG
+==========================================================
+
+Semua detail error hanya dikirim ke Error Log.
+
+Isi:
+
+Feature
+
+Provider
+
+Stack
+
+Request
+
+Reason
+
+Time
+
+==========================================================
+7. SUPPORT TIKTOK
+==========================================================
+
+Perbaiki parser TikTok.
+
+Support seluruh format:
+
+https://tiktok.com/
+
+https://www.tiktok.com/
+
+https://m.tiktok.com/
+
+https://vt.tiktok.com/
+
+https://vm.tiktok.com/
+
+Short Link
+
+Share Link terbaru
+
+Pastikan parser melakukan resolve redirect.
+
+Jangan sampai link valid dianggap Unsupported URL.
+
+==========================================================
+8. VALIDASI URL
+==========================================================
+
+Jika platform belum didukung.
+
+Reply user:
+
+⚠️ Platform belum didukung.
+
+Saat ini BoomBox hanya mendukung:
+
+• YouTube
+
+• YouTube Music
+
+• TikTok
+
+Powered by PangeranAsisten | BoomBox
+
+==========================================================
+9. PERFORMANCE
+==========================================================
+
+Optimalkan seluruh proses.
+
+Target:
+
+Metadata
+
+≤2 detik
+
+Download
+
+≤5 detik
+
+BoomBox
+
+≤8 detik
+
+Kurangi seluruh delay yang tidak perlu.
+
+==========================================================
+10. TIMEOUT
+==========================================================
+
+Provider timeout maksimal:
+
+5-8 detik.
+
+Jika timeout.
+
+Langsung provider berikutnya.
+
+==========================================================
+11. ANTI STUCK
+==========================================================
+
+Cari seluruh kemungkinan:
+
+Promise menggantung.
+
+Worker menggantung.
+
+Queue Lock.
+
+Memory Leak.
+
+Zombie Stream.
+
+Perbaiki.
+
+Pastikan finally selalu release Queue.
+
+==========================================================
+12. EMBED
+==========================================================
+
+Gunakan footer global.
+
+Format:
+
+Powered by PangeranAsisten | BoomBox
+
+==========================================================
+13. MENTION USER
+==========================================================
+
+Semua proses.
+
+Semua sukses.
+
+Semua gagal.
+
+WAJIB mention user yang mengirim link.
+
+==========================================================
+14. KOMPATIBILITAS
+==========================================================
+
+Jangan mengubah pipeline BoomBox.
+
+Jangan mengubah downloader.
+
+Jangan mengubah provider.
+
+Jangan mengubah upload Top4Top.
+
+Jangan mengubah struktur project.
+
+Harus tetap kompatibel dengan:
+
+Replit
+
+GitHub
+
+Panel Pedro
+
+Pterodactyl
+
+==========================================================
+15. TEST
+==========================================================
+
+Lakukan pengujian:
+
+YouTube
+
+TikTok
+
+20 Request bersamaan
+
+Queue
+
+Upload
+
+Reply
+
+Embed
+
+Spinner
+
+Pastikan:
+
+✓ Tidak ada Queue macet.
+
+✓ Tidak ada Promise menggantung.
+
+✓ Tidak ada Embed Processing tertinggal.
+
+✓ Tidak ada Spam.
+
+✓ Tidak ada Unsupported URL untuk TikTok valid.
+
+✓ Tidak ada BoomBox stuck.
+
+✓ BoomBox tetap cepat.
+
+==========================================================
+16. LAPORAN
+==========================================================
+
+Jangan berhenti sebelum selesai.
+
+Berikan laporan:
+
+1. Semua bug yang ditemukan.
+
+2. Semua file yang diubah.
+
+3. Semua optimasi.
+
+4. Semua perbaikan TikTok.
+
+5. Semua optimasi performa.
+
+6. Hasil pengujian.
+
+7. Konfirmasi BoomBox tetap kompatibel dengan:
+
+✓ Replit
+
+✓ GitHub
+
+✓ Panel Pedro
+
+✓ Pterodactyl
+
+JANGAN melakukan perubahan lain di luar tugas ini.

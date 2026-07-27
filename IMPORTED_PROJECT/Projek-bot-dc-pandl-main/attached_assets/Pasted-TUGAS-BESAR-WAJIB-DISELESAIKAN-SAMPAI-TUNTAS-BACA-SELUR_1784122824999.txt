@@ -1,0 +1,508 @@
+TUGAS BESAR (WAJIB DISELESAIKAN SAMPAI TUNTAS)
+
+BACA SELURUH PROJECT TERLEBIH DAHULU.
+
+JANGAN LANGSUNG MENGUBAH FILE.
+
+Lakukan audit penuh terhadap seluruh project terlebih dahulu, baru lakukan refactor.
+
+=====================================================
+TARGET UTAMA
+=====================================================
+
+Project ini adalah Discord Bot yang sudah memiliki banyak fitur.
+
+TUGASMU BUKAN MENAMBAH FITUR BARU.
+
+TUGASMU ADALAH:
+
+1. Menyelesaikan audit yang sebelumnya terhenti.
+2. Memperbaiki bug.
+3. Merapikan struktur project.
+4. Membuat project production-ready.
+5. Tetap kompatibel dengan Replit.
+6. Siap dijalankan di Panel Pedro / Pterodactyl.
+
+=====================================================
+LANGKAH PERTAMA (WAJIB)
+=====================================================
+
+Baca seluruh project.
+
+Audit seluruh source code.
+
+Audit seluruh import.
+
+Audit seluruh database.
+
+Audit seluruh handler.
+
+Audit seluruh command.
+
+Audit seluruh event.
+
+Audit seluruh feature.
+
+Audit seluruh monitoring.
+
+Audit seluruh BoomBox.
+
+Audit seluruh Scanner.
+
+Audit seluruh Ticket.
+
+Audit seluruh Premium.
+
+Audit seluruh Config.
+
+Audit seluruh Queue.
+
+Audit seluruh Service.
+
+Audit seluruh Utils.
+
+Audit seluruh Logs.
+
+JANGAN ADA FILE YANG DILEWATI.
+
+=====================================================
+SETELAH AUDIT
+=====================================================
+
+Cari seluruh:
+
+Broken Import
+
+Dead Code
+
+Duplicate Code
+
+Unused File
+
+Unused Folder
+
+Unused Function
+
+Circular Import
+
+File sementara
+
+File download BoomBox
+
+Cache
+
+Script test
+
+Script migrasi lama
+
+File Replit yang tidak dibutuhkan untuk production
+
+Laporkan semuanya.
+
+=====================================================
+TARGET STRUKTUR BARU
+=====================================================
+
+Project harus menjadi seperti berikut.
+
+project/
+
+├── src/
+│
+├── commands/
+│
+├── events/
+│
+├── handlers/
+│
+├── features/
+│
+│ ├── boombox/
+│ ├── scanner/
+│ ├── monitoring/
+│ ├── premium/
+│ ├── bypass/
+│ ├── ticket/
+│ ├── bugreport/
+│ ├── help/
+│ ├── logs/
+│ ├── setup/
+│ └── thread/
+│
+├── database/
+│
+├── middleware/
+│
+├── services/
+│
+├── utils/
+│
+└── index.js
+
+config/
+
+├── bot.js
+
+├── owner.js
+
+├── roles.js
+
+├── channels.js
+
+├── settings.js
+
+└── constants.js
+
+data/
+
+logs/
+
+package.json
+
+pnpm-lock.yaml
+
+README.md
+
+.env.example
+
+.gitignore
+
+=====================================================
+PENTING
+=====================================================
+
+Source utama BOT TIDAK BOLEH lagi bergantung kepada:
+
+artifacts/
+
+.agents/
+
+attached_assets/
+
+Folder tersebut hanya boleh menjadi folder khusus Replit.
+
+Source bot production harus berada di src/.
+
+=====================================================
+ENTRY POINT
+=====================================================
+
+Bot harus dapat dijalankan dengan:
+
+pnpm install
+
+pnpm start
+
+atau
+
+node src/index.js
+
+Tanpa workflow Replit.
+
+Tanpa command panjang.
+
+Tanpa folder artifacts sebagai source utama.
+
+=====================================================
+CONFIG
+=====================================================
+
+Satukan seluruh konfigurasi.
+
+BOT_TOKEN
+
+OWNER_ID
+
+DEVELOPER_ID
+
+ROLE_ID
+
+CHANNEL_ID
+
+LIMIT
+
+SETTING
+
+Semua harus dipusatkan di folder config.
+
+Tidak boleh lagi tersebar di banyak file.
+
+=====================================================
+DATABASE
+=====================================================
+
+Seluruh database dipusatkan.
+
+Seluruh path diperbaiki.
+
+Tidak boleh ada database hilang.
+
+Tidak boleh ada data rusak.
+
+=====================================================
+IMPORT
+=====================================================
+
+Perbaiki seluruh import.
+
+Tidak boleh ada:
+
+Module Not Found
+
+Broken Import
+
+Import Loop
+
+=====================================================
+HELP
+=====================================================
+
+/help harus otomatis membaca command yang benar-benar ada.
+
+Kategori harus rapi.
+
+Tidak boleh ada command palsu.
+
+Tidak boleh ada command yang sudah dihapus.
+
+=====================================================
+MONITORING
+=====================================================
+
+Cari penyebab monitoring dobel.
+
+Monitoring lama harus dihapus.
+
+Gunakan satu sistem monitoring.
+
+Monitoring selalu EDIT MESSAGE.
+
+Bukan mengirim pesan baru.
+
+Monitoring harus tersimpan di database.
+
+Saat restart bot:
+
+Bot mencari Message ID.
+
+Jika ada:
+
+Edit.
+
+Jika tidak ada:
+
+Buat baru.
+
+=====================================================
+BOOMBOX
+=====================================================
+
+Cari penyebab BoomBox Queue stuck.
+
+Perbaiki queue.
+
+Pastikan:
+
+Queue selesai otomatis.
+
+Tidak macet.
+
+Tidak perlu restart bot.
+
+Error otomatis masuk Error Logs.
+
+=====================================================
+SCANNER
+=====================================================
+
+Perbaiki Scanner.
+
+Scanner harus jauh lebih pintar.
+
+Pelajari:
+
+MoonLoader
+
+Lua
+
+LuaJIT
+
+Obfuscation
+
+Encryption
+
+Base64
+
+XOR
+
+Loadstring
+
+Webhook Discord
+
+Discord Token
+
+HTTP Request
+
+Remote Script
+
+Remote Loader
+
+Anti VM
+
+Anti Debug
+
+Anti Dump
+
+String Encryption
+
+Variable Rename
+
+Control Flow Obfuscation
+
+Dead Code Obfuscation
+
+Scanner harus mampu membedakan:
+
+SAFE
+
+LOW
+
+MEDIUM
+
+HIGH
+
+CRITICAL
+
+Jangan memberi skor bahaya tinggi hanya karena file di-obfuscate.
+
+Obfuscation bukan berarti virus.
+
+Tetapi scanner tetap harus bisa menemukan webhook Discord yang tersembunyi di balik obfuscation jika memang ada.
+
+Kurangi false positive.
+
+=====================================================
+QUEUE
+=====================================================
+
+Queue semua fitur harus stabil.
+
+BoomBox
+
+Bypass
+
+Scanner
+
+Queue bisa diatur.
+
+Tidak boleh macet.
+
+=====================================================
+LOG
+=====================================================
+
+Semua Error masuk Error Logs.
+
+Semua Success masuk Success Logs.
+
+Tidak spam.
+
+=====================================================
+CLEANUP
+=====================================================
+
+Hapus hanya:
+
+Cache
+
+Temp
+
+Download sementara
+
+Script test
+
+Script migrasi lama
+
+File tidak dipakai
+
+JANGAN menghapus file yang masih dipakai.
+
+=====================================================
+KOMPATIBILITAS
+=====================================================
+
+Bot harus tetap berjalan di:
+
+Replit
+
+Panel Pedro
+
+Pterodactyl
+
+NodeJS
+
+Tanpa perlu mengubah source lagi.
+
+=====================================================
+PENGUJIAN
+=====================================================
+
+Setelah selesai:
+
+Scan seluruh project.
+
+Pastikan:
+
+0 Broken Import
+
+0 Module Not Found
+
+0 Duplicate Event
+
+0 Duplicate Monitoring
+
+0 Queue Stuck
+
+0 Broken Database
+
+0 Missing Handler
+
+0 Missing Command
+
+=====================================================
+LAPORAN AKHIR
+=====================================================
+
+Jangan berhenti sebelum selesai.
+
+Di akhir tampilkan:
+
+1. Struktur project baru.
+
+2. Daftar file yang dipindahkan.
+
+3. Daftar file yang dihapus.
+
+4. Daftar import yang diperbaiki.
+
+5. Daftar bug yang ditemukan.
+
+6. Daftar bug yang diperbaiki.
+
+7. Daftar fitur yang berhasil diuji.
+
+8. Daftar command yang berhasil dimuat.
+
+9. Cara menjalankan di Replit.
+
+10. Cara menjalankan di Panel Pedro.
+
+11. Konfirmasi bahwa seluruh fitur lama tetap ada.
+
+12. Konfirmasi tidak ada fitur yang dihapus.
+
+13. Konfirmasi project siap production.
+
+JANGAN BERHENTI DI TENGAH.
+
+SELESAIKAN SEMUA TUGAS SAMPAI TUNTAS.

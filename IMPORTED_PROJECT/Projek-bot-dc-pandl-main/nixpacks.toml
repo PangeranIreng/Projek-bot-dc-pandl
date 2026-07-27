@@ -1,0 +1,14 @@
+# nixpacks.toml — System-level dependencies for Railway deployment.
+# ffmpeg is required by yt-dlp (audio extraction/conversion) and by
+# kaizenDownloader.js (transcoding). Without it, ALL audio download paths fail.
+# pnpm is declared explicitly so Railway's nixpacks builder uses the correct
+# package manager instead of falling back to npm.
+
+[phases.setup]
+nixPkgs = ["ffmpeg", "nodejs_22"]
+
+[phases.install]
+cmds = ["npm i -g pnpm && pnpm install --frozen-lockfile"]
+
+[start]
+cmd = "pnpm start"

@@ -1,0 +1,337 @@
+PROJECT INI WAJIB MENGGUNAKAN FILE ZIP YANG SAYA KIRIM SEBAGAI SATU-SATUNYA ACUAN.
+
+JANGAN membuat project baru.
+JANGAN membuat struktur berdasarkan project lain.
+JANGAN membuat command baru.
+JANGAN menambahkan fitur baru.
+JANGAN menghapus fitur yang masih dipakai.
+JANGAN mengubah logika fitur.
+
+==================================================
+
+TAHAP 1 - AUDIT TOTAL
+
+Baca seluruh isi ZIP.
+
+Audit seluruh project.
+
+Baca semua file.
+
+Baca semua folder.
+
+Cari seluruh:
+
+- Command
+- Event
+- Handler
+- Feature
+- Service
+- Database
+- Utils
+- Config
+- Assets
+- Queue
+- Scheduler
+- Logger
+- Premium
+- Ticket
+- Scanner
+- BoomBox
+- Monitoring
+- Dashboard
+
+Jangan ada file yang dilewati.
+
+==================================================
+
+TAHAP 2 - SUSUN ULANG STRUKTUR PROJECT
+
+Setelah seluruh project dipahami, rapikan struktur project.
+
+JANGAN memindahkan file secara acak.
+
+JANGAN mengubah import sebelum seluruh struktur selesai dirancang.
+
+Gunakan struktur seperti berikut.
+
+```
+project/
+│
+├── index.js
+├── package.json
+├── .env.example
+├── README.md
+│
+├── config/
+│   ├── bot.js
+│   ├── channels.js
+│   ├── roles.js
+│   ├── owner.js
+│   ├── settings.js
+│   └── constants.js
+│
+├── src/
+│   ├── commands/
+│   │
+│   ├── events/
+│   │
+│   ├── handlers/
+│   │
+│   ├── features/
+│   │   │
+│   │   ├── boombox/
+│   │   ├── scanner/
+│   │   ├── monitoring/
+│   │   ├── dashboard/
+│   │   ├── premium/
+│   │   ├── help/
+│   │   ├── ticket/
+│   │   ├── queue/
+│   │   ├── logs/
+│   │   └── setup/
+│   │
+│   ├── services/
+│   │
+│   ├── utils/
+│   │
+│   ├── database/
+│   │
+│   ├── embeds/
+│   │
+│   ├── assets/
+│   │
+│   └── middleware/
+│
+├── storage/
+│   ├── downloads/
+│   ├── cache/
+│   ├── temp/
+│   └── backup/
+│
+├── logs/
+│
+└── scripts/
+```
+
+==================================================
+
+TAHAP 3 - IMPORT
+
+Setelah struktur selesai.
+
+Update seluruh:
+
+Import
+
+Export
+
+Path
+
+Registration
+
+Handler
+
+Listener
+
+Loader
+
+Jangan sampai ada Module Not Found.
+
+==================================================
+
+TAHAP 4 - CLEANUP
+
+Cari:
+
+Duplicate File
+
+Unused Import
+
+Unused Variable
+
+Unused Function
+
+Unused Dependency
+
+Temporary File
+
+Cache
+
+Backup Lama
+
+Folder Kosong
+
+Script Tidak Dipakai
+
+Jika benar-benar tidak digunakan.
+
+Hapus.
+
+Tetapi JANGAN menghapus file yang masih dipakai.
+
+==================================================
+
+TAHAP 5 - CONFIG
+
+Semua konfigurasi dipusatkan.
+
+Misalnya:
+
+BOT_TOKEN
+
+OWNER_ID
+
+DEVELOPER_ID
+
+ROLE_ID
+
+CHANNEL_ID
+
+SCAN_CHANNEL
+
+BOOMBOX_CHANNEL
+
+LOG_CHANNEL
+
+STATUS_CHANNEL
+
+PREMIUM_ROLE
+
+DLL
+
+Config harus mudah dicari.
+
+Jangan tersebar di banyak file.
+
+==================================================
+
+TAHAP 6 - DATABASE
+
+Semua data dipusatkan.
+
+Monitoring
+
+Dashboard
+
+Premium
+
+Queue
+
+BoomBox
+
+Scanner
+
+Ticket
+
+Setup
+
+Settings
+
+Restart bot.
+
+↓
+
+Semua otomatis dimuat lagi dari database.
+
+==================================================
+
+TAHAP 7 - MONITORING
+
+Monitoring tidak boleh duplicate.
+
+Jika restart.
+
+Cari dashboard lama.
+
+Jika ada.
+
+Edit dashboard lama.
+
+Jika tidak ada.
+
+Baru buat dashboard baru.
+
+Simpan Message ID ke database.
+
+==================================================
+
+TAHAP 8 - HELP
+
+Cari seluruh command yang BENAR-BENAR ADA.
+
+Jangan membuat command baru.
+
+Rapikan kategori.
+
+Kategori harus mengikuti isi project.
+
+==================================================
+
+TAHAP 9 - TEST
+
+Tes seluruh project.
+
+Pastikan:
+
+Tidak ada Module Not Found.
+
+Tidak ada Broken Import.
+
+Tidak ada Broken Path.
+
+Tidak ada Duplicate Event.
+
+Tidak ada Duplicate Scheduler.
+
+Tidak ada Duplicate Listener.
+
+Tidak ada Memory Leak.
+
+Tidak ada Promise Leak.
+
+==================================================
+
+TARGET
+
+Saya TIDAK meminta fitur baru.
+
+Saya hanya ingin project yang ADA DI FILE ZIP menjadi:
+
+✔ Struktur profesional
+
+✔ Mudah dipahami
+
+✔ Mudah dikembangkan
+
+✔ Bersih
+
+✔ Tidak ada file sampah
+
+✔ Semua fitur lama tetap berjalan
+
+✔ Semua import valid
+
+✔ Semua path valid
+
+✔ Semua handler valid
+
+✔ Siap dijalankan di Replit maupun Panel Pterodactyl hanya dengan:
+
+npm install
+
+npm start
+
+==================================================
+
+PENTING
+
+Sebelum mengubah apa pun:
+
+1. Audit seluruh project.
+2. Buat rencana struktur.
+3. Baru pindahkan file.
+4. Setelah semua selesai dipindahkan, perbarui seluruh import dan path.
+5. Jalankan pengujian penuh.
+6. Jangan menyelesaikan pekerjaan sampai seluruh project benar-benar rapi dan stabil.
+
+Laporkan semua perubahan yang dilakukan beserta daftar file yang dipindahkan dan alasan pemindahannya.

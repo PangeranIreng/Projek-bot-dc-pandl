@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# environment
+.env
+
+# sensitive BoomBox cookie material and metadata
+cookies.txt
+data/cookies-meta.json
+# AI Core stable encryption keyfile — never commit (contains the master encryption key)
+data/.ai-core-keyfile
+cookies.txt.*.tmp
+
+# runtime data (downloads, cache, temp files)
+storage/cache/*
+storage/temp/*
+storage/downloads/*
+storage/backup/*
+!storage/cache/.gitkeep
+!storage/temp/.gitkeep
+!storage/downloads/.gitkeep
+!storage/backup/.gitkeep
+
+# logs
+logs/*.log
+
+# AI Core runtime knowledge and error history
+data/ai-core-db.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+
+# Replit
+.cache/
+.local/

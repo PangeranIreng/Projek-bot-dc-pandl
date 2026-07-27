@@ -1,0 +1,316 @@
+Baca seluruh project terlebih dahulu sebelum mengubah apa pun.
+
+WAJIB dibaca terlebih dahulu:
+
+- src/features/boombox/**
+- src/features/boombox/handler.js
+- src/features/boombox/setup/**
+- src/features/boombox/logs/**
+- src/database/**
+- src/utils/**
+- semua file downloader
+- semua util yt-dlp
+- ffmpeg
+- uploader Top4Top
+- logInteraction
+- database BoomBox
+
+Lalu baca juga ZIP referensi yang saya lampirkan.
+
+Referensi hanya untuk membandingkan implementasi downloader.
+
+JANGAN menimpa project saya menggunakan isi ZIP.
+
+==================================================
+REFERENSI
+==================================================
+
+OURIN MD 3.zip
+
+- plugins/download/ytmp3.js
+- plugins/download/ytmp4.js
+- plugins/download/tiktokdl.js
+- plugins/download/tiktokdl2.js
+- plugins/download/spotifydl.js
+- src/scraper/ytdl.js
+- src/scraper/youtube.js
+- src/scraper/yt.js
+- src/scraper/tiktok.js
+- src/scraper/spotify.js
+- src/lib/ourin-ffmpeg.js
+
+Gojo-Satoru-MD.zip
+
+- lib/ytdlpBinary.js
+
+Gunakan hanya sebagai referensi implementasi downloader.
+
+==================================================
+TUGAS 1
+FIX BOOMBOX YOUTUBE
+==================================================
+
+Sebelum update:
+
+✅ YouTube normal
+✅ TikTok normal
+✅ Spotify normal
+✅ Download cepat
+✅ Upload Top4Top cepat
+
+Sesudah update:
+
+BoomBox YouTube gagal.
+
+Error:
+
+Feature
+BoomBox — YouTube
+
+Stage
+Fetch Video Info
+
+Reason
+Analisis link timed out (>10s)
+
+Lokasi:
+
+src/features/boombox/handler.js
+
+sekitar baris 191.
+
+Yang harus dilakukan:
+
+- Cari penyebab timeout.
+- Bandingkan implementasi dengan file referensi.
+- Jangan menghapus fitur yang sudah ada.
+- Jangan mengubah UI.
+- Jangan mengubah Logs.
+- Jangan mengubah Database.
+- Jangan mengubah Setup.
+- Jangan mengubah Panel.
+- Pastikan yt-dlp dipanggil dengan benar.
+- Pastikan ffmpeg dipanggil dengan benar.
+- Jangan memakai timeout buatan yang memutus proses terlalu cepat.
+- Jika gagal tampilkan stderr dan exit code asli.
+- Jangan hanya menampilkan "Analisis link timed out".
+
+Tambahkan log durasi:
+
+• Fetch Video Info
+• Download
+• Upload Top4Top
+• Generate BoomBox URL
+
+Target:
+
+YouTube
+↓
+
+Fetch Info
+
+↓
+
+Download
+
+↓
+
+Upload Top4Top
+
+↓
+
+Generate URL
+
+↓
+
+Kirim hasil
+
+Pastikan YouTube, TikTok dan Spotify kembali normal seperti sebelum update.
+
+==================================================
+TUGAS 2
+BOOMBOX LOGS V2
+==================================================
+
+Saat pertama kali BoomBox Logs V2 aktif:
+
+- Scan seluruh pesan lama pada channel BoomBox Logs.
+- Ambil semua data.
+- Judul
+- URL
+- Platform
+- Tanggal
+
+Masukkan ke database.
+
+Jika sudah ada jangan duplicate.
+
+Setelah migrasi selesai:
+
+Hapus seluruh pesan log lama.
+
+Sisakan SATU panel BoomBox Logs V2.
+
+Semua histori lama tetap dapat dibuka dari Viewer.
+
+Tidak boleh ada URL hilang.
+
+Tidak boleh ada entry hilang.
+
+Migrasi hanya boleh berjalan SATU KALI.
+
+Simpan flag pada database.
+
+Jika panel sudah ada:
+
+Edit panel.
+
+Jangan membuat panel baru.
+
+Log baru:
+
+Jangan lagi dikirim sebagai pesan.
+
+Semua log baru langsung masuk database.
+
+Viewer membaca database.
+
+==================================================
+TUGAS 3
+SETUP BOOMBOX
+==================================================
+
+Perbaiki /setupboombox.
+
+Yang saya inginkan:
+
+Hanya tampil:
+
+📋 Setup BoomBox Logs
+
+📌 Log Channel
+#channel
+
+Button:
+
+📌 Ganti Log Channel
+
+🔴 YouTube
+
+⚫ TikTok
+
+🟢 Spotify
+
+◀ Kembali
+
+Jangan tampilkan statistik.
+
+Jangan tampilkan jumlah log.
+
+Button memakai emoji/logo platform.
+
+Layout harus rapi.
+
+==================================================
+TUGAS 4
+PANEL BOOMBOX LOGS
+==================================================
+
+Panel publik hanya seperti ini:
+
+📼 BoomBox Logs
+
+Pilih platform untuk melihat riwayat BoomBox.
+
+ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴘᴀɴɢᴇʀᴀɴ ᴀꜱꜱɪꜱᴛᴀɴᴛ
+
+🔴 YouTube
+
+⚫ TikTok
+
+🟢 Spotify
+
+Jangan membuat panel baru jika sudah ada.
+
+Selalu edit panel lama.
+
+==================================================
+TUGAS 5
+PERSIST DATABASE
+==================================================
+
+Semua setting berikut harus tersimpan permanen.
+
+Tidak boleh hilang saat:
+
+- Restart Railway
+- Redeploy
+- Update
+- Run ulang
+
+Yang harus tetap tersimpan:
+
+- Log Channel
+- Message ID Panel
+- Migration Flag
+- Semua History
+- Semua Setting BoomBox
+
+==================================================
+TUGAS 6
+BERSIHKAN PROJECT
+==================================================
+
+Cari file BoomBox yang sudah tidak dipakai.
+
+Hapus HANYA file yang benar-benar tidak memiliki import maupun penggunaan.
+
+Jangan menghapus file yang masih dipakai.
+
+Jangan menghapus util.
+
+Jangan menghapus downloader.
+
+Jangan menghapus database.
+
+Jangan menghapus panel.
+
+Jangan menghapus handler.
+
+Pastikan project tetap bersih tanpa file sampah.
+
+==================================================
+AKHIR
+==================================================
+
+Lakukan syntax check seluruh file yang diubah.
+
+Pastikan tidak ada error.
+
+Restart bot.
+
+Pastikan:
+
+✅ YouTube normal
+
+✅ TikTok normal
+
+✅ Spotify normal
+
+✅ BoomBox Logs V2 normal
+
+✅ Setup BoomBox normal
+
+✅ Viewer normal
+
+✅ Database tetap tersimpan
+
+✅ Tidak ada timeout
+
+✅ Tidak ada duplicate
+
+✅ Tidak ada panel ganda
+
+✅ Tidak ada pesan log lama tersisa di channel
+
+Jika ada bug baru, perbaiki sebelum selesai dan jangan mengubah fitur lain di luar BoomBox.

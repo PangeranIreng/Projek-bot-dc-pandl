@@ -1,0 +1,301 @@
+==================================================
+PERBAIKAN SETUP DATABASE
+==================================================
+
+Perbaiki sistem /setup yang sudah ada tanpa menghapus fitur lama.
+
+Saat ini tombol "📊 Database" mengalami "This interaction failed".
+
+Pastikan seluruh Button, Modal, Select Menu dan Interaction memiliki handler yang benar.
+
+Jangan biarkan Button tidak memiliki fungsi.
+
+Pastikan setiap Button langsung membalas menggunakan deferReply(), deferUpdate() atau editReply() agar tidak terjadi timeout Interaction.
+
+==================================================
+SETUP DATABASE BARU
+==================================================
+
+Saat menjalankan:
+
+/setup
+
+Bot menampilkan Panel Admin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+⚙️ Panel Admin
+
+Pilih sistem yang ingin dikonfigurasi.
+
+📊 Database
+
+❌ Tutup
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+==================================================
+SAAT MENEKAN DATABASE
+==================================================
+
+Jangan langsung membuat panel.
+
+Tampilkan Wizard Setup.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Setup Database
+
+Pilih lokasi panel Database.
+
+━━━━━━━━━━━━━━
+
+📂 Pilih Kategori
+
+atau
+
+📂 Buat Kategori Baru
+
+━━━━━━━━━━━━━━
+
+Button.
+
+➡️ Lanjut
+
+❌ Batal
+
+==================================================
+PILIH KATEGORI
+==================================================
+
+Jika memilih kategori yang sudah ada.
+
+Bot membuat Channel berikut.
+
+⚙️ bot-setting
+
+📦 backup
+
+📄 console
+
+👥 member-list
+
+Jika Channel sudah ada.
+
+Jangan membuat ulang.
+
+Gunakan Channel tersebut.
+
+==================================================
+BUAT KATEGORI BARU
+==================================================
+
+Jika memilih Buat Kategori Baru.
+
+Bot meminta nama kategori.
+
+Contoh.
+
+📊 DATABASE
+
+Setelah itu.
+
+Bot membuat kategori tersebut.
+
+Lalu membuat seluruh Channel Database di dalamnya.
+
+==================================================
+SELESAI SETUP
+==================================================
+
+Setelah berhasil.
+
+Tampilkan.
+
+━━━━━━━━━━━━━━
+
+✅ Setup Database Berhasil
+
+Kategori
+
+DATABASE
+
+Channel
+
+✔ bot-setting
+
+✔ backup
+
+✔ console
+
+✔ member-list
+
+━━━━━━━━━━━━━━
+
+Button.
+
+⚙️ Bot Setting
+
+📦 Backup
+
+❌ Tutup
+
+==================================================
+JIKA SUDAH PERNAH SETUP
+==================================================
+
+Saat menjalankan:
+
+/setup
+
+Jangan membuat ulang panel.
+
+Tampilkan menu.
+
+━━━━━━━━━━━━━━
+
+📊 Database
+
+Status
+
+🟢 Aktif
+
+━━━━━━━━━━━━━━
+
+📝 Edit Setup
+
+🔄 Repair Panel
+
+🗑 Reset Setup
+
+☁️ GitHub Manager
+
+❌ Tutup
+
+==================================================
+EDIT SETUP
+==================================================
+
+Admin dapat mengganti.
+
+- Kategori
+
+- Channel
+
+- Nama Channel
+
+Jika dipindahkan.
+
+Bot otomatis memindahkan Panel ke Channel baru.
+
+==================================================
+REPAIR PANEL
+==================================================
+
+Bot mengecek.
+
+Bot Setting
+
+Backup
+
+Console
+
+Member List
+
+Jika ada yang hilang.
+
+Buat ulang Channel yang hilang saja.
+
+==================================================
+RESET SETUP
+==================================================
+
+Saat dipilih.
+
+Tampilkan konfirmasi.
+
+━━━━━━━━━━━━━━
+
+⚠️ Reset Setup
+
+Yang akan dihapus.
+
+✔ Konfigurasi Setup
+
+✔ Channel ID
+
+✔ Panel Database
+
+━━━━━━━━━━━━━━
+
+Yang TIDAK dihapus.
+
+✔ Database User
+
+✔ Premium
+
+✔ Backup Lokal
+
+✔ Backup GitHub
+
+✔ Data Scanner
+
+✔ AI
+
+━━━━━━━━━━━━━━
+
+Button.
+
+🗑 Ya Reset
+
+❌ Batal
+
+Jika Ya.
+
+Bot menghapus panel Database.
+
+Menghapus konfigurasi Setup.
+
+Status kembali.
+
+🔴 Belum Setup
+
+Saat menjalankan /setup lagi.
+
+Bot kembali ke Wizard Setup seperti pertama kali.
+
+==================================================
+CONSOLE
+==================================================
+
+Semua aktivitas dikirim ke Console.
+
+🟢 Setup Database
+
+📝 Edit Setup
+
+🔄 Repair Panel
+
+🗑 Reset Setup
+
+☁️ GitHub Connected
+
+💾 Backup
+
+📥 Restore
+
+❌ Error
+
+==================================================
+PERBAIKAN BUG
+==================================================
+
+Pastikan.
+
+- Semua Button memiliki handler.
+- Semua customId unik.
+- Tidak ada "This interaction failed".
+- Gunakan Edit Message untuk Panel.
+- Console selalu mengirim pesan baru.
+- Jangan menghapus fitur lama.
+- Kompatibel dengan sistem bot yang sudah ada.

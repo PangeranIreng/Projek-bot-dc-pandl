@@ -1,0 +1,398 @@
+Baca seluruh project terlebih dahulu sebelum mengubah apa pun.
+
+WAJIB membaca semua file yang berhubungan dengan:
+
+- BoomBox
+- Downloader
+- ytmp3
+- TikTok
+- Spotify
+- Queue
+- Database
+- Cache
+- Logs
+- API
+- Utils
+- Setup
+- Config
+- yt-dlp
+- FFmpeg
+
+Jangan langsung coding.
+
+Analisa seluruh alur BoomBox terlebih dahulu.
+
+========================================================
+
+ATURAN
+
+========================================================
+
+JANGAN MENGUBAH FITUR YANG SUDAH ADA.
+
+JANGAN MERUSAK:
+
+• AI
+• Ticket
+• Keylogger Scanner
+• Premium
+• Database lama
+• Help
+• Setup
+• Permission
+• Lua Tools
+• Panel lain
+
+BoomBox harus tetap memiliki fitur yang sama.
+
+Hanya tingkatkan kestabilan sistem.
+
+========================================================
+
+TARGET
+
+========================================================
+
+BoomBox harus dapat digunakan setiap hari.
+
+Harus stabil.
+
+Harus tahan jika dipakai banyak user.
+
+Harus dapat memproses:
+
+✅ YouTube
+
+✅ YouTube Music
+
+✅ YouTube Shorts
+
+✅ TikTok
+
+✅ Spotify
+
+========================================================
+
+DOWNLOADER
+
+========================================================
+
+Jangan hanya menggunakan satu downloader.
+
+Buat sistem Multi Provider.
+
+Contoh:
+
+Provider 1
+
+yt-dlp
+
+↓
+
+Jika gagal
+
+↓
+
+Provider 2
+
+Downloader API
+
+↓
+
+Jika gagal
+
+↓
+
+Provider 3
+
+Downloader API Cadangan
+
+↓
+
+Jika gagal
+
+↓
+
+Provider 4
+
+Cadangan terakhir
+
+Bot otomatis memilih provider yang masih hidup.
+
+========================================================
+
+HEALTH CHECK
+
+========================================================
+
+Bot harus memiliki Health Checker.
+
+Cek otomatis setiap beberapa menit.
+
+Status:
+
+YouTube
+
+TikTok
+
+Spotify
+
+Provider 1
+
+Provider 2
+
+Provider 3
+
+Jika salah satu gagal berkali-kali.
+
+Jangan digunakan sementara.
+
+Gunakan provider lain.
+
+========================================================
+
+AUTO FALLBACK
+
+========================================================
+
+Jika Provider A gagal.
+
+Jangan langsung gagal.
+
+Bot otomatis mencoba Provider berikutnya.
+
+Sampai berhasil.
+
+Jika semua gagal.
+
+Baru kirim error ke user.
+
+========================================================
+
+YT-DLP
+
+========================================================
+
+Pastikan konfigurasi yt-dlp kompatibel.
+
+Perbaiki parameter yang menyebabkan:
+
+invalid http retry sleep expression
+
+Pastikan selalu kompatibel dengan versi yt-dlp yang digunakan.
+
+Tambahkan pengecekan versi.
+
+Jika memungkinkan gunakan konfigurasi terbaru yang stabil.
+
+========================================================
+
+YOUTUBE
+
+========================================================
+
+Tangani Anti Bot Detection.
+
+Gunakan metode yang lebih stabil.
+
+Gunakan cookies bila tersedia.
+
+Jika cookies tidak tersedia tetap gunakan metode terbaik yang memungkinkan.
+
+Jika YouTube gagal.
+
+Jangan membuat BoomBox berhenti.
+
+Langsung pindah provider.
+
+========================================================
+
+SPOTIFY
+
+========================================================
+
+Spotify tetap berjalan normal.
+
+Jika Spotify membutuhkan pencarian YouTube.
+
+Gunakan provider YouTube yang masih aktif.
+
+Jangan bergantung pada satu metode.
+
+========================================================
+
+TIKTOK
+
+========================================================
+
+Pastikan TikTok berjalan normal.
+
+Perbaiki seluruh konfigurasi downloader.
+
+Pastikan kompatibel dengan yt-dlp terbaru.
+
+========================================================
+
+QUEUE
+
+========================================================
+
+Tambahkan Queue.
+
+Jika banyak user menggunakan BoomBox bersamaan.
+
+Semua masuk antrean.
+
+Tidak boleh saling bentrok.
+
+========================================================
+
+CACHE
+
+========================================================
+
+Jika URL sudah pernah diproses.
+
+Gunakan cache.
+
+Tidak perlu download ulang.
+
+Cache otomatis dibersihkan sesuai waktu yang ditentukan.
+
+========================================================
+
+RATE LIMIT
+
+========================================================
+
+Jangan spam API.
+
+Tambahkan retry yang aman.
+
+Retry maksimal beberapa kali.
+
+Jika tetap gagal.
+
+Gunakan provider berikutnya.
+
+========================================================
+
+LOGS
+
+========================================================
+
+Tambahkan informasi:
+
+Provider yang digunakan.
+
+Durasi download.
+
+Durasi convert.
+
+Durasi upload.
+
+Total waktu.
+
+Jika terjadi error.
+
+Simpan detail lengkap ke Error Logs.
+
+User hanya melihat pesan sederhana.
+
+========================================================
+
+DATABASE
+
+========================================================
+
+Tambahkan jika belum ada:
+
+BoomBox Cache
+
+BoomBox Queue
+
+BoomBox Provider Status
+
+BoomBox Statistics
+
+Semua harus tetap tersimpan setelah restart.
+
+========================================================
+
+MONITORING
+
+========================================================
+
+Tambahkan status internal.
+
+Provider Online
+
+Provider Offline
+
+Queue
+
+Cache
+
+Jumlah convert
+
+Success
+
+Failed
+
+========================================================
+
+ERROR HANDLING
+
+========================================================
+
+Jangan sampai BoomBox crash.
+
+Jika satu provider gagal.
+
+Gunakan provider lain.
+
+Jika satu platform gagal.
+
+Platform lain tetap berjalan.
+
+========================================================
+
+OPTIMASI
+
+========================================================
+
+Kurangi penggunaan RAM.
+
+Kurangi penggunaan CPU.
+
+Kurangi request yang tidak perlu.
+
+Gunakan async.
+
+Gunakan timeout.
+
+Gunakan cleanup otomatis.
+
+========================================================
+
+CHECK
+
+========================================================
+
+Setelah selesai:
+
+Periksa seluruh syntax.
+
+Pastikan tidak ada duplicate handler.
+
+Pastikan tidak ada import rusak.
+
+Pastikan tidak ada memory leak.
+
+Pastikan BoomBox dapat digunakan banyak user secara bersamaan.
+
+Pastikan YouTube, TikTok, dan Spotify tetap berjalan normal.
+
+Jangan mengubah fitur lain di dalam project.
+
+Jika ada perubahan yang berpotensi merusak fitur lama, batalkan perubahan tersebut dan gunakan pendekatan lain yang lebih aman.

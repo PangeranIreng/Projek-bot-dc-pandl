@@ -1,0 +1,529 @@
+Lakukan AUDIT TOTAL, REFACTOR, CLEANUP, BUG FIX, dan STABILIZATION terhadap PROJECT YANG ADA DI FILE ZIP YANG SAYA KIRIM.
+
+⚠️ PENTING
+
+FILE ZIP YANG SAYA KIRIM ADALAH ACUAN UTAMA.
+
+JANGAN membuat asumsi.
+
+JANGAN membuat struktur berdasarkan project lain.
+
+JANGAN membuat command baru.
+
+JANGAN membuat fitur baru.
+
+JANGAN menambahkan sistem baru.
+
+JANGAN menghapus fitur yang sudah ada.
+
+JANGAN mengubah logika fitur kecuali memang diperlukan untuk memperbaiki bug.
+
+SEMUA keputusan harus berdasarkan isi file ZIP yang saya kirim.
+
+Jika menemukan struktur yang berantakan, rapikan.
+
+Jika menemukan bug, perbaiki.
+
+Jika menemukan file tidak berguna, hapus.
+
+Jika menemukan command mati, rapikan.
+
+Jika menemukan import rusak, perbaiki.
+
+Jika menemukan dependency tidak dipakai, hapus.
+
+Fokus hanya pada project ini.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# LANGKAH PERTAMA
+
+BACA DAN ANALISIS SELURUH FILE ZIP YANG SAYA KIRIM.
+
+Jangan hanya membaca sebagian.
+
+Jangan hanya membaca file utama.
+
+Jangan hanya membaca command.
+
+Jangan hanya membaca package.json.
+
+Baca seluruh project.
+
+Audit seluruh source code.
+
+Pastikan seluruh folder diperiksa.
+
+Pastikan seluruh file diperiksa.
+
+Pastikan tidak ada file yang dilewati.
+
+Setelah selesai membaca seluruh project baru mulai melakukan perubahan.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# AUDIT PROJECT
+
+Lakukan inventaris seluruh project.
+
+Cari:
+
+Semua fitur
+
+Semua command
+
+Semua event
+
+Semua handler
+
+Semua database
+
+Semua config
+
+Semua util
+
+Semua module
+
+Semua service
+
+Semua scheduler
+
+Semua queue
+
+Semua logger
+
+Semua assets
+
+Semua dependency
+
+Jangan ada yang terlewat.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# REFACTOR
+
+Rapikan project.
+
+Jangan ubah logika.
+
+Hanya rapikan.
+
+Project harus mudah dipahami.
+
+Project harus terlihat profesional.
+
+Project harus seperti project yang dibuat developer berpengalaman.
+
+Semua file dipindahkan ke folder yang sesuai.
+
+Jika ada file dipindahkan.
+
+Update seluruh import.
+
+Update seluruh export.
+
+Update seluruh path.
+
+Update seluruh handler.
+
+Update seluruh registration.
+
+Pastikan tidak ada referensi yang rusak.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# STRUKTUR
+
+Gunakan struktur berdasarkan isi project.
+
+Jangan membuat folder yang tidak diperlukan.
+
+Semua fitur dipisahkan berdasarkan fungsi.
+
+BoomBox berada dalam satu folder.
+
+Scanner berada dalam satu folder.
+
+Monitoring berada dalam satu folder.
+
+Dashboard berada dalam satu folder.
+
+Premium berada dalam satu folder.
+
+Help berada dalam satu folder.
+
+Ticket berada dalam satu folder.
+
+Config berada dalam satu folder.
+
+Database berada dalam satu folder.
+
+Utils berada dalam satu folder.
+
+Jangan mencampur file.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# CLEANUP
+
+Cari:
+
+Backup
+
+Dummy
+
+Mock
+
+Cache
+
+Test
+
+Temporary
+
+Duplicate File
+
+Duplicate Code
+
+Unused Import
+
+Unused Variable
+
+Unused Function
+
+Unused Module
+
+Unused Dependency
+
+Folder Kosong
+
+Script Lama
+
+Jika benar-benar tidak digunakan.
+
+Hapus.
+
+Jangan menghapus file yang masih digunakan.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# COMMAND
+
+Cari seluruh command yang BENAR-BENAR ADA di project.
+
+Jangan membuat command baru.
+
+Jangan menghapus command.
+
+Rapikan.
+
+Pastikan:
+
+Permission benar.
+
+Kategori benar.
+
+Folder benar.
+
+Handler benar.
+
+Registration benar.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# HELP
+
+Periksa command /help.
+
+Saat ini masih berantakan.
+
+Rapikan.
+
+Pastikan:
+
+Semua command yang ada di project muncul.
+
+Tidak ada command palsu.
+
+Tidak ada command hilang.
+
+Tidak ada command salah kategori.
+
+Deskripsi diperbaiki.
+
+Tampilan dirapikan.
+
+Kategori dibuat berdasarkan command yang benar-benar ada.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# BOOMBOX
+
+Cari akar penyebab BoomBox macet.
+
+Jangan hanya patch.
+
+Cari penyebab sebenarnya.
+
+Periksa:
+
+Downloader
+
+Converter
+
+yt-dlp
+
+Queue
+
+Promise
+
+Timeout
+
+Retry
+
+Cleanup
+
+Child Process
+
+Memory Leak
+
+Perbaiki sampai benar-benar stabil.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# MONITORING
+
+Monitoring tidak boleh duplicate.
+
+Saat bot restart.
+
+Jangan membuat dashboard baru.
+
+Bot harus:
+
+Load Database
+
+↓
+
+Cari Dashboard lama
+
+↓
+
+Jika ada
+
+↓
+
+EDIT Dashboard lama
+
+↓
+
+Selesai.
+
+Jika Dashboard memang sudah dihapus owner.
+
+Baru buat Dashboard baru.
+
+Simpan:
+
+Channel ID
+
+Message ID
+
+Status
+
+Semuanya ke Database.
+
+Restart bot.
+
+↓
+
+Monitoring tetap sama.
+
+↓
+
+Bot hanya UPDATE.
+
+Tidak duplicate.
+
+Tidak perlu command tambahan hanya untuk update.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# DATABASE
+
+Audit seluruh database.
+
+Pastikan seluruh setting tersimpan.
+
+Misalnya:
+
+Owner ID
+
+Developer ID
+
+Role ID
+
+Channel ID
+
+BoomBox
+
+Scanner
+
+Monitoring
+
+Dashboard
+
+Premium
+
+Queue
+
+Ticket
+
+Setup
+
+DLL
+
+Restart bot.
+
+↓
+
+Load Database.
+
+↓
+
+Semua kembali otomatis.
+
+Tidak perlu setup ulang.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# PERFORMANCE
+
+Optimasi project.
+
+Hilangkan:
+
+Memory Leak
+
+Promise Leak
+
+Duplicate Listener
+
+Duplicate Event
+
+Duplicate Scheduler
+
+Unused Interval
+
+Unused Timeout
+
+Race Condition
+
+Kurangi penggunaan RAM.
+
+Kurangi penggunaan CPU.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# PTERODACTYL
+
+Rapikan project agar benar-benar cocok dijalankan di Panel Pterodactyl.
+
+Startup cukup:
+
+npm install
+
+npm start
+
+Entry Point hanya satu.
+
+Tidak perlu menjalankan file lain.
+
+Jika struktur berubah.
+
+Pastikan seluruh project ikut diperbarui.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# TESTING
+
+Sebelum selesai.
+
+Tes seluruh project.
+
+Tes:
+
+Semua command
+
+Semua fitur
+
+BoomBox
+
+Scanner
+
+Monitoring
+
+Dashboard
+
+Premium
+
+Ticket
+
+Help
+
+Database
+
+Queue
+
+Startup
+
+Restart
+
+Error Logs
+
+Pastikan semuanya berjalan normal.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# TARGET AKHIR
+
+Saya TIDAK meminta fitur baru.
+
+Saya ingin project yang ADA DI FILE ZIP INI menjadi:
+
+✔ Bersih
+
+✔ Stabil
+
+✔ Tidak bug
+
+✔ Tidak error
+
+✔ Tidak duplicate
+
+✔ Tidak ada file sampah
+
+✔ Mudah dipahami
+
+✔ Mudah dikembangkan
+
+✔ Struktur profesional
+
+✔ Semua file berada di folder yang benar
+
+✔ Semua command tetap berjalan
+
+✔ Semua fitur lama tetap berjalan
+
+✔ Monitoring tidak duplicate
+
+✔ Dashboard otomatis update menggunakan data database
+
+✔ Semua setting tersimpan di database
+
+✔ Siap dijalankan di Panel Pterodactyl
+
+Jika menemukan bug lain walaupun tidak saya sebutkan.
+
+WAJIB diperbaiki.
+
+Jangan berhenti sampai seluruh isi FILE ZIP yang saya kirim benar-benar selesai diaudit, dirapikan, dibersihkan, diperbaiki, dan dipastikan stabil.

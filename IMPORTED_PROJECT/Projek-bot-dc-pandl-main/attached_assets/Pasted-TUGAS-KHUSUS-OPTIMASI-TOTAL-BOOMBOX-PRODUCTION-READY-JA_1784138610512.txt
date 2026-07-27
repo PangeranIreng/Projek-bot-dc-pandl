@@ -1,0 +1,609 @@
+TUGAS KHUSUS — OPTIMASI TOTAL BOOMBOX (PRODUCTION READY)
+
+JANGAN MENAMBAH FITUR BARU.
+
+JANGAN MENGUBAH COMMAND.
+
+JANGAN MENGUBAH SCANNER.
+
+JANGAN MENGUBAH PREMIUM.
+
+JANGAN MENGUBAH TICKET.
+
+JANGAN MENGUBAH DATABASE.
+
+JANGAN MENGUBAH STRUKTUR PROJECT.
+
+JANGAN MENGUBAH STARTUP PROJECT.
+
+FOKUS HANYA PADA BOOMBOX.
+
+=========================================================
+AUDIT TERLEBIH DAHULU
+=========================================================
+
+Sebelum menulis kode:
+
+Audit seluruh source BoomBox.
+
+Baca seluruh file yang berhubungan dengan:
+
+BoomBox
+
+Queue
+
+yt-dlp
+
+Downloader
+
+Provider
+
+Fallback
+
+Retry
+
+Timeout
+
+Monitoring
+
+Logs
+
+Worker
+
+Async
+
+Promise
+
+Scheduler
+
+HTTP Request
+
+Analytzy
+
+Kaizen API
+
+ytdl-core
+
+JANGAN langsung mengubah kode.
+
+Cari seluruh bottleneck.
+
+Cari seluruh penyebab BoomBox lambat.
+
+Cari seluruh penyebab BoomBox gagal.
+
+Cari seluruh penyebab BoomBox stuck.
+
+=========================================================
+TARGET
+=========================================================
+
+BoomBox HARUS:
+
+✔ cepat
+
+✔ stabil
+
+✔ tidak stuck
+
+✔ tidak loading lama
+
+✔ tetap bisa dipakai banyak user
+
+✔ tetap berjalan walaupun Scanner sedang scan
+
+✔ tetap berjalan walaupun provider utama mati
+
+=========================================================
+KECEPATAN
+=========================================================
+
+Saya TIDAK membutuhkan animasi yang lama.
+
+Saya TIDAK membutuhkan progress yang berlebihan.
+
+Percepat seluruh proses.
+
+Target waktu:
+
+5–10 detik jika provider berhasil.
+
+Maksimal 15 detik jika harus fallback.
+
+Jangan membuat user menunggu lama.
+
+=========================================================
+EMBED
+=========================================================
+
+Jangan spam edit message.
+
+Cukup:
+
+Processing...
+
+↓
+
+Downloading...
+
+↓
+
+Finished
+
+atau
+
+Failed
+
+Jangan membuat animasi progress yang memperlambat proses.
+
+=========================================================
+PROVIDER
+=========================================================
+
+Gunakan sistem Multi Provider.
+
+Urutan:
+
+1. Analytzy
+
+↓
+
+2. yt-dlp Local
+
+↓
+
+3. ytdl-core
+
+↓
+
+4. Kaizen API
+
+(gunakan logic dari file YouTube Downloader.js yang sudah saya berikan)
+
+↓
+
+5. Backup Provider 2
+
+↓
+
+6. Backup Provider 3
+
+↓
+
+7. Backup Provider 4
+
+↓
+
+8. Backup Provider 5
+
+JANGAN berhenti di provider pertama.
+
+JANGAN berhenti di provider kedua.
+
+Baru kirim BoomBox Failed jika seluruh provider gagal.
+
+=========================================================
+KAIZEN API
+=========================================================
+
+Integrasikan Kaizen API sebagai FALLBACK.
+
+JANGAN mengganti sistem BoomBox.
+
+JANGAN copy-paste command.
+
+Ambil hanya logic downloader.
+
+Sesuaikan dengan arsitektur project sekarang.
+
+Gunakan API Key / endpoint yang sudah ada pada file "YouTube Downloader.js" yang saya berikan.
+
+Jika Kaizen berhasil:
+
+langsung lanjut proses BoomBox.
+
+Jika gagal:
+
+langsung provider berikutnya.
+
+=========================================================
+ANTI BOT
+=========================================================
+
+Jika provider mengembalikan:
+
+Anti Bot
+
+Verify Human
+
+Captcha
+
+Cloudflare
+
+403
+
+429
+
+Age Restricted
+
+Sign In Required
+
+JANGAN retry provider tersebut.
+
+Langsung pindah provider berikutnya.
+
+=========================================================
+HEALTH CHECK
+=========================================================
+
+Jika provider gagal 5x berturut turut:
+
+Status OFFLINE.
+
+Skip provider tersebut.
+
+Coba lagi otomatis setelah 10 menit.
+
+=========================================================
+TIMEOUT
+=========================================================
+
+Timeout setiap provider:
+
+5–8 detik.
+
+Jangan 30 detik.
+
+Jangan membuat user menunggu.
+
+=========================================================
+QUEUE
+=========================================================
+
+Queue harus stabil.
+
+Apapun hasilnya:
+
+SUCCESS
+
+FAILED
+
+TIMEOUT
+
+CANCEL
+
+Slot Queue WAJIB dilepas.
+
+Tidak boleh Queue Lock.
+
+Tidak boleh Queue Stuck.
+
+=========================================================
+YT-DLP
+=========================================================
+
+Jangan download binary setiap request.
+
+Binary dicek sekali saat startup.
+
+Jika binary tidak ada:
+
+langsung OFFLINE.
+
+lanjut provider berikutnya.
+
+=========================================================
+CACHE
+=========================================================
+
+Cache Video Info.
+
+Jika URL sama diproses beberapa kali dalam beberapa menit:
+
+gunakan cache.
+
+Jangan request ulang.
+
+=========================================================
+ASYNC
+=========================================================
+
+Audit seluruh:
+
+Promise
+
+await
+
+async
+
+Worker
+
+Scheduler
+
+Pastikan:
+
+tidak ada Promise menggantung.
+
+tidak ada Worker menggantung.
+
+tidak ada Memory Leak.
+
+=========================================================
+ERROR LOG
+=========================================================
+
+Semua perpindahan provider WAJIB dicatat.
+
+Contoh:
+
+BoomBox
+
+Provider:
+
+Analytzy
+
+Status:
+
+FAILED
+
+Reason:
+
+Anti Bot Detection
+
+Action:
+
+Switch → yt-dlp
+
+--------------------------------------------------
+
+Provider:
+
+yt-dlp
+
+Status:
+
+FAILED
+
+Reason:
+
+403
+
+Action:
+
+Switch → Kaizen API
+
+--------------------------------------------------
+
+Provider:
+
+Kaizen API
+
+Status:
+
+SUCCESS
+
+Fallback:
+
+YES
+
+=========================================================
+MONITORING
+=========================================================
+
+Monitoring cukup menampilkan:
+
+Provider Aktif
+
+Provider Offline
+
+Recovery
+
+Retry
+
+Timeout
+
+Jangan spam.
+
+=========================================================
+PERFORMANCE
+=========================================================
+
+Lakukan optimasi.
+
+Hilangkan delay yang tidak perlu.
+
+Gunakan AbortController atau Promise.race() untuk request yang macet.
+
+Retry maksimal 1x.
+
+Jangan retry provider Anti Bot.
+
+=========================================================
+TEST
+=========================================================
+
+Lakukan test:
+
+1 request.
+
+5 request.
+
+20 request bersamaan.
+
+Scanner berjalan bersamaan.
+
+Monitoring berjalan.
+
+Premium berjalan.
+
+Pastikan:
+
+BoomBox tetap responsif.
+
+=========================================================
+VERIFIKASI
+=========================================================
+
+Konfirmasi:
+
+✓ Tidak ada BoomBox stuck.
+
+✓ Tidak ada Queue macet.
+
+✓ Tidak ada Embed loading selamanya.
+
+✓ Tidak ada Promise menggantung.
+
+✓ Tidak ada Worker menggantung.
+
+✓ Kaizen API berhasil menjadi fallback.
+
+✓ Analytzy tetap provider utama.
+
+✓ yt-dlp tetap digunakan jika tersedia.
+
+✓ Fallback berjalan otomatis.
+
+✓ Error Log lengkap.
+
+✓ Replit tetap berjalan.
+
+✓ GitHub tetap berjalan.
+
+✓ Panel Pedro tetap berjalan.
+
+✓ Pterodactyl tetap berjalan.
+
+=========================================================
+LAPORAN
+=========================================================
+
+Setelah selesai WAJIB memberikan laporan:
+
+1. Root Cause.
+
+2. Semua bug yang ditemukan.
+
+3. Semua file yang diubah.
+
+4. Semua provider yang digunakan.
+
+5. Fallback yang diterapkan.
+
+6. Health Check.
+
+7. Timeout.
+
+8. Retry.
+
+9. Queue.
+
+10. Optimasi yang dilakukan.
+
+11. Hasil pengujian.
+
+12. Konfirmasi BoomBox siap digunakan untuk publik.
+
+JANGAN berhenti sebelum seluruh poin selesai diverifikasi dengan pengujian runtime, bukan hanya analisis statis.
+
+=========================================================
+PENTING - FILE YANG SAYA UPLOAD
+=========================================================
+
+Saya juga mengunggah file:
+
+YouTube Downloader.js
+
+WAJIB dibaca seluruh isinya terlebih dahulu.
+
+JANGAN langsung copy-paste.
+
+JANGAN mengganti sistem BoomBox yang sudah ada.
+
+Lakukan audit terlebih dahulu.
+
+Cari bagian yang berguna seperti:
+
+- Logic downloader
+- Logic request API
+- Logic fallback
+- Logic retry
+- Logic timeout
+- Logic provider
+- Logic parsing response
+- Logic validasi URL
+- Logic download audio
+
+Setelah audit selesai:
+
+Integrasikan hanya bagian yang memang lebih baik ke sistem BoomBox yang sudah ada.
+
+JANGAN menghapus sistem lama.
+
+JANGAN merusak struktur project.
+
+JANGAN mengubah command.
+
+JANGAN mengubah Scanner.
+
+JANGAN mengubah Monitoring.
+
+JANGAN mengubah Premium.
+
+JANGAN mengubah Ticket.
+
+=========================================================
+INTEGRASI
+=========================================================
+
+Gunakan file tersebut sebagai REFERENSI dan BACKUP PROVIDER.
+
+Bukan sebagai pengganti seluruh BoomBox.
+
+Jika logic pada file tersebut lebih stabil:
+
+Gabungkan ke sistem sekarang.
+
+Jika ada API Key, endpoint, atau request yang lebih baik:
+
+Gunakan sebagai provider fallback.
+
+Jika ada bagian yang kurang bagus:
+
+Jangan dipakai.
+
+=========================================================
+TARGET
+=========================================================
+
+Hasil akhir HARUS:
+
+✔ Struktur project tetap sama.
+
+✔ Tetap kompatibel dengan Replit.
+
+✔ Tetap kompatibel dengan GitHub.
+
+✔ Tetap kompatibel dengan Panel Pedro/Pterodactyl.
+
+✔ BoomBox lebih cepat.
+
+✔ BoomBox lebih stabil.
+
+✔ Tidak ada Queue Stuck.
+
+✔ Tidak ada Embed Loading selamanya.
+
+✔ Tidak ada BoomBox Failed sebelum seluruh provider dicoba.
+
+=========================================================
+LAPORAN
+=========================================================
+
+Di akhir pekerjaan WAJIB melaporkan:
+
+- Bagian apa saja yang diambil dari file YouTube Downloader.js.
+- Bagian apa saja yang tidak digunakan beserta alasannya.
+- File mana saja yang diubah.
+- Alasan setiap perubahan.
+- Hasil pengujian runtime setelah integrasi.

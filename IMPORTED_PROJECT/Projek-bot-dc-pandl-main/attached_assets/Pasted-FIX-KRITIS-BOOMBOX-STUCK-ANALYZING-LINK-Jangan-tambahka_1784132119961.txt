@@ -1,0 +1,85 @@
+FIX KRITIS - BOOMBOX STUCK "ANALYZING LINK"
+
+Jangan tambahkan fitur baru.
+Jangan ubah command.
+Jangan ubah UI.
+Fokus hanya memperbaiki penyebab BoomBox macet.
+
+Masalah saat ini:
+
+- Embed berhenti di "Processing BoomBox... / Analyzing Link..."
+- Error Log menunjukkan:
+  yt-dlp binary download timed out (>30s idle)
+- Setelah timeout, BoomBox tidak selesai.
+- Queue tidak dilepas.
+- Message progress tidak di-edit menjadi gagal atau berhasil.
+
+PERBAIKI:
+
+1. Jangan download yt-dlp binary setiap request.
+   - Download hanya sekali saat startup.
+   - Cache binary.
+   - Jika sudah ada, gunakan langsung.
+
+2. Jika download binary gagal:
+   - Tandai yt-dlp OFFLINE.
+   - Langsung pindah ke provider berikutnya.
+   - Jangan berhenti.
+
+3. Jika Analytzy gagal:
+   - Jangan return.
+   - Jangan throw yang menghentikan pipeline.
+   - Langsung fallback ke provider berikutnya.
+
+4. Semua provider WAJIB dibungkus try/catch/finally.
+
+5. Pastikan apa pun hasilnya:
+   - SUCCESS
+   - FAILED
+   - TIMEOUT
+   - CANCEL
+   Queue selalu dilepas.
+
+6. Progress Embed TIDAK BOLEH selamanya "Analyzing Link...".
+   Setelah semua provider gagal:
+   - Edit embed menjadi FAILED.
+   - Sertakan alasan.
+   - Jangan dibiarkan loading.
+
+7. Cari seluruh lokasi yang memakai:
+   - return
+   - throw
+   - await
+   - Promise
+   yang dapat menghentikan fallback.
+   Perbaiki agar pipeline selalu lanjut ke provider berikutnya.
+
+8. Jika provider timeout:
+   - Jangan hentikan BoomBox.
+   - Lanjut provider berikutnya maksimal dalam beberapa detik.
+
+9. Audit file:
+   - ytmp3gg.js
+   - downloader
+   - queue
+   - worker
+   - provider manager
+   - fallback manager
+
+10. Setelah selesai jalankan pengujian:
+    - Analytzy OFFLINE
+    - yt-dlp OFFLINE
+    - Backup API berhasil
+    - 20 request bersamaan
+    - Scanner berjalan bersamaan
+
+Pastikan hasilnya:
+✓ Tidak ada embed yang macet di "Analyzing Link..."
+✓ Queue selalu selesai.
+✓ Semua provider gagal → embed berubah menjadi FAILED.
+✓ Salah satu provider berhasil → embed berubah menjadi SUCCESS.
+✓ Tidak ada Promise menggantung.
+✓ Tidak ada Queue Lock.
+✓ Tidak ada BoomBox Stuck.
+
+Berikan laporan file yang diubah dan penyebab utama bug.

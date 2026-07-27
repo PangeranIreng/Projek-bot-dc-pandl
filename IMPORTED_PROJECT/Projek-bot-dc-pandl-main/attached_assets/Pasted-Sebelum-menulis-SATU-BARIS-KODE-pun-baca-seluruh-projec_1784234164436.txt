@@ -1,0 +1,201 @@
+Sebelum menulis SATU BARIS KODE pun, baca seluruh project terlebih dahulu.
+Jangan menghapus fitur yang sudah bekerja.
+Jangan membuat implementasi sendiri.
+Ikuti seluruh konsep berikut 100%.
+TARGET
+BoomBox akan dirombak menjadi BoomBox V2.
+Tetapi engine lama harus tetap dipakai.
+Artinya:
+yt-dlp
+ffmpeg
+upload Top4Top
+premium
+limit
+downloader
+cache
+database
+tetap dipakai.
+Yang dirubah hanyalah struktur dan UI.
+1. Setup BoomBox
+Hapus sistem setup BoomBox lama.
+Ganti menjadi SATU command:
+/setupboombox
+Panel utama harus berisi:
+📺 Setup Channel
+
+📋 Setup BoomBox Logs
+
+⏱️ Batas Durasi
+
+🛠️ Maintenance
+Tidak boleh membuat command setup lain.
+Semua konfigurasi BoomBox harus melalui panel ini.
+2. Setup Channel
+Support:
+YouTube
+
+TikTok
+
+Spotify
+Owner memilih platform.
+Lalu memilih channel Discord.
+Semua channel disimpan ke database.
+Tidak boleh hardcode Channel ID.
+3. Setup BoomBox Logs
+BoomBox Logs hanya menggunakan SATU channel.
+Misalnya:
+#boombox-logs
+Bukan tiga channel.
+Semua logs dikirim ke channel tersebut.
+Tetapi di dalam panel Logs dipisahkan menjadi:
+📺 Logs BoomBox YouTube
+
+🎵 Logs BoomBox TikTok
+
+🎧 Logs BoomBox Spotify
+4. BoomBox Logs
+JANGAN HAPUS fitur BoomBox Logs lama.
+Yang diubah hanyalah UI dan struktur.
+Semua log YouTube lama harus tetap ada.
+Semua log lama dipindahkan menjadi:
+Logs BoomBox YouTube
+TikTok dan Spotify mulai kosong.
+5. Tampilan BoomBox Logs
+Saat membuka BoomBox Logs.
+Pertama tampil:
+Pilih Platform
+
+📺 YouTube
+
+🎵 TikTok
+
+🎧 Spotify
+Setelah memilih platform.
+Tampilkan maksimal:
+5 log
+per halaman.
+Di bawah embed harus ada:
+Buttons
+First
+
+Prev
+
+Refresh
+
+Next
+
+Last
+Lalu Dropdown
+Pilih Halaman
+Lalu Dropdown
+Ganti Platform
+Jangan menghapus tombol lama.
+Rapikan saja.
+6. Penyimpanan Logs
+Saat user berhasil convert.
+Bot tetap membalas URL BoomBox ke user.
+Setelah itu.
+Bot otomatis menyimpan:
+Platform
+Judul
+URL BoomBox
+Tanggal
+Jam
+ke BoomBox Logs.
+YouTube masuk ke:
+Logs BoomBox YouTube
+TikTok masuk ke:
+Logs BoomBox TikTok
+Spotify masuk ke:
+Logs BoomBox Spotify
+BoomBox Logs berfungsi sebagai arsip URL.
+Bukan hanya history.
+7. Batas Durasi
+Jangan hardcode role.
+Bot harus membaca semua Role Discord secara otomatis.
+Semua role server harus muncul.
+Jika server membuat role baru.
+Bot otomatis mendeteksi.
+Owner tinggal memilih role.
+Lalu mengatur durasi maksimal.
+Durasi disimpan ke database.
+8. Maintenance
+Maintenance harus berada di:
+/setupboombox
+Support:
+YouTube
+
+TikTok
+
+Spotify
+
+Semua Platform
+Pesan saat maintenance:
+🚧 BoomBox sedang maintenance.
+
+Silakan coba lagi beberapa saat lagi.
+Jika maintenance hanya YouTube.
+TikTok dan Spotify tetap berjalan.
+9. Database
+Jangan menghapus database lama.
+Migrasikan.
+Gunakan database lama semaksimal mungkin.
+Tambahkan field bila diperlukan.
+10. Cache
+Jangan membuat command:
+/bbcache
+BoomBox Cache harus dipindahkan ke:
+Database
+
+↓
+
+Cleaner
+Cleaner hanya boleh menghapus:
+temporary files
+metadata cache
+upload cache
+download cache
+junk files
+Tidak boleh menghapus:
+Premium
+Limit
+Setup BoomBox
+Logs
+Database penting
+URL BoomBox
+11. Struktur
+Rapikan seluruh struktur BoomBox.
+Pisahkan:
+UI
+Database
+Downloader
+Upload
+Logs
+Cache
+Config
+Hilangkan kode mati.
+Hilangkan duplikasi.
+Tetap gunakan engine lama.
+12. Kompatibilitas
+Harus berjalan normal di:
+Pterodactyl
+Railway
+Replit
+VPS Linux
+13. Performa
+Optimalkan:
+download audio
+upload Top4Top
+cache
+memory
+Tanpa merusak fitur lama.
+PENTING
+Sebelum mengubah file apa pun:
+Audit seluruh project.
+Buat daftar file yang akan diubah.
+Jelaskan alasan perubahan setiap file.
+Jangan menulis kode sebelum audit selesai.
+Setelah implementasi selesai, lakukan pengecekan syntax, import, dan dependency.
+Pastikan tidak ada fitur lama yang rusak.
+Berikan laporan akhir berisi file yang diubah, fitur yang ditambahkan, fitur yang dimigrasikan, dan hasil pengujian.
+Jangan membuat fitur di luar spesifikasi di atas. Jangan menghapus fitur yang masih berfungsi. Prioritaskan migrasi dan perapian daripada menulis ulang dari nol.

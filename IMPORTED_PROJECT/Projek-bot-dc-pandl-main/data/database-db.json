@@ -1,0 +1,29 @@
+{
+  "guildId": "1462696202842931327",
+  "createdBy": "1462685321262272664",
+  "createdAt": "2026-07-16T10:09:12.404Z",
+  "categoryId": "1524813683325145139",
+  "categoryName": "❯ ❯ ❯────・📊 DATABASE・──────➤",
+  "channels": {
+    "botSetting": "1527249286402801705",
+    "backup": "1527249288449495050",
+    "console": "1527249290064302142",
+    "memberList": "1527249292195270696"
+  },
+  "messages": {
+    "botSetting": "1527255778501726309",
+    "backup": "1527255780343152641",
+    "memberList": "1527255783270780961"
+  },
+  "github": {
+    "repo": "PangeranIreng/Projek-bot-dc-pandl",
+    "branch": "main",
+    "token": "isi token github ",
+    "uploadMode": "release"
+  },
+  "autoBackup": true,
+  "autoClean": true,
+  "backupSchedule": "weekly",
+  "lastBackup": null,
+  "backupCount": 0
+}

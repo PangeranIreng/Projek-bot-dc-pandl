@@ -1,0 +1,423 @@
+Tambahkan sistem baru bernama "📊 DATABASE" tanpa mengubah fitur lama. Semua fitur lama harus tetap berjalan normal. Gunakan Discord.js v14, kode modular, rapi, mudah dikembangkan, dan semua tampilan menggunakan Bahasa Indonesia.
+
+==================================================
+📊 KATEGORI DATABASE
+==================================================
+
+Kategori Database berisi:
+
+⚙️・bot-setting
+📦・backup
+📄・console
+👥・member-list
+
+==================================================
+/SETUP
+==================================================
+
+Tambahkan command:
+
+/setup
+
+Saat dijalankan muncul menu admin (ephemeral).
+
+Pilihan:
+
+📊 Database
+❌ Tutup
+
+Jika memilih Database dan belum pernah setup:
+
+- Minta admin memilih channel:
+  • Bot Setting
+  • Backup
+  • Console
+  • Member List
+
+Setelah selesai tampilkan ringkasan lalu tombol:
+
+✅ Buat Panel
+✏️ Edit
+❌ Batal
+
+Jika memilih "Buat Panel", bot otomatis mengirim panel ke channel yang dipilih.
+
+Jika Database sudah pernah dibuat, jangan setup lagi.
+
+Tampilkan menu:
+
+📝 Edit Setup
+🔄 Buat Ulang Panel
+🗑 Hapus Panel
+❌ Tutup
+
+"Hapus Panel" hanya menghapus panel yang dibuat bot.
+
+JANGAN menghapus:
+- Channel Discord
+- Database
+- Backup GitHub
+- Riwayat Console
+
+==================================================
+⚙️ BOT SETTING
+==================================================
+
+Hanya ada SATU pesan.
+
+Selalu menggunakan Edit Message.
+
+Tampilkan:
+
+Bot
+Database
+GitHub
+Versi
+Uptime
+Auto Backup
+Auto Clean
+
+Button:
+
+⚙️ Edit
+🔄 Refresh
+
+==================================================
+📦 BACKUP
+==================================================
+
+Hanya ada SATU panel.
+
+Selalu Edit Message.
+
+Button:
+
+💾 Backup
+🔍 Smart Clean
+📊 Storage
+🔄 Refresh
+
+==================================================
+💾 BACKUP
+==================================================
+
+Saat Backup ditekan:
+
+Bot membuat backup ZIP.
+
+Backup harus bisa:
+
+✔ Download langsung dari Discord.
+
+✔ Upload ke GitHub.
+
+Backup berisi:
+
+- Database
+- Config
+- Settings
+- User Data
+- Premium Data
+- BoomBox
+- Scanner
+- AI Data
+- Plugin Data
+- Assets
+- Logs
+- Session
+- Custom Command
+- backup-info.json
+
+JANGAN backup:
+
+- node_modules
+- npm cache
+- cache sementara
+- temp
+- folder kosong
+- file sampah
+
+Backup selesai menampilkan tombol:
+
+📥 Download
+☁ Upload GitHub
+
+==================================================
+🔍 SMART CLEAN
+==================================================
+
+Saat ditekan bot memindai seluruh folder project.
+
+Periksa:
+
+- Cache
+- Temp
+- Logs
+- Backup
+- Upload
+- Download
+- Assets
+- Plugins
+- Database
+- Source
+- Folder kosong
+
+JANGAN langsung menghapus.
+
+Analisa dulu.
+
+==================================================
+HASIL SMART CLEAN
+==================================================
+
+Kelompokkan menjadi:
+
+🟢 Aman Dibersihkan
+
+🟡 Perlu Ditinjau
+
+🔴 File Penting
+
+Tampilkan total file dan total ukuran yang bisa dibersihkan.
+
+Button:
+
+📄 Detail
+
+🧹 Bersihkan
+
+🔄 Scan Ulang
+
+==================================================
+DETAIL
+==================================================
+
+Setiap file wajib memiliki alasan.
+
+Contoh:
+
+cache/
+Alasan:
+Cache lama.
+
+temp/
+Alasan:
+File sementara.
+
+logs/
+Alasan:
+Log lebih dari 30 hari.
+
+backup/
+Alasan:
+Backup lama.
+
+music.mp3
+
+Alasan:
+Tidak dipakai bot.
+Tidak ada di database.
+Tidak pernah diakses 90 hari.
+
+Rekomendasi:
+Periksa sebelum dihapus.
+
+config.json
+
+File sistem.
+Tidak boleh dihapus.
+
+==================================================
+BERSIHKAN
+==================================================
+
+Yang boleh dihapus:
+
+✔ Cache
+
+✔ Temp
+
+✔ Preview
+
+✔ Folder kosong
+
+✔ Backup lama
+
+✔ Log lama
+
+✔ ZIP Extract
+
+Yang TIDAK boleh dihapus:
+
+✖ Database
+
+✖ Config
+
+✖ .env
+
+✖ Source Code
+
+✖ node_modules
+
+✖ Assets
+
+✖ Plugin
+
+✖ File penting
+
+✖ File yang masih perlu ditinjau
+
+Sebelum menghapus wajib ada konfirmasi admin.
+
+==================================================
+STORAGE
+==================================================
+
+Tampilkan:
+
+Ukuran Database
+
+Ukuran Cache
+
+Ukuran Temp
+
+Ukuran Backup
+
+Ukuran Assets
+
+Ukuran Logs
+
+Total Storage
+
+Sisa Storage
+
+Gunakan Edit Message.
+
+==================================================
+CONSOLE
+==================================================
+
+Console TIDAK menggunakan Edit Message.
+
+Semua aktivitas dikirim sebagai pesan baru.
+
+Contoh:
+
+🟢 Bot Online
+
+💾 Backup berhasil
+
+☁ Backup berhasil diupload ke GitHub
+
+🔍 Smart Clean selesai
+
+🧹 Smart Clean berhasil
+
+⚠ File tidak digunakan ditemukan
+
+🔄 Database disimpan
+
+♻ Restore berhasil
+
+❌ Error
+
+Setiap log wajib berisi:
+
+Tanggal
+Jam
+Status
+Informasi
+
+==================================================
+MEMBER LIST
+==================================================
+
+Gunakan SATU panel.
+
+Selalu Edit Message.
+
+Tampilkan:
+
+Total Member
+Premium
+CEO
+Blacklist
+Member Aktif Hari Ini
+
+Button:
+
+👥 Lihat
+🔍 Cari
+📤 Export
+🔄 Refresh
+
+==================================================
+/HELP
+==================================================
+
+Tambahkan kategori baru:
+
+📊 Database
+
+Saat dipilih tampilkan penjelasan semua fitur Database beserta contoh penggunaan.
+
+Contoh:
+
+📊 Database
+
+/setup
+Membuat atau mengelola panel Database.
+
+Contoh:
+/setup
+
+━━━━━━━━━━━━━━
+
+💾 Backup
+
+Membuat backup ZIP.
+
+Bisa didownload dari Discord atau diupload ke GitHub.
+
+━━━━━━━━━━━━━━
+
+🔍 Smart Clean
+
+Menganalisa seluruh folder project.
+
+Tidak langsung menghapus.
+
+Memberikan rekomendasi file yang aman dibersihkan.
+
+━━━━━━━━━━━━━━
+
+📊 Storage
+
+Menampilkan penggunaan penyimpanan bot.
+
+━━━━━━━━━━━━━━
+
+📄 Console
+
+Menampilkan seluruh aktivitas bot.
+
+━━━━━━━━━━━━━━
+
+👥 Member List
+
+Menampilkan statistik pengguna bot.
+
+==================================================
+ATURAN
+==================================================
+
+- Jangan mengubah fitur lama.
+- Semua panel menggunakan Edit Message.
+- Hanya Console yang mengirim pesan baru.
+- Semua UI modern dan rapi.
+- Semua teks Bahasa Indonesia.
+- Gunakan Discord Embed, Button dan Select Menu.
+- Semua kode modular.
+- Tambahkan komentar pada setiap fungsi agar mudah dipahami.
+- Pastikan fitur kompatibel dengan sistem bot yang sudah ada.
+- Jangan menghapus atau merusak sistem yang sudah ada.

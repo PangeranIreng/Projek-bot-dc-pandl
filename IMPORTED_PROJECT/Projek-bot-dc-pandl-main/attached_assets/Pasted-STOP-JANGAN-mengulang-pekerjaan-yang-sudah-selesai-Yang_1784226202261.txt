@@ -1,0 +1,353 @@
+STOP.
+
+JANGAN mengulang pekerjaan yang sudah selesai.
+
+Yang SUDAH SELESAI dan TIDAK BOLEH DIUBAH lagi:
+
+✓ Environment Detection
+✓ Dynamic yt-dlp Binary
+✓ ffmpeg-static
+✓ Cookies Resolver
+✓ Railway Support
+✓ Replit Support
+✓ Pterodactyl Support
+✓ VPS Support
+✓ Binary Auto Detection
+✓ Binary Auto Download
+✓ Binary Auto Update
+
+Semua bagian di atas SUDAH SELESAI.
+
+JANGAN menyentuh file tersebut lagi kecuali memang ada bug.
+
+==================================================
+
+SEKARANG FOKUS HANYA KE FITUR YANG BELUM ADA.
+
+JANGAN keluar dari daftar ini.
+
+==================================================
+
+1. BOOMBOX CACHE
+
+Buat cache BoomBox.
+
+Key:
+
+VideoID
+
+Value:
+
+BoomBox URL
+
+Upload URL
+
+Title
+
+Duration
+
+Thumbnail
+
+Expire
+
+Hit Count
+
+Jika VideoID sama dikirim lagi:
+
+JANGAN download ulang.
+
+JANGAN convert ulang.
+
+JANGAN upload ulang.
+
+Langsung kirim BoomBox URL dari cache.
+
+Target response < 1 detik jika cache tersedia.
+
+==================================================
+
+2. METADATA CACHE
+
+Simpan metadata video.
+
+Jangan request metadata YouTube berulang.
+
+Cache:
+
+Title
+
+Duration
+
+Thumbnail
+
+Uploader
+
+==================================================
+
+3. UPLOAD CACHE
+
+Jika file MP3 sudah pernah diupload:
+
+Jangan upload ulang.
+
+Gunakan Upload URL lama.
+
+==================================================
+
+4. MULTI PROVIDER
+
+BoomBox WAJIB mempunyai beberapa provider.
+
+Jangan hanya yt-dlp.
+
+Jika Provider 1 gagal:
+
+langsung lanjut Provider 2.
+
+Jika Provider 2 gagal:
+
+Provider 3.
+
+Jika Provider 3 gagal:
+
+Provider 4.
+
+Jangan berhenti setelah satu provider.
+
+==================================================
+
+5. PARALLEL PROVIDER
+
+Jangan menjalankan provider satu per satu.
+
+Jalankan beberapa provider secara paralel bila aman.
+
+Provider pertama yang berhasil langsung dipakai.
+
+Provider lain langsung dibatalkan.
+
+==================================================
+
+6. DOWNLOAD QUEUE
+
+Jika banyak user convert bersamaan.
+
+Jangan membuat 20 download bersamaan.
+
+Gunakan Queue.
+
+Atur concurrency agar server tetap stabil.
+
+==================================================
+
+7. AUTO CLEAN CACHE
+
+Hapus cache otomatis.
+
+Contoh:
+
+90 hari tidak dipakai.
+
+Auto delete.
+
+==================================================
+
+8. DATABASE BOOMBOX
+
+Buat database khusus.
+
+Minimal:
+
+VideoID
+
+Title
+
+Duration
+
+BoomBox URL
+
+Upload URL
+
+CreatedAt
+
+LastUsed
+
+HitCount
+
+==================================================
+
+9. PERFORMANCE
+
+Target:
+
+Video normal
+
+2–3 detik.
+
+Jika cache:
+
+<1 detik.
+
+Optimalkan seluruh pipeline.
+
+==================================================
+
+10. ERROR HANDLER
+
+Jangan kirim:
+
+Video tidak ditemukan (404)
+
+Jika penyebabnya:
+
+Anti Bot
+
+Timeout
+
+Provider Down
+
+Cookies
+
+Network
+
+FFmpeg
+
+DRM
+
+Region Lock
+
+Private
+
+Deleted
+
+Tampilkan alasan sebenarnya.
+
+==================================================
+
+11. TIKTOK
+
+Tambahkan pipeline khusus TikTok.
+
+TikTok yang sama:
+
+langsung gunakan cache.
+
+==================================================
+
+12. SPOTIFY
+
+Support link Spotify.
+
+Alur:
+
+Spotify Link
+
+↓
+
+Ambil metadata
+
+↓
+
+Cari lagu yang sesuai
+
+↓
+
+Download
+
+↓
+
+Upload
+
+↓
+
+BoomBox URL
+
+Cache hasilnya.
+
+==================================================
+
+13. LOGGING
+
+Tambahkan statistik.
+
+Processing Time
+
+Cache Hit
+
+Cache Miss
+
+Provider Used
+
+Upload Time
+
+Total Time
+
+==================================================
+
+14. DILARANG
+
+JANGAN mengubah:
+
+Scanner
+
+AI
+
+Premium
+
+Limit
+
+Database lain
+
+Backup
+
+Restore
+
+Admin Panel
+
+Ticket
+
+Music lain
+
+Role
+
+Command
+
+Embed
+
+UI
+
+==================================================
+
+SEBELUM MENULIS KODE:
+
+Audit project.
+
+Pastikan seluruh fitur di atas BELUM ADA.
+
+JIKA SUDAH ADA,
+
+LEWATI.
+
+JIKA BELUM ADA,
+
+BARU IMPLEMENTASIKAN.
+
+JANGAN mengerjakan ulang fitur yang sudah selesai.
+
+==================================================
+
+SETELAH SELESAI
+
+WAJIB tampilkan:
+
+1. Daftar file yang diubah.
+
+2. Fitur baru yang benar-benar ditambahkan.
+
+3. Fitur yang dilewati karena sudah ada.
+
+4. Hasil pengujian internal.
+
+5. Estimasi peningkatan performa.
+
+Jangan berhenti sampai semua poin di atas selesai.

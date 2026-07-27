@@ -1,0 +1,506 @@
+JANGAN MERUBAH FITUR YANG SUDAH ADA.
+
+JANGAN MENGHAPUS FITUR.
+
+JANGAN MENGUBAH ALUR FITUR LAMA.
+
+Hanya PERBAIKI BUG dan TAMBAHKAN fitur yang diminta.
+
+Sebelum coding WAJIB membaca seluruh project terlebih dahulu.
+
+==========================================================
+PERBAIKAN SETUP BOOMBOX
+==========================================================
+
+Saat ini setup BoomBox masih bermasalah.
+
+Masalah:
+
+- Setelah restart setup hilang.
+- Setelah update setup hilang.
+- Setelah redeploy setup hilang.
+- Setelah import Github setup hilang.
+- Log YouTube tidak selalu tersimpan.
+- Log TikTok tidak selalu tersimpan.
+- Log Spotify tidak selalu tersimpan.
+- Channel BoomBox harus disetting ulang.
+
+Semua ini WAJIB diperbaiki.
+
+==========================================================
+DATABASE
+==========================================================
+
+Semua konfigurasi BoomBox WAJIB disimpan permanen ke database.
+
+Jangan menggunakan penyimpanan sementara.
+
+Jangan hanya disimpan di memory.
+
+Semua wajib tetap ada setelah:
+
+• Restart
+• Update
+• Redeploy
+• Run ulang
+• Import Github
+
+Yang wajib disimpan:
+
+BoomBox Channel
+
+YouTube Logs
+
+TikTok Logs
+
+Spotify Logs
+
+Role
+
+Limit
+
+Setting lainnya
+
+==========================================================
+BUTTON SIMPAN
+==========================================================
+
+Tambahkan tombol
+
+💾 Simpan
+
+pada Setup Wizard BoomBox.
+
+Selama tombol Simpan belum ditekan
+
+database tidak boleh berubah.
+
+Saat tombol Simpan ditekan
+
+baru seluruh konfigurasi ditulis ke database.
+
+==========================================================
+JIKA SUDAH SETUP
+==========================================================
+
+Jika Owner menjalankan
+
+/setupboombox
+
+dan konfigurasi sudah ada
+
+JANGAN membuat setup baru.
+
+Tampilkan:
+
+✅ BoomBox sudah dikonfigurasi.
+
+Lalu tampilkan seluruh konfigurasi yang tersimpan.
+
+Button:
+
+📝 Edit Konfigurasi
+
+🗑 Hapus Konfigurasi
+
+❌ Tutup
+
+Jika memilih Edit
+
+langsung membuka Wizard.
+
+Jika memilih Hapus
+
+minta konfirmasi terlebih dahulu.
+
+==========================================================
+LOG BOOMBOX
+==========================================================
+
+Perbaiki sistem Log.
+
+Saat ini:
+
+YouTube tersimpan
+
+TikTok kadang hilang
+
+Spotify kadang hilang
+
+Semua platform WAJIB memiliki Log masing-masing.
+
+YouTube Logs
+
+TikTok Logs
+
+Spotify Logs
+
+Semuanya wajib tetap tersimpan setelah restart.
+
+==========================================================
+FORMAT LOG
+==========================================================
+
+Judul
+
+Platform
+
+User
+
+Guild
+
+Channel
+
+Judul Lagu
+
+URL Asli
+
+BoomBox URL
+
+Durasi
+
+Tanggal
+
+Jam
+
+Status
+
+Jika gagal
+
+masuk Error Log.
+
+Jika berhasil
+
+masuk Success Log.
+
+==========================================================
+ERROR LOG BOOMBOX
+==========================================================
+
+Jika gagal
+
+wajib masuk Error Log.
+
+Isi:
+
+Platform
+
+Reason
+
+Provider
+
+Stack
+
+User
+
+Guild
+
+Time
+
+==========================================================
+PERBAIKAN LUA TOOLS
+==========================================================
+
+Perbaiki seluruh fitur:
+
+🔒 Obfuscator
+
+🧹 Beautify
+
+🔓 Deobfuscator
+
+Saat ini hanya muncul:
+
+"Terjadi kesalahan saat memproses file."
+
+Cari penyebab sebenarnya.
+
+Perbaiki seluruh bug.
+
+==========================================================
+API
+==========================================================
+
+Gunakan API sesuai implementasi.
+
+Tambahkan:
+
+Retry
+
+Timeout
+
+Reconnect
+
+Validasi Response
+
+Jangan hanya langsung gagal.
+
+==========================================================
+PESAN ERROR
+==========================================================
+
+Jangan tampilkan:
+
+Terjadi kesalahan.
+
+Tampilkan alasan sebenarnya.
+
+Contoh:
+
+Invalid API Key
+
+Timeout
+
+Server Busy
+
+Unsupported Lua Version
+
+Unsupported File
+
+Response Empty
+
+API Offline
+
+==========================================================
+BUTTON SIMPAN LUA TOOLS
+==========================================================
+
+Tambahkan tombol
+
+💾 Simpan
+
+di akhir Setup Wizard Lua Tools.
+
+Sebelum Simpan
+
+database tidak berubah.
+
+Sesudah Simpan
+
+baru commit ke database.
+
+==========================================================
+SETUP LUA TOOLS
+==========================================================
+
+Jika sudah setup
+
+/setupluatools
+
+JANGAN setup ulang.
+
+Tampilkan:
+
+✅ Lua Tools sudah dikonfigurasi.
+
+Button:
+
+📝 Edit
+
+🗑 Hapus
+
+❌ Tutup
+
+==========================================================
+DATABASE LUA TOOLS
+==========================================================
+
+Semua konfigurasi wajib permanen.
+
+Yang disimpan:
+
+Obfuscator Channel
+
+Beautify Channel
+
+Deobfuscator Channel
+
+Obfuscator Logs
+
+Beautify Logs
+
+Deobfuscator Logs
+
+API Setting
+
+Semua tetap ada setelah:
+
+Restart
+
+Update
+
+Redeploy
+
+Run ulang
+
+==========================================================
+LOG OBFUSCATOR
+==========================================================
+
+Jika berhasil
+
+kirim ke channel:
+
+Obfuscator Logs
+
+Isi:
+
+User
+
+Guild
+
+Nama File
+
+Ukuran
+
+Status
+
+Durasi
+
+Tanggal
+
+Jam
+
+Lampirkan file hasil.
+
+==========================================================
+LOG BEAUTIFY
+==========================================================
+
+Jika berhasil
+
+kirim ke channel:
+
+Beautify Logs
+
+Isi:
+
+User
+
+Guild
+
+Nama File
+
+Ukuran
+
+Status
+
+Durasi
+
+Tanggal
+
+Jam
+
+Lampirkan file hasil.
+
+==========================================================
+LOG DEOBFUSCATOR
+==========================================================
+
+Jika berhasil
+
+kirim ke channel:
+
+Deobfuscator Logs
+
+Isi:
+
+User
+
+Guild
+
+Nama File
+
+Ukuran
+
+Status
+
+Durasi
+
+Tanggal
+
+Jam
+
+Lampirkan file hasil.
+
+==========================================================
+ERROR LOG LUA TOOLS
+==========================================================
+
+Jika Obfuscator gagal
+
+masuk ke Error Log.
+
+Jika Beautify gagal
+
+masuk ke Error Log.
+
+Jika Deobfuscator gagal
+
+masuk ke Error Log.
+
+Isi:
+
+Feature
+
+Reason
+
+HTTP Status
+
+API Response
+
+Stack
+
+Guild
+
+Channel
+
+User
+
+Nama File
+
+Ukuran
+
+Tanggal
+
+Jam
+
+==========================================================
+DM USER
+==========================================================
+
+Jika berhasil
+
+Bot wajib:
+
+Reply di Channel
+
++
+
+Kirim hasil ke DM.
+
+Jika DM gagal
+
+jangan crash.
+
+Balas:
+
+"Gagal mengirim hasil ke DM. Aktifkan Direct Message lalu coba lagi."
+
+==========================================================
+CHECK AKHIR
+==========================================================
+
+Setelah selesai:
+
+• Scan seluruh project.
+• Pastikan tidak ada syntax error.
+• Pastikan tidak ada duplicate handler.
+• Pastikan tidak ada import rusak.
+• Pastikan semua setup tersimpan permanen.
+• Pastikan BoomBox tidak perlu setup ulang.
+• Pastikan Log YouTube, TikTok, Spotify tetap tersimpan.
+• Pastikan Setup Lua Tools tetap tersimpan.
+• Pastikan Obfuscator, Beautify, Deobfuscator berjalan normal.
+• Pastikan semua Error otomatis masuk ke Error Log.
+• Jangan mengubah fitur lain yang sudah ada.
