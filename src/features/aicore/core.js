@@ -28,6 +28,14 @@ const MAX_REQUESTS_PER_MINUTE   = 3;
 let activeAIRequests            = 0;
 const MAX_CONCURRENT_AI_REQUESTS = 2;
 
+// ── Quota exhaustion guard ─────────────────────────────────────────────────────
+// When a provider returns quota_exhausted/billing error, ALL subsequent
+// requestModel() calls are rejected locally without touching the API.
+// Cleared only when the user changes the provider or API key.
+let providerQuotaExhausted    = false;
+let quotaExhaustedProvider    = null;
+let quotaExhaustedAt          = null;
+
 // ── Utilities ──────────────────────────────────────────────────────────────────
 
 function truncate(value, max) {
@@ -263,6 +271,33 @@ export function isAICoreAllowed(member) {
   return canUseAI(member);
 }
 
+// ── Quota exhaustion status ────────────────────────────────────────────────────
+
+export function isProviderQuotaExhausted() {
+  return providerQuotaExhausted;
+}
+
+export function getQuotaExhaustedInfo() {
+  return {
+    exhausted: providerQuotaExhausted,
+    provider:  quotaExhaustedProvider,
+    since:     quotaExhaustedAt,
+  };
+}
+
+/** Called internally whenever provider/key changes to clear the block. */
+function _clearQuotaExhausted() {
+  providerQuotaExhausted = false;
+  quotaExhaustedProvider = null;
+  quotaExhaustedAt       = null;
+}
+
+/** Manual reset — exposed so setupInteraction can offer a "clear quota" button. */
+export function resetQuotaExhaustedStatus() {
+  _clearQuotaExhausted();
+  logger.info("[AI Core] Quota exhausted status cleared manually.");
+}
+
 // ── Rate limiting ──────────────────────────────────────────────────────────────
 
 function withinRateLimit() {
@@ -478,6 +513,8 @@ export async function updateProviderApiKey(apiKey) {
     }
 
     // Provider detected — apply key and client to runtime
+    // Clear any existing quota-exhausted block: new key = fresh start.
+    _clearQuotaExhausted();
     runtimeApiKey = value;
     activeAdapter = detected;
     activeClient  = detected.createClient(value, Number(config().timeoutMs) || 30_000);
@@ -554,6 +591,10 @@ export function setActiveProvider(providerId) {
   const dbKey   = aiCoreDB.getApiKey();
   const keyToUse = dbKey || runtimeApiKey;
 
+  // Changing the active provider always clears quota exhaustion — the new
+  // provider/key has its own quota budget.
+  _clearQuotaExhausted();
+
   if (keyToUse) {
     try {
       activeAdapter = adapter;
@@ -589,6 +630,8 @@ export function setActiveProvider(providerId) {
 }
 
 export function removeProviderApiKey() {
+  // Key removal always clears quota — no key means no quota to exhaust.
+  _clearQuotaExhausted();
   runtimeApiKey = null;
   activeClient  = null;
   activeApiKey  = null;
@@ -666,6 +709,12 @@ export async function testProviderConnection() {
     } else if (category === "model_404") {
       keyStatus = "model_not_found";
       logger.info(`[AI Core] [MODEL_NOT_FOUND] ${safe.providerReason}`);
+    } else if (category === "quota_exhausted") {
+      // Mark quota as exhausted — no further requests will be sent to this provider.
+      providerQuotaExhausted = true;
+      quotaExhaustedProvider = providerLabel();
+      quotaExhaustedAt       = new Date().toISOString();
+      logger.warn(`[AI Core] [QUOTA_EXHAUSTED] ${safe.providerReason} — blocking all future requests to ${quotaExhaustedProvider}`);
     } else {
       logger.info(`[AI Core] [PROVIDER_ERROR] ${safe.providerReason}`);
     }
@@ -682,7 +731,8 @@ export async function testProviderConnection() {
       errorCategory: category,
       provider:      providerLabel(),
       activeProvider: providerLabel(),
-      ...(safe.httpStatus ? { status: String(safe.httpStatus) } : {}),
+      status:        safe.httpStatus ? String(safe.httpStatus) : undefined,
+      retry:         false,
     });
     return { ok: false, reason: safe.providerReason, configuration: getProviderConfiguration() };
   }
@@ -691,6 +741,20 @@ export async function testProviderConnection() {
 export async function validateProviderModel(model) {
   const name = String(model || "").trim().slice(0, 80);
   if (!name) throw new Error("Model is required.");
+
+  // Do not make any API calls if quota is exhausted.
+  if (providerQuotaExhausted) {
+    const err = new Error(
+      `Provider quota habis (${quotaExhaustedProvider ?? "unknown"}). ` +
+      "Tidak ada validasi yang akan dilakukan. Ganti provider atau API key terlebih dahulu."
+    );
+    err.providerCategory = "quota_exhausted";
+    err.providerStatus   = "provider_error";
+    err.providerReason   = err.message;
+    err.retry            = false;
+    throw err;
+  }
+
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("No AI provider API key is configured.");
 
@@ -743,6 +807,19 @@ export function rebuildKnowledge() {
  * go through this single function — never build a separate provider client.
  */
 async function requestModel(messages, maxTokens = config().maxResponse) {
+  // ── Global quota guard — reject immediately without touching the API ──────
+  if (providerQuotaExhausted) {
+    const blocked = new Error(
+      `Provider quota habis (${quotaExhaustedProvider ?? "unknown"}). ` +
+      "Tidak ada request yang akan dikirim sampai provider atau API key diganti."
+    );
+    blocked.providerCategory = "quota_exhausted";
+    blocked.providerStatus   = "provider_error";
+    blocked.providerReason   = blocked.message;
+    blocked.retry            = false;
+    throw blocked;
+  }
+
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("AI provider is not configured");
 
@@ -802,6 +879,19 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
       providerStatusReason: safe.providerReason,
       providerCheckedAt:  new Date().toISOString(),
     });
+
+    // ── Permanent quota exhaustion: block all future requests immediately ──
+    if (safe.providerCategory === "quota_exhausted") {
+      providerQuotaExhausted = true;
+      quotaExhaustedProvider = (activeAdapter ?? resolveAdapter()).PROVIDER_NAME;
+      quotaExhaustedAt       = new Date().toISOString();
+      safe.retry             = false;
+      logger.warn(
+        `[AI Core] [QUOTA_EXHAUSTED] Provider=${quotaExhaustedProvider} ` +
+        `— all future requests BLOCKED until provider/key changes.`
+      );
+    }
+
     throw safe;
   } finally {
     activeAIRequests--;
@@ -835,6 +925,17 @@ function fallbackErrorAnalysis(record) {
 async function analyzeError(record) {
   const cfg = config();
   if (!cfg.errorAnalysis || !cfg.errorChannelId || activeErrorAnalyses.has(record.errorId)) return;
+
+  // When provider quota is exhausted, skip AI call and use local fallback immediately.
+  // This prevents a cascade of API calls that would all fail with 429.
+  if (providerQuotaExhausted) {
+    logger.debug(`[AI Core] analyzeError(${record.errorId}): quota exhausted — using local fallback.`);
+    const fallback = fallbackErrorAnalysis(record);
+    const updated  = aiCoreDB.updateError(record.errorId, { analysis: fallback, status: "fix_suggested" }) || record;
+    void sendErrorAnalysis(updated);
+    return;
+  }
+
   activeErrorAnalyses.add(record.errorId);
   try {
     const context = relevantContext(`${record.feature} ${record.module} ${record.function} ${record.reason}`);
@@ -852,7 +953,17 @@ async function analyzeError(record) {
     const updated = aiCoreDB.updateError(record.errorId, { analysis: redact(analysis), status: "fix_suggested" }) || record;
     await sendErrorAnalysis(updated);
   } catch (err) {
-    logger.warn(`[AI Core] Error analysis skipped: ${redact(err.message)}`);
+    // If the analysis itself failed with quota_exhausted, fall back to local analysis
+    // so the error record is still useful, and DON'T log this back through errorLogger
+    // (that would create an AI→error→AI→error loop).
+    if (err?.providerCategory === "quota_exhausted") {
+      logger.warn(`[AI Core] analyzeError(${record.errorId}): quota exhausted during analysis — falling back to local.`);
+      const fallback = fallbackErrorAnalysis(record);
+      const updated  = aiCoreDB.updateError(record.errorId, { analysis: fallback, status: "fix_suggested" }) || record;
+      void sendErrorAnalysis(updated);
+    } else {
+      logger.warn(`[AI Core] Error analysis skipped: ${redact(err.message)}`);
+    }
   } finally {
     activeErrorAnalyses.delete(record.errorId);
   }
@@ -1020,10 +1131,13 @@ export async function handleAICoreMessage(message) {
       break;
     } catch (err) {
       lastErr = err;
-      const is429 = err?.providerCategory === "rate_limit_429" || err?.httpStatus === 429;
-      if (is429 && attempt === 0) {
+      // ONLY retry on temporary rate limit (429 rate_limit), NOT on quota_exhausted.
+      // quota_exhausted means the billing ceiling is hit — retrying would just burn
+      // another API call, get another 429, and potentially loop.
+      const isTemporaryRateLimit = err?.providerCategory === "rate_limit_429";
+      if (isTemporaryRateLimit && attempt === 0) {
         const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
-        logger.info(`[AI Core] Investigation 429 — waiting ${waitMs}ms before retry`);
+        logger.info(`[AI Core] Investigation rate_limit_429 — waiting ${waitMs}ms before single retry`);
         await sleep(waitMs);
         await message.channel.sendTyping().catch(() => {});
         continue;
@@ -1090,4 +1204,42 @@ export async function chatWithAI(messages, maxTokens) {
  */
 export async function reportError(payload) {
   return logAICoreError(payload);
+}
+
+/**
+ * Build a structured AI error payload for error-log channel.
+ * Centralises field names so all callers emit a consistent format.
+ *
+ * @param {{
+ *   feature:        string,
+ *   stage:          string,
+ *   provider:       string,
+ *   model?:         string,
+ *   status?:        number|string,
+ *   category:       string,
+ *   retry:          boolean,
+ *   retryAfterMs?:  number,
+ *   reason:         string,
+ *   requestId?:     string,
+ *   metadata?:      object,
+ * }} fields
+ */
+export function buildStructuredAIError({
+  feature, stage, provider, model, status, category, retry,
+  retryAfterMs, reason, requestId, metadata,
+}) {
+  return {
+    feature:       feature ?? "AI Core",
+    stage:         stage   ?? "unknown",
+    provider:      provider ?? "unknown",
+    activeProvider: provider ?? "unknown",
+    model:         model   ?? config().model,
+    status:        status  != null ? String(status) : undefined,
+    errorCategory: category ?? "unknown",
+    retry:         Boolean(retry),
+    retryAfterMs:  retryAfterMs != null ? String(retryAfterMs) : undefined,
+    reason:        redact(String(reason ?? "Unknown error")),
+    requestId:     requestId ?? undefined,
+    metadata:      metadata  ?? {},
+  };
 }

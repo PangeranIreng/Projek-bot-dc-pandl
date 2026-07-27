@@ -9,6 +9,7 @@ import {
   rebuildKnowledge, isAICoreAllowed, generateFixPrompt,
   getProviderConfiguration, updateProviderApiKey, removeProviderApiKey,
   testProviderConnection, validateProviderModel, setActiveProvider,
+  isProviderQuotaExhausted, getQuotaExhaustedInfo, resetQuotaExhaustedStatus,
   redact,
 } from "./core.js";
 import { clearConversationHistory, getConversationStats } from "./conversation.js";
@@ -94,21 +95,30 @@ function panelComponents() {
 // ── Provider config panel ──────────────────────────────────────────────────────
 
 function providerConfigEmbed(note = "") {
-  const cfg  = getProviderConfiguration();
-  const prov = listProviders();
+  const cfg   = getProviderConfiguration();
+  const prov  = listProviders();
   const activeProviderInfo = prov.find((p) => p.id === cfg.providerId);
+  const quota = getQuotaExhaustedInfo();
+
+  // Build a quota warning note if the provider is in QUOTA_EXHAUSTED state.
+  const quotaNote = quota.exhausted
+    ? `\n\n⛔ **QUOTA EXHAUSTED** — Provider **${quota.provider ?? cfg.provider}** sedang diblokir secara lokal.\nSemua request AI ditolak tanpa menyentuh API sampai provider atau API key diganti.\nWaktu: <t:${Math.floor(new Date(quota.since).getTime() / 1000)}:R>`
+    : "";
+
   return new EmbedBuilder()
-    .setColor(COLOR)
+    .setColor(quota.exhausted ? 0xed4245 : COLOR)
     .setTitle("⚙️ AI CONFIGURATION")
     .setDescription(
-      `${note ? `${note}\n\n` : ""}Pengaturan provider AI Core disimpan secara aman.\n` +
+      `${note ? `${note}\n\n` : ""}${quotaNote ? quotaNote + "\n\n" : ""}` +
+      `Pengaturan provider AI Core disimpan secara aman.\n` +
       `Provider tersedia: **${prov.map((p) => p.name).join(", ")}**`
     )
     .addFields(
-      { name: "Provider",       value: `🟢 **${cfg.provider}**`,                          inline: true },
+      { name: "Provider",       value: `🟢 **${cfg.provider}**`,                           inline: true },
       { name: "API Key",        value: `${keyStatusLabel(cfg.keyStatus)}\n${cfg.apiKeyMask}`, inline: true },
-      { name: "Connection",     value: connectionStatusLabel(cfg.status),                  inline: true },
-      { name: "Model",          value: `\`${cfg.model}\``,                                 inline: true },
+      { name: "Connection",     value: connectionStatusLabel(cfg.status),                   inline: true },
+      { name: "Quota Status",   value: quota.exhausted ? "⛔ QUOTA EXHAUSTED" : "✅ OK",    inline: true },
+      { name: "Model",          value: `\`${cfg.model}\``,                                  inline: true },
       { name: "Default Model",  value: `\`${activeProviderInfo?.defaultModel ?? cfg.model}\``, inline: true },
       { name: "Error Analysis", value: cfg.errorAnalysis  ? "🟢 ON" : "⚪ OFF", inline: true },
       { name: "Investigation",  value: cfg.investigation  ? "🟢 ON" : "⚪ OFF", inline: true },
@@ -123,6 +133,7 @@ function providerConfigEmbed(note = "") {
 }
 
 function providerConfigComponents() {
+  const quota = getQuotaExhaustedInfo();
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("aicore:provider:apikey").setLabel("🔑 Change API Key").setStyle(ButtonStyle.Primary),
@@ -135,6 +146,10 @@ function providerConfigComponents() {
       new ButtonBuilder().setCustomId("aicore:provider:remove").setLabel("🗑️ Remove API Key").setStyle(ButtonStyle.Danger),
     ),
     new ActionRowBuilder().addComponents(
+      ...(quota.exhausted
+        ? [new ButtonBuilder().setCustomId("aicore:quota:reset").setLabel("🔄 Reset Quota Status").setStyle(ButtonStyle.Warning)]
+        : []
+      ),
       new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 AI Core").setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -311,14 +326,39 @@ export async function handleAICoreInteraction(interaction) {
       return;
     }
 
+    // ── Quota reset (manual override when user changes billing/key externally) ──
+    if (id === "aicore:quota:reset") {
+      resetQuotaExhaustedStatus();
+      await interaction.update({
+        embeds: [providerConfigEmbed("✅ Quota status di-reset. Provider akan dicoba kembali pada request berikutnya.\nGunakan 🧪 Test Connection untuk memverifikasi koneksi.")],
+        components: providerConfigComponents(),
+      });
+      return;
+    }
+
     // ── Test connection ──────────────────────────────────────────────────────
     if (id === "aicore:provider:test") {
       await interaction.deferReply({ ephemeral: true });
+      // If quota is exhausted, clear it first before testing — user pressed
+      // "Test Connection" to verify after billing top-up, not to get blocked.
+      const quotaBefore = isProviderQuotaExhausted();
+      if (quotaBefore) resetQuotaExhaustedStatus();
       const result = await testProviderConnection();
       await interaction.editReply({
         content: result.ok
-          ? `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nModel: \`${result.configuration.model}\`\nStatus: 🟢 SUCCESS\nAI Core: 🟢 READY`
-          : `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nStatus: 🔴 FAILED\nReason: ${result.reason}`,
+          ? [
+              `🧪 **AI CONNECTION TEST**`,
+              `Provider: **${result.configuration.provider}**`,
+              `Model: \`${result.configuration.model}\``,
+              `Status: 🟢 SUCCESS`,
+              `AI Core: 🟢 READY`,
+            ].join("\n")
+          : [
+              `🧪 **AI CONNECTION TEST**`,
+              `Provider: **${result.configuration.provider}**`,
+              `Status: 🔴 FAILED`,
+              `Reason: ${result.reason}`,
+            ].join("\n"),
       });
       return;
     }
@@ -447,10 +487,34 @@ export async function handleAICoreInteraction(interaction) {
 
   } catch (err) {
     logger.warn(`[AI Core] Setup interaction failed (${id}): ${err.message}`);
-    const safe   = redact(String(err?.providerReason || err?.message || "Unknown error")).slice(0, 300);
-    const method = interaction.deferred ? "editReply" : interaction.replied ? "followUp" : "reply";
+    const safe     = redact(String(err?.providerReason || err?.message || "Unknown error")).slice(0, 300);
+    const category = err?.providerCategory ?? null;
+    const status   = err?.httpStatus       ?? null;
+    const method   = interaction.deferred ? "editReply" : interaction.replied ? "followUp" : "reply";
+
+    // Show a specific error message based on the error category instead of a generic fallback.
+    const categoryMessages = {
+      invalid_key_format:  "❌ **Format API Key Tidak Valid**\nAPI key terlalu pendek atau mengandung spasi.",
+      secure_storage:      "❌ **Secure Storage Gagal**\nKredensial tidak bisa disimpan. Pastikan `SESSION_SECRET` atau `AI_CORE_ENCRYPTION_KEY` sudah dikonfigurasi.",
+      authentication_401:  "❌ **Autentikasi Gagal (HTTP 401)**\nAPI key atau autentikasi provider tidak valid. Periksa kembali API key Anda.",
+      permission_403:      "❌ **Akses Ditolak (HTTP 403)**\nProvider menolak akses. Periksa izin API key Anda.",
+      model_404:           "❌ **Model Tidak Ditemukan (HTTP 404)**\nModel tidak tersedia di provider ini. Gunakan model lain.",
+      endpoint_404:        "❌ **Endpoint Tidak Ditemukan (HTTP 404)**\nEndpoint provider tidak dapat dijangkau.",
+      rate_limit_429:      "❌ **Rate Limit (HTTP 429)**\nProvider membatasi request. Coba lagi dalam beberapa menit.",
+      quota_exhausted:     "❌ **Quota Habis (HTTP 429)**\nQuota atau billing provider habis. Tidak ada retry otomatis. Periksa dashboard provider Anda.",
+      timeout:             "❌ **Timeout**\nProvider tidak merespons dalam batas waktu. Coba lagi atau naikkan timeout di ⚙️ AI Settings.",
+      network:             "❌ **Network Error**\nKoneksi ke provider gagal. Periksa koneksi jaringan.",
+      concurrent_limit:    "⏳ **AI Core Sibuk**\nSedang memproses request lain. Coba lagi dalam beberapa detik.",
+    };
+
+    const friendlyMessage = (category && categoryMessages[category])
+      ? `${categoryMessages[category]}\n> ${safe}`
+      : status
+        ? `❌ **AI Core Error (HTTP ${status})**\n> ${safe}`
+        : `❌ **AI Core Error**\n> ${safe}`;
+
     await interaction[method]({
-      content: `❌ **AI Core setup gagal diproses.**\n> ${safe}`,
+      content: friendlyMessage,
       ephemeral: true,
     }).catch(() => {});
   }

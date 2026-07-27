@@ -25,6 +25,7 @@ import {
   getAICoreConfig,
   getProviderConfiguration,
   isAICoreAllowed,
+  isProviderQuotaExhausted,
   chatWithAI,
   investigate,
   redact,
@@ -147,19 +148,35 @@ function shouldInvestigate(message, query) {
 // ── 429-aware request wrapper ─────────────────────────────────────────────────
 
 /**
- * Call fn(); if it throws HTTP 429, wait (honouring Retry-After) then retry once.
- * Any non-429 error, or a second 429, is re-thrown immediately.
- * Maximum wait is capped at 30 s so the user isn't left hanging.
+ * Call fn(); if it throws a TEMPORARY rate limit (rate_limit_429), wait
+ * (honouring Retry-After) then retry ONCE.
+ *
+ * Rules:
+ *  - quota_exhausted (billing ceiling) → NO retry, re-throw immediately.
+ *  - rate_limit_429 (temporary throttle) → one retry after backoff (max 30 s).
+ *  - Any other error → re-throw immediately.
+ *  - A second 429 of any kind → re-throw immediately.
+ *
+ * This prevents the pattern:
+ *   quota_exhausted → retry → quota_exhausted → retry → …
  */
 async function withRateLimitRetry(fn) {
   for (let attempt = 0; attempt <= 1; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      const is429 = err?.httpStatus === 429 || err?.providerCategory === "rate_limit_429";
-      if (is429 && attempt === 0) {
+      // quota_exhausted is permanent — NEVER retry, even on attempt 0.
+      const isQuotaExhausted     = err?.providerCategory === "quota_exhausted";
+      // Temporary rate limit only (not quota_exhausted).
+      const isTemporaryRateLimit = err?.providerCategory === "rate_limit_429";
+
+      if (isQuotaExhausted) {
+        // Propagate immediately; caller will display the quota message.
+        throw err;
+      }
+      if (isTemporaryRateLimit && attempt === 0) {
         const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
-        logger.warn(`[AI Conversation] 429 — waiting ${waitMs}ms before retry (Retry-After: ${err?.retryAfterMs ?? "n/a"})`);
+        logger.warn(`[AI Conversation] rate_limit_429 — waiting ${waitMs}ms before single retry (Retry-After: ${err?.retryAfterMs ?? "n/a"}ms)`);
         await sleep(waitMs);
         continue;
       }
@@ -216,6 +233,18 @@ export async function handleAIConversationMessage(message) {
   // Per-channel rate limit
   if (channelRateLimited(message.channelId)) {
     await message.reply("⚠️ Terlalu banyak permintaan dalam satu menit. Coba lagi sebentar.").catch(() => {});
+    return true;
+  }
+
+  // ── Pre-flight quota guard ────────────────────────────────────────────────
+  // If the provider is quota_exhausted, reject locally without sending any
+  // API request. Display a clear message so the user knows to act.
+  if (isProviderQuotaExhausted()) {
+    await message.reply(
+      "❌ **Provider Quota Habis**\n" +
+      "Quota atau billing provider habis. Tidak ada request AI yang akan dikirim.\n" +
+      "Ganti provider atau API key melalui `/setup` → ⚙️ AI Configuration."
+    ).catch(() => {});
     return true;
   }
 
