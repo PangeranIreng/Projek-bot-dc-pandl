@@ -437,6 +437,7 @@ export function getProviderConfiguration() {
     investigation:    cfg.investigation,
     codeAnalysis:     cfg.codeAnalysis,
     visionAnalysis:   cfg.visionAnalysis,
+    conversation:     cfg.conversation,
   };
 }
 

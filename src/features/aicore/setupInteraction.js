@@ -147,7 +147,7 @@ function providerConfigComponents() {
     ),
     new ActionRowBuilder().addComponents(
       ...(quota.exhausted
-        ? [new ButtonBuilder().setCustomId("aicore:quota:reset").setLabel("🔄 Reset Quota Status").setStyle(ButtonStyle.Warning)]
+        ? [new ButtonBuilder().setCustomId("aicore:quota:reset").setLabel("🔄 Reset Quota Status").setStyle(ButtonStyle.Secondary)]
         : []
       ),
       new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 AI Core").setStyle(ButtonStyle.Secondary),
@@ -360,6 +360,11 @@ export async function handleAICoreInteraction(interaction) {
               `Reason: ${result.reason}`,
             ].join("\n"),
       });
+      // Refresh the panel in-place so the user sees the updated connection
+      // status (e.g. 🟢 CONNECTED / 🔴 AUTH FAILED) without navigating away.
+      await interaction.message
+        .edit({ embeds: [providerConfigEmbed()], components: providerConfigComponents() })
+        .catch(() => {});
       return;
     }
 
@@ -472,6 +477,9 @@ export async function handleAICoreInteraction(interaction) {
 
     // ── Test core channels ───────────────────────────────────────────────────
     if (id === "aicore:test") {
+      // Defer immediately — up to 6 network calls (fetch + send per channel)
+      // can easily exceed Discord's 3-second interaction deadline.
+      await interaction.deferReply({ ephemeral: true });
       const cfg = getAICoreConfig();
       const rawTargets = [
         ["Error Channel", cfg.errorChannelId],
@@ -505,9 +513,8 @@ export async function handleAICoreInteraction(interaction) {
         ? results.join("\n")
         : "🟡 Belum ada channel AI Core yang dikonfigurasi.";
 
-      await interaction.reply({
+      await interaction.editReply({
         content: `🧪 **AI CORE CHANNEL TEST**\n${summary}`,
-        ephemeral: true,
       });
       return;
     }
