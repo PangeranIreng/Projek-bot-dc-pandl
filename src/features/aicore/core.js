@@ -8,7 +8,7 @@
 import crypto from "node:crypto";
 import OpenAI from "openai";
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from "discord.js";
-import { aiCoreDB } from "../../database/aiCoreDB.js";
+import { aiCoreDB, encryptionSourceLabel } from "../../database/aiCoreDB.js";
 import { rebuildProjectIndex, searchProject } from "./projectIndexer.js";
 import { isOwner, isStaff } from "../../middleware/permissions.js";
 import { logger } from "../../utils/logger.js";
@@ -31,6 +31,22 @@ export function redact(value) {
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-************")
     .replace(/\b(BOT_TOKEN|OPENAI_API_KEY|SESSION_SECRET|API_KEY)\s*=\s*[^\s]+/gi, "$1=************")
     .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1************");
+}
+
+/**
+ * Send a structured error to the existing error-log channel via logError.
+ * Uses a lazy dynamic import to avoid the circular dependency:
+ *   core.js ← errorLogger.js → core.js (recordError / getAICoreConfig)
+ *
+ * Errors from "AI Core" are intentionally filtered out of recordError to
+ * prevent analysis loops, but logError still sends the embed to the channel.
+ * Never logs API keys, secrets, or ciphertext.
+ */
+async function logAICoreError(payload) {
+  try {
+    const { logError } = await import("../../utils/errorLogger.js");
+    void logError(payload).catch(() => {});
+  } catch (_) { /* never let error-reporting crash the caller */ }
 }
 
 function providerReady() {
@@ -205,6 +221,11 @@ function makeErrorId(payload, hash) {
 
 export function initAICore(discordClient) {
   client = discordClient;
+  try {
+    logger.info(`[AI Core] Encryption source: ${encryptionSourceLabel()}`);
+  } catch (encErr) {
+    logger.warn(`[AI Core] Encryption unavailable at startup: ${encErr.message}`);
+  }
   const activeKey = getActiveApiKey();
   if (activeKey) {
     logger.info("[AI Core] [KEY_STORED_NOT_TESTED] API key found in storage; connection not yet verified at startup.");
@@ -473,7 +494,14 @@ export async function updateProviderApiKey(apiKey) {
     safe.providerCategory = "secure_storage";
     safe.providerStatus = "not_configured";
     safe.providerReason = storageMsg;
-    logger.warn(`[AI Core] Key save error (${code || "unknown"}): ${redact(storageMsg)}`);
+    logger.warn(`[AI Core] [KEY_SAVE_FAILED] (${code || "unknown"}): ${redact(storageMsg)}`);
+    void logAICoreError({
+      feature: "AI Core — Secure Storage",
+      stage: "api_key_save",
+      reason: redact(storageMsg),
+      errorCategory: "secure_storage",
+      suggestion: "Set AI_CORE_ENCRYPTION_KEY or SESSION_SECRET in environment variables, or ensure the data/ directory is writable.",
+    });
     throw safe;
   }
 }
@@ -536,21 +564,37 @@ export async function testProviderConnection() {
     const safe = safeProviderError(error);
     const category = safe.providerCategory;
     let keyStatus = "key_stored_not_tested";
+    let errorLogCategory = "provider_connection";
+
     if (category === "authentication_401" || category === "permission_403") {
       keyStatus = "authentication_failed";
+      errorLogCategory = "provider_authentication";
       logger.info(`[AI Core] [AUTHENTICATION_FAILED] ${safe.providerReason}`);
     } else if (category === "model_404") {
       keyStatus = "model_not_found";
+      errorLogCategory = "model_not_found";
       logger.info(`[AI Core] [MODEL_NOT_FOUND] ${safe.providerReason}`);
     } else {
       logger.info(`[AI Core] [PROVIDER_ERROR] ${safe.providerReason}`);
     }
+
     aiCoreDB.updateConfig({
       keyStatus,
       providerStatus: safe.providerStatus,
       providerStatusReason: safe.providerReason,
       providerCheckedAt: new Date().toISOString(),
     });
+
+    void logAICoreError({
+      feature: "AI Core — Provider",
+      stage: "provider_connection",
+      reason: safe.providerReason,
+      errorCategory: errorLogCategory,
+      provider: providerLabel(),
+      activeProvider: providerLabel(),
+      ...(safe.httpStatus ? { status: String(safe.httpStatus) } : {}),
+    });
+
     return { ok: false, reason: safe.providerReason, configuration: getProviderConfiguration() };
   }
 }

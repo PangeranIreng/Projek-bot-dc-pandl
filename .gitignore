@@ -7,6 +7,8 @@ node_modules/
 # sensitive BoomBox cookie material and metadata
 cookies.txt
 data/cookies-meta.json
+# AI Core stable encryption keyfile — never commit (contains the master encryption key)
+data/.ai-core-keyfile
 cookies.txt.*.tmp
 
 # runtime data (downloads, cache, temp files)
