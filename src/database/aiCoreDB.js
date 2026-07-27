@@ -34,6 +34,8 @@ const DEFAULT_DB = {
     investigation: true,
     codeAnalysis: true,
     visionAnalysis: true,
+    conversation: true,
+    conversationChannelId: null,
   },
   providerCredential: null,
   projectKnowledge: {

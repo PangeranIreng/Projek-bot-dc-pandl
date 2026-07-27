@@ -282,9 +282,10 @@ export function getAICoreConfig() {
 
 export function updateAICoreConfig(patch) {
   const allowed = [
-    "errorChannelId", "investigationChannelId", "accessMode", "allowedRoleIds",
-    "allowedUserIds", "provider", "model", "timeoutMs", "maxResponse",
-    "errorAnalysis", "investigation", "codeAnalysis", "visionAnalysis",
+    "errorChannelId", "investigationChannelId", "conversationChannelId",
+    "accessMode", "allowedRoleIds", "allowedUserIds", "provider", "model",
+    "timeoutMs", "maxResponse",
+    "errorAnalysis", "investigation", "codeAnalysis", "visionAnalysis", "conversation",
   ];
   const safe = Object.fromEntries(Object.entries(patch).filter(([key]) => allowed.includes(key)));
   return aiCoreDB.updateConfig(safe);
@@ -895,4 +896,22 @@ export async function handleAICoreMessage(message) {
 
 export function isAICoreAllowed(member) {
   return canUseAI(member);
+}
+
+/**
+ * Thin wrapper around requestModel — lets conversation.js send arbitrary
+ * message arrays through the same provider runtime without duplicating
+ * any client / key / rate-limit logic.
+ */
+export async function chatWithAI(messages, maxTokens) {
+  return requestModel(messages, maxTokens);
+}
+
+/**
+ * Send a structured error payload to the error-log channel.
+ * Exported so conversation.js can report 429 / provider failures without
+ * importing errorLogger directly or bypassing the redaction wrapper.
+ */
+export async function reportError(payload) {
+  return logAICoreError(payload);
 }

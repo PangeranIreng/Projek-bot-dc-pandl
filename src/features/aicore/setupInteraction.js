@@ -10,6 +10,7 @@ import {
   getProviderConfiguration, updateProviderApiKey, removeProviderApiKey,
   testProviderConnection, validateProviderModel,
 } from "./core.js";
+import { clearConversationHistory, getConversationStats } from "./conversation.js";
 import { logger } from "../../utils/logger.js";
 
 const COLOR = 0x7c3aed;
@@ -32,10 +33,12 @@ function panelEmbed(note = "") {
       { name: "Project Knowledge", value: status.knowledgeReady ? `🟢 READY (${status.fileCount} files)` : "🟡 Belum dibuat", inline: true },
       { name: "Error Analyzer", value: cfg.errorAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
       { name: "Vision Analyzer", value: cfg.visionAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
+      { name: "AI Conversation", value: cfg.conversation ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
       { name: "Fix Generator", value: "🟢 ENABLED", inline: true },
       { name: "Provider", value: `${providerStatusLabel(status.providerStatus)} ${cfg.provider} / ${cfg.model}`, inline: true },
       { name: "❌ Error AI Channel", value: cfg.errorChannelId ? `<#${cfg.errorChannelId}>` : "Belum diatur", inline: false },
       { name: "💬 Investigation Channel", value: cfg.investigationChannelId ? `<#${cfg.investigationChannelId}>` : "Belum diatur", inline: false },
+      { name: "🗨️ Conversation Channel", value: cfg.conversationChannelId ? `<#${cfg.conversationChannelId}>` : "Belum diatur", inline: false },
       { name: "🔐 Access", value: cfg.accessMode === "owner" ? "Owner Only" : cfg.accessMode, inline: true },
     )
     .setFooter({ text: "AI Core tidak mengubah source code secara otomatis." })
@@ -100,6 +103,7 @@ function providerConfigEmbed(note = "") {
       { name: "Investigation", value: cfg.investigation ? "🟢 ON" : "⚪ OFF", inline: true },
       { name: "Code Analysis", value: cfg.codeAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
       { name: "Vision Analysis", value: cfg.visionAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "AI Conversation", value: cfg.conversation ? "🟢 ON" : "⚪ OFF", inline: true },
       { name: "Fix Generator", value: "🟢 ON", inline: true },
       ...(cfg.statusReason ? [{ name: "Provider note", value: cfg.statusReason, inline: false }] : []),
     )
@@ -156,19 +160,21 @@ export async function handleAICoreInteraction(interaction) {
         embeds: [new EmbedBuilder().setColor(COLOR).setTitle("📢 AI CHANNELS").setDescription("Kies een kanaal per functie. Konfigurasi tersimpan persistent.")],
         components: [
           new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("aicore:channel:error").setLabel("❌ Set Error AI Channel").setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId("aicore:channel:investigation").setLabel("💬 Set Investigation Channel").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId("aicore:channel:error").setLabel("❌ Error AI Channel").setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("aicore:channel:investigation").setLabel("💬 Investigation Channel").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId("aicore:channel:conversation").setLabel("🗨️ Conversation Channel").setStyle(ButtonStyle.Secondary),
           ),
           new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 Kembali ke AI Core").setStyle(ButtonStyle.Secondary)),
         ],
       });
       return;
     }
-    const channelAction = /^aicore:channel:(error|investigation)$/.exec(id);
+    const channelAction = /^aicore:channel:(error|investigation|conversation)$/.exec(id);
     if (channelAction) {
       const kind = channelAction[1];
+      const kindLabel = kind === "error" ? "Error AI" : kind === "investigation" ? "Investigation" : "AI Conversation";
       await interaction.update({
-        embeds: [new EmbedBuilder().setColor(COLOR).setTitle("📢 Pilih Channel").setDescription(`Pilih channel untuk **${kind === "error" ? "Error AI" : "Investigation"}**.`)],
+        embeds: [new EmbedBuilder().setColor(COLOR).setTitle("📢 Pilih Channel").setDescription(`Pilih channel untuk **${kindLabel}**.`)],
         components: [
           new ActionRowBuilder().addComponents(
             new ChannelSelectMenuBuilder().setCustomId(`aicore:channel:select:${kind}`).setPlaceholder("Pilih channel text...").addChannelTypes(ChannelType.GuildText),
@@ -178,9 +184,9 @@ export async function handleAICoreInteraction(interaction) {
       });
       return;
     }
-    const channelSelect = /^aicore:channel:select:(error|investigation)$/.exec(id);
+    const channelSelect = /^aicore:channel:select:(error|investigation|conversation)$/.exec(id);
     if (channelSelect && interaction.isChannelSelectMenu()) {
-      updateAICoreConfig({ [`${channelSelect[1] === "error" ? "error" : "investigation"}ChannelId`]: interaction.values[0] });
+      updateAICoreConfig({ [`${channelSelect[1]}ChannelId`]: interaction.values[0] });
       await interaction.update({ embeds: [panelEmbed("✅ Channel berhasil disimpan.")], components: panelComponents() });
       return;
     }
@@ -227,7 +233,7 @@ export async function handleAICoreInteraction(interaction) {
       const cfg = getAICoreConfig();
       const modal = new ModalBuilder().setCustomId("aicore:modal:config").setTitle("AI Core Configuration");
       const limits = new TextInputBuilder().setCustomId("limits").setLabel("Timeout ms, max response chars").setStyle(TextInputStyle.Short).setRequired(true).setValue(`${cfg.timeoutMs}, ${cfg.maxResponse}`);
-      const flags = new TextInputBuilder().setCustomId("flags").setLabel("error, investigation, code, vision (on/off)").setStyle(TextInputStyle.Short).setRequired(true).setValue([cfg.errorAnalysis, cfg.investigation, cfg.codeAnalysis, cfg.visionAnalysis].map((v) => v ? "on" : "off").join(","));
+      const flags = new TextInputBuilder().setCustomId("flags").setLabel("error,investigation,code,vision,conversation (on/off)").setStyle(TextInputStyle.Short).setRequired(true).setValue([cfg.errorAnalysis, cfg.investigation, cfg.codeAnalysis, cfg.visionAnalysis, cfg.conversation].map((v) => v ? "on" : "off").join(","));
       modal.addComponents(new ActionRowBuilder().addComponents(limits), new ActionRowBuilder().addComponents(flags));
       await interaction.showModal(modal);
       return;
@@ -267,7 +273,7 @@ export async function handleAICoreInteraction(interaction) {
     }
     if (id === "aicore:test") {
       const cfg = getAICoreConfig();
-      const targets = [cfg.errorChannelId, cfg.investigationChannelId].filter(Boolean);
+      const targets = [cfg.errorChannelId, cfg.investigationChannelId, cfg.conversationChannelId].filter(Boolean);
       let sent = 0;
       for (const channelId of new Set(targets)) {
         const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
@@ -344,6 +350,7 @@ export async function handleAICoreModal(interaction) {
       investigation: flags[1] ?? true,
       codeAnalysis: flags[2] ?? true,
       visionAnalysis: flags[3] ?? true,
+      conversation: flags[4] ?? true,
     });
     await interaction.reply({ content: "✅ AI Core configuration disimpan secara persistent.", ephemeral: true });
   }
