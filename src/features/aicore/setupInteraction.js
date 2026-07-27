@@ -472,17 +472,44 @@ export async function handleAICoreInteraction(interaction) {
 
     // ── Test core channels ───────────────────────────────────────────────────
     if (id === "aicore:test") {
-      const cfg     = getAICoreConfig();
-      const targets = [cfg.errorChannelId, cfg.investigationChannelId, cfg.conversationChannelId].filter(Boolean);
-      let sent = 0;
-      for (const channelId of new Set(targets)) {
+      const cfg = getAICoreConfig();
+      const rawTargets = [
+        ["Error Channel", cfg.errorChannelId],
+        ["Investigation Channel", cfg.investigationChannelId],
+        ["Conversation Channel", cfg.conversationChannelId],
+      ];
+
+      // Discord snowflakes must be scalar string/number values. Normalize and
+      // validate before fetch so malformed config cannot produce the vague
+      // "Expected the value to be a string or number" error.
+      const targets = rawTargets
+        .map(([label, value]) => [label, String(value ?? "").trim()])
+        .filter(([, value]) => /^\d{15,25}$/.test(value));
+
+      const results = [];
+      for (const [label, channelId] of new Map(targets).entries()) {
         const ch = await interaction.client.channels.fetch(channelId).catch(() => null);
-        if (ch?.isTextBased()) {
-          await ch.send("🧪 **AI CORE TEST** — Channel connection aktif.").catch(() => {});
-          sent++;
+        if (!ch) {
+          results.push(`🔴 ${label}: channel tidak ditemukan`);
+          continue;
         }
+        if (!ch.isTextBased()) {
+          results.push(`🟡 ${label}: bukan text channel`);
+          continue;
+        }
+        const sent = await ch.send("🧪 **AI CORE TEST** — Channel connection aktif.").then(() => true).catch(() => false);
+        results.push(`${sent ? "🟢" : "🔴"} ${label}: ${sent ? "OK" : "gagal mengirim"}`);
       }
-      await interaction.reply({ content: `✅ Test selesai. ${sent} channel berhasil diuji.`, ephemeral: true });
+
+      const summary = results.length
+        ? results.join("\n")
+        : "🟡 Belum ada channel AI Core yang dikonfigurasi.";
+
+      await interaction.reply({
+        content: `🧪 **AI CORE CHANNEL TEST**\n${summary}`,
+        ephemeral: true,
+      });
+      return;
     }
 
   } catch (err) {
