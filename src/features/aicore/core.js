@@ -857,8 +857,38 @@ export async function handleAICoreMessage(message) {
     const answer = await investigate({ query, image });
     await message.reply(truncate(answer, 3900)).catch(() => {});
   } catch (err) {
-    logger.warn(`[AI Core] Investigation failed: ${redact(err.message)}`);
-    await message.reply("❌ AI Core tidak dapat menyelesaikan investigation ini. Periksa konfigurasi provider dan coba lagi.").catch(() => {});
+    const providerReason = String(err?.providerReason || err?.message || "Unknown error").slice(0, 300);
+    const category = err?.providerCategory || "unknown";
+    const httpStatus = err?.httpStatus ?? null;
+    const isRateLimit = category === "rate_limit_429" || httpStatus === 429;
+
+    logger.warn(`[AI Core] Investigation failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${redact(providerReason)}`);
+
+    // User-facing reply — show the actual provider reason so the user knows
+    // whether it is a rate-limit, auth issue, timeout, etc.
+    const userMessage = isRateLimit
+      ? `❌ **AI Core — Rate Limit / Quota** (HTTP 429)\nProvider membatasi request. Coba lagi dalam beberapa menit.\nReason: ${redact(providerReason)}`
+      : httpStatus
+        ? `❌ **AI Core — Provider Error** (HTTP ${httpStatus})\n${redact(providerReason)}`
+        : `❌ **AI Core — Investigation Gagal**\n${redact(providerReason)}`;
+    await message.reply(userMessage).catch(() => {});
+
+    // Send structured error to the configured error-log channel
+    void logAICoreError({
+      feature: "AI Core — Investigation",
+      stage: "investigate",
+      reason: redact(providerReason),
+      errorCategory: category,
+      provider: providerLabel(),
+      activeProvider: providerLabel(),
+      ...(httpStatus ? { status: String(httpStatus) } : {}),
+      metadata: {
+        channelId: message.channelId,
+        userId: message.author?.id,
+        queryLength: query?.length ?? 0,
+        hadImage: Boolean(image),
+      },
+    });
   }
   return true;
 }
