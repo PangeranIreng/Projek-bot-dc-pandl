@@ -23,6 +23,7 @@
 import { EmbedBuilder } from "discord.js";
 import {
   getAICoreConfig,
+  getProviderConfiguration,
   isAICoreAllowed,
   chatWithAI,
   investigate,
@@ -290,7 +291,7 @@ export async function handleAIConversationMessage(message) {
         stage: "conversation_reply",
         reason: providerReason,
         errorCategory: category,
-        activeProvider: "OpenAI",
+        activeProvider: getProviderConfiguration().provider,
         ...(httpStatus ? { status: String(httpStatus) } : {}),
         ...(err?.retryAfterMs ? { retryAfterMs: String(err.retryAfterMs) } : {}),
         metadata: {

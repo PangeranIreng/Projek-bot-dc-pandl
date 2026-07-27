@@ -8,10 +8,11 @@ import {
   getAICoreStatus, getAICoreConfig, updateAICoreConfig,
   rebuildKnowledge, isAICoreAllowed, generateFixPrompt,
   getProviderConfiguration, updateProviderApiKey, removeProviderApiKey,
-  testProviderConnection, validateProviderModel,
+  testProviderConnection, validateProviderModel, setActiveProvider,
 } from "./core.js";
 import { clearConversationHistory, getConversationStats } from "./conversation.js";
 import { logger } from "../../utils/logger.js";
+import { list as listProviders } from "./providers/registry.js";
 
 const COLOR = 0x7c3aed;
 
@@ -21,25 +22,54 @@ function deny(interaction) {
   return true;
 }
 
+// ── Status label helpers ───────────────────────────────────────────────────────
+
+function keyStatusLabel(keyStatus) {
+  return {
+    no_key_stored:         "🔴 NOT CONFIGURED",
+    key_stored_not_tested: "🟡 CONFIGURED (Belum diuji)",
+    key_configured:        "🟢 CONFIGURED",
+    authentication_failed: "🔴 AUTH FAILED",
+    model_not_found:       "🟠 CONFIGURED (Model error)",
+  }[keyStatus] || "🔴 NOT CONFIGURED";
+}
+
+function connectionStatusLabel(status) {
+  return {
+    not_configured:       "🔴 NOT CONFIGURED",
+    not_tested:           "🟡 NOT TESTED",
+    validating:           "🟡 VALIDATING...",
+    connected:            "🟢 CONNECTED",
+    authentication_failed: "🔴 AUTHENTICATION FAILED",
+    model_not_found:      "🔴 MODEL NOT FOUND",
+    provider_error:       "🔴 PROVIDER ERROR",
+    model_error:          "🔴 MODEL ERROR",
+    network_error:        "🟠 NETWORK ERROR",
+  }[status] || "🟡 UNKNOWN";
+}
+
+// ── Main panel ─────────────────────────────────────────────────────────────────
+
 function panelEmbed(note = "") {
   const status = getAICoreStatus();
-  const cfg = getAICoreConfig();
+  const cfg    = getAICoreConfig();
+  const prov   = getProviderConfiguration();
   return new EmbedBuilder()
     .setColor(COLOR)
     .setTitle("👑 AI CORE")
     .setDescription(`**CENTRAL INTELLIGENCE**${note ? `\n\n${note}` : ""}`)
     .addFields(
-      { name: "Status", value: status.online ? "🟢 ONLINE" : "🟡 Menunggu bot login", inline: true },
-      { name: "Project Knowledge", value: status.knowledgeReady ? `🟢 READY (${status.fileCount} files)` : "🟡 Belum dibuat", inline: true },
-      { name: "Error Analyzer", value: cfg.errorAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
-      { name: "Vision Analyzer", value: cfg.visionAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
-      { name: "AI Conversation", value: cfg.conversation ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
-      { name: "Fix Generator", value: "🟢 ENABLED", inline: true },
-      { name: "Provider", value: `${providerStatusLabel(status.providerStatus)} ${cfg.provider} / ${cfg.model}`, inline: true },
-      { name: "❌ Error AI Channel", value: cfg.errorChannelId ? `<#${cfg.errorChannelId}>` : "Belum diatur", inline: false },
+      { name: "Status",           value: status.online ? "🟢 ONLINE" : "🟡 Menunggu bot login", inline: true },
+      { name: "Project Knowledge",value: status.knowledgeReady ? `🟢 READY (${status.fileCount} files)` : "🟡 Belum dibuat", inline: true },
+      { name: "Error Analyzer",   value: cfg.errorAnalysis  ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
+      { name: "Vision Analyzer",  value: cfg.visionAnalysis ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
+      { name: "AI Conversation",  value: cfg.conversation   ? "🟢 ENABLED" : "⚪ DISABLED", inline: true },
+      { name: "Fix Generator",    value: "🟢 ENABLED", inline: true },
+      { name: "Provider",         value: `${connectionStatusLabel(prov.status)} **${prov.provider}** / \`${prov.model}\``, inline: false },
+      { name: "❌ Error AI Channel",    value: cfg.errorChannelId         ? `<#${cfg.errorChannelId}>`         : "Belum diatur", inline: false },
       { name: "💬 Investigation Channel", value: cfg.investigationChannelId ? `<#${cfg.investigationChannelId}>` : "Belum diatur", inline: false },
-      { name: "🗨️ Conversation Channel", value: cfg.conversationChannelId ? `<#${cfg.conversationChannelId}>` : "Belum diatur", inline: false },
-      { name: "🔐 Access", value: cfg.accessMode === "owner" ? "Owner Only" : cfg.accessMode, inline: true },
+      { name: "🗨️ Conversation Channel",  value: cfg.conversationChannelId  ? `<#${cfg.conversationChannelId}>`  : "Belum diatur", inline: false },
+      { name: "🔐 Access",         value: cfg.accessMode === "owner" ? "Owner Only" : cfg.accessMode, inline: true },
     )
     .setFooter({ text: "AI Core tidak mengubah source code secara otomatis." })
     .setTimestamp();
@@ -60,52 +90,32 @@ function panelComponents() {
   ];
 }
 
-function keyStatusLabel(keyStatus) {
-  return {
-    no_key_stored: "🔴 NOT CONFIGURED",
-    key_stored_not_tested: "🟡 CONFIGURED (Belum diuji)",
-    key_configured: "🟢 CONFIGURED",
-    authentication_failed: "🔴 AUTH FAILED",
-    model_not_found: "🟠 CONFIGURED (Model error)",
-  }[keyStatus] || "🔴 NOT CONFIGURED";
-}
-
-function connectionStatusLabel(connectionStatus) {
-  return {
-    not_configured: "🔴 NOT CONFIGURED",
-    not_tested: "🟡 NOT TESTED",
-    validating: "🟡 VALIDATING...",
-    connected: "🟢 CONNECTED",
-    authentication_failed: "🔴 AUTHENTICATION FAILED",
-    model_not_found: "🔴 MODEL NOT FOUND",
-    provider_error: "🔴 PROVIDER ERROR",
-    model_error: "🔴 MODEL ERROR",
-    network_error: "🟠 NETWORK ERROR",
-  }[connectionStatus] || "🟡 UNKNOWN";
-}
-
-function providerStatusLabel(status) {
-  return connectionStatusLabel(status);
-}
+// ── Provider config panel ──────────────────────────────────────────────────────
 
 function providerConfigEmbed(note = "") {
-  const cfg = getProviderConfiguration();
+  const cfg  = getProviderConfiguration();
+  const prov = listProviders();
+  const activeProviderInfo = prov.find((p) => p.id === cfg.providerId);
   return new EmbedBuilder()
     .setColor(COLOR)
     .setTitle("⚙️ AI CONFIGURATION")
-    .setDescription(`${note ? `${note}\n\n` : ""}Pengaturan provider AI Core disimpan secara aman dan hanya dapat dikelola Owner.`)
+    .setDescription(
+      `${note ? `${note}\n\n` : ""}Pengaturan provider AI Core disimpan secara aman.\n` +
+      `Provider tersedia: **${prov.map((p) => p.name).join(", ")}**`
+    )
     .addFields(
-      { name: "Provider", value: `🟢 ${cfg.provider}`, inline: true },
-      { name: "API Key", value: `${keyStatusLabel(cfg.keyStatus)}\n${cfg.apiKeyMask}`, inline: true },
-      { name: "Connection", value: connectionStatusLabel(cfg.status), inline: true },
-      { name: "Model", value: `\`${cfg.model}\``, inline: true },
-      { name: "Error Analysis", value: cfg.errorAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
-      { name: "Investigation", value: cfg.investigation ? "🟢 ON" : "⚪ OFF", inline: true },
-      { name: "Code Analysis", value: cfg.codeAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
-      { name: "Vision Analysis", value: cfg.visionAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
-      { name: "AI Conversation", value: cfg.conversation ? "🟢 ON" : "⚪ OFF", inline: true },
-      { name: "Fix Generator", value: "🟢 ON", inline: true },
-      ...(cfg.statusReason ? [{ name: "Provider note", value: cfg.statusReason, inline: false }] : []),
+      { name: "Provider",       value: `🟢 **${cfg.provider}**`,                          inline: true },
+      { name: "API Key",        value: `${keyStatusLabel(cfg.keyStatus)}\n${cfg.apiKeyMask}`, inline: true },
+      { name: "Connection",     value: connectionStatusLabel(cfg.status),                  inline: true },
+      { name: "Model",          value: `\`${cfg.model}\``,                                 inline: true },
+      { name: "Default Model",  value: `\`${activeProviderInfo?.defaultModel ?? cfg.model}\``, inline: true },
+      { name: "Error Analysis", value: cfg.errorAnalysis  ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Investigation",  value: cfg.investigation  ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Code Analysis",  value: cfg.codeAnalysis   ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Vision Analysis",value: cfg.visionAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "AI Conversation",value: cfg.conversation   ? "🟢 ON" : "⚪ OFF", inline: true },
+      { name: "Fix Generator",  value: "🟢 ON", inline: true },
+      ...(cfg.statusReason ? [{ name: "Provider note", value: String(cfg.statusReason).slice(0, 1024), inline: false }] : []),
     )
     .setFooter({ text: "API key tidak pernah ditampilkan lengkap atau dikirim ke channel." })
     .setTimestamp();
@@ -119,33 +129,73 @@ function providerConfigComponents() {
       new ButtonBuilder().setCustomId("aicore:provider:model").setLabel("🧠 Change Model").setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("aicore:provider:change").setLabel("🔄 Change Provider").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("aicore:provider:settings").setLabel("⚙️ AI Settings").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("aicore:provider:remove").setLabel("🗑️ Remove API Key").setStyle(ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 AI Core").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
 
-export function buildAICoreEmbed() {
-  return panelEmbed();
+// ── Provider selection panel ───────────────────────────────────────────────────
+
+/**
+ * Build a provider selection embed + row of buttons.
+ * Called when auto-detection failed (unknown key format) or when the user
+ * clicks "Change Provider" manually.
+ */
+function providerSelectEmbed(note = "") {
+  const providers = listProviders();
+  const lines = providers.map((p) => `• **${p.name}** — default model: \`${p.defaultModel}\``).join("\n");
+  return new EmbedBuilder()
+    .setColor(COLOR)
+    .setTitle("🔄 PILIH AI PROVIDER")
+    .setDescription(
+      `${note ? `${note}\n\n` : ""}API key berhasil disimpan tetapi provider tidak dapat dideteksi otomatis.\n` +
+      `Pilih provider yang sesuai dengan API key yang baru dimasukkan:\n\n${lines}`
+    )
+    .setFooter({ text: "Provider menentukan endpoint dan format request yang digunakan." })
+    .setTimestamp();
 }
 
-export function buildAICoreComponents() {
-  return panelComponents();
+function providerSelectComponents() {
+  const providers = listProviders();
+  // Discord allows max 5 buttons per row; we have exactly 5 providers
+  const buttons = providers.map((p) =>
+    new ButtonBuilder()
+      .setCustomId(`aicore:provider:select:${p.id}`)
+      .setLabel(p.name)
+      .setStyle(ButtonStyle.Primary),
+  );
+  return [new ActionRowBuilder().addComponents(...buttons)];
 }
+
+// ── Exported helpers (for adminSetup / commands) ───────────────────────────────
+
+export function buildAICoreEmbed()      { return panelEmbed(); }
+export function buildAICoreComponents() { return panelComponents(); }
+
+// ── Main interaction handler ───────────────────────────────────────────────────
 
 export async function handleAICoreInteraction(interaction) {
   const id = interaction.customId ?? "";
   try {
+    // Fix prompt — accessible to all allowed users (not just owner)
     if (id.startsWith("aicore:fix:")) {
-      if (!isAICoreAllowed(interaction.member)) return void interaction.reply({ content: "❌ Kamu tidak memiliki akses ke AI Core.", ephemeral: true });
+      if (!isAICoreAllowed(interaction.member)) {
+        return void interaction.reply({ content: "❌ Kamu tidak memiliki akses ke AI Core.", ephemeral: true });
+      }
       await interaction.deferReply({ ephemeral: true });
       const prompt = await generateFixPrompt(id.slice("aicore:fix:".length));
       await interaction.editReply({ content: `🛠️ **FIX REQUEST**\n\`\`\`md\n${prompt.slice(0, 3800)}\n\`\`\`` });
       return;
     }
+
     if (deny(interaction)) return;
 
+    // ── Navigation ──────────────────────────────────────────────────────────
     if (id === "aicore:setup" || id === "aicore:refresh") {
       await interaction.update({ embeds: [panelEmbed()], components: panelComponents() });
       return;
@@ -155,16 +205,20 @@ export async function handleAICoreInteraction(interaction) {
       await interaction.update({ embeds: [buildMainSetupEmbed()], components: buildMainSetupComponents() });
       return;
     }
+
+    // ── Channel configuration ────────────────────────────────────────────────
     if (id === "aicore:channels") {
       await interaction.update({
-        embeds: [new EmbedBuilder().setColor(COLOR).setTitle("📢 AI CHANNELS").setDescription("Kies een kanaal per functie. Konfigurasi tersimpan persistent.")],
+        embeds: [new EmbedBuilder().setColor(COLOR).setTitle("📢 AI CHANNELS").setDescription("Konfigurasi channel per fitur. Tersimpan persistent.")],
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId("aicore:channel:error").setLabel("❌ Error AI Channel").setStyle(ButtonStyle.Danger),
             new ButtonBuilder().setCustomId("aicore:channel:investigation").setLabel("💬 Investigation Channel").setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId("aicore:channel:conversation").setLabel("🗨️ Conversation Channel").setStyle(ButtonStyle.Secondary),
           ),
-          new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 Kembali ke AI Core").setStyle(ButtonStyle.Secondary)),
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("aicore:setup").setLabel("🔙 Kembali ke AI Core").setStyle(ButtonStyle.Secondary),
+          ),
         ],
       });
       return;
@@ -177,9 +231,14 @@ export async function handleAICoreInteraction(interaction) {
         embeds: [new EmbedBuilder().setColor(COLOR).setTitle("📢 Pilih Channel").setDescription(`Pilih channel untuk **${kindLabel}**.`)],
         components: [
           new ActionRowBuilder().addComponents(
-            new ChannelSelectMenuBuilder().setCustomId(`aicore:channel:select:${kind}`).setPlaceholder("Pilih channel text...").addChannelTypes(ChannelType.GuildText),
+            new ChannelSelectMenuBuilder()
+              .setCustomId(`aicore:channel:select:${kind}`)
+              .setPlaceholder("Pilih channel text...")
+              .addChannelTypes(ChannelType.GuildText),
           ),
-          new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("aicore:channels").setLabel("🔙 Kembali").setStyle(ButtonStyle.Secondary)),
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("aicore:channels").setLabel("🔙 Kembali").setStyle(ButtonStyle.Secondary),
+          ),
         ],
       });
       return;
@@ -190,25 +249,31 @@ export async function handleAICoreInteraction(interaction) {
       await interaction.update({ embeds: [panelEmbed("✅ Channel berhasil disimpan.")], components: panelComponents() });
       return;
     }
+
+    // ── Access config ────────────────────────────────────────────────────────
     if (id === "aicore:access") {
-      const cfg = getAICoreConfig();
+      const cfg   = getAICoreConfig();
       const modal = new ModalBuilder().setCustomId("aicore:modal:access").setTitle("AI Core Access");
-      const mode = new TextInputBuilder().setCustomId("mode").setLabel("Mode: owner / staff / role / user").setStyle(TextInputStyle.Short).setRequired(true).setValue(cfg.accessMode);
-      const ids = new TextInputBuilder().setCustomId("ids").setLabel("Role/User IDs (comma-separated; optional)").setStyle(TextInputStyle.Short).setRequired(false).setValue([...(cfg.allowedRoleIds ?? []), ...(cfg.allowedUserIds ?? [])].join(","));
+      const mode  = new TextInputBuilder().setCustomId("mode").setLabel("Mode: owner / staff / role / user").setStyle(TextInputStyle.Short).setRequired(true).setValue(cfg.accessMode);
+      const ids   = new TextInputBuilder().setCustomId("ids").setLabel("Role/User IDs (comma-separated; optional)").setStyle(TextInputStyle.Short).setRequired(false).setValue([...(cfg.allowedRoleIds ?? []), ...(cfg.allowedUserIds ?? [])].join(","));
       modal.addComponents(new ActionRowBuilder().addComponents(mode), new ActionRowBuilder().addComponents(ids));
       await interaction.showModal(modal);
       return;
     }
+
+    // ── Provider config panel ────────────────────────────────────────────────
     if (id === "aicore:config") {
       await interaction.update({ embeds: [providerConfigEmbed()], components: providerConfigComponents() });
       return;
     }
+
+    // ── API key input ────────────────────────────────────────────────────────
     if (id === "aicore:provider:apikey") {
       const modal = new ModalBuilder().setCustomId("aicore:modal:apikey").setTitle("🔐 UPDATE AI API KEY");
-      const key = new TextInputBuilder()
+      const key   = new TextInputBuilder()
         .setCustomId("apiKey")
         .setLabel("Masukkan API key baru")
-        .setPlaceholder("API key diproses privat dan tidak dikirim sebagai message")
+        .setPlaceholder("OpenAI: sk-…  Gemini: AIza…  Anthropic: sk-ant-…  Groq: gsk_…  OpenRouter: sk-or-…")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMinLength(20);
@@ -216,41 +281,83 @@ export async function handleAICoreInteraction(interaction) {
       await interaction.showModal(modal);
       return;
     }
-    if (id === "aicore:provider:model") {
-      const cfg = getProviderConfiguration();
-      const modal = new ModalBuilder().setCustomId("aicore:modal:model").setTitle("🧠 SELECT AI MODEL");
-      const model = new TextInputBuilder()
-        .setCustomId("model")
-        .setLabel("Model provider")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setValue(cfg.model || "gpt-4o-mini");
-      modal.addComponents(new ActionRowBuilder().addComponents(model));
-      await interaction.showModal(modal);
+
+    // ── Manual provider override ─────────────────────────────────────────────
+    if (id === "aicore:provider:change") {
+      await interaction.update({
+        embeds: [providerSelectEmbed("Pilih provider untuk API key yang sedang aktif.")],
+        components: [
+          ...providerSelectComponents(),
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("aicore:config").setLabel("🔙 Batal").setStyle(ButtonStyle.Secondary),
+          ),
+        ],
+      });
       return;
     }
-    if (id === "aicore:provider:settings") {
-      const cfg = getAICoreConfig();
-      const modal = new ModalBuilder().setCustomId("aicore:modal:config").setTitle("AI Core Configuration");
-      const limits = new TextInputBuilder().setCustomId("limits").setLabel("Timeout ms, max response chars").setStyle(TextInputStyle.Short).setRequired(true).setValue(`${cfg.timeoutMs}, ${cfg.maxResponse}`);
-      const flags = new TextInputBuilder().setCustomId("flags").setLabel("error,investigation,code,vision,conversation (on/off)").setStyle(TextInputStyle.Short).setRequired(true).setValue([cfg.errorAnalysis, cfg.investigation, cfg.codeAnalysis, cfg.visionAnalysis, cfg.conversation].map((v) => v ? "on" : "off").join(","));
-      modal.addComponents(new ActionRowBuilder().addComponents(limits), new ActionRowBuilder().addComponents(flags));
-      await interaction.showModal(modal);
+
+    // ── Provider selection (from detection-failed flow OR manual change) ──────
+    const providerSelect = /^aicore:provider:select:([a-z]+)$/.exec(id);
+    if (providerSelect) {
+      const providerId = providerSelect[1];
+      const result     = setActiveProvider(providerId);
+      await interaction.update({
+        embeds: [providerConfigEmbed(
+          `✅ Provider diset ke **${result.provider}**.\nModel default: \`${result.defaultModel}\`\nGunakan **🧪 Test Connection** untuk memverifikasi.`
+        )],
+        components: providerConfigComponents(),
+      });
       return;
     }
+
+    // ── Test connection ──────────────────────────────────────────────────────
     if (id === "aicore:provider:test") {
       await interaction.deferReply({ ephemeral: true });
       const result = await testProviderConnection();
       await interaction.editReply({
         content: result.ok
-          ? `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nStatus: 🟢 SUCCESS\nAI Core: 🟢 READY\nModel: \`${result.configuration.model}\``
+          ? `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nModel: \`${result.configuration.model}\`\nStatus: 🟢 SUCCESS\nAI Core: 🟢 READY`
           : `🧪 **AI CONNECTION TEST**\nProvider: **${result.configuration.provider}**\nStatus: 🔴 FAILED\nReason: ${result.reason}`,
       });
       return;
     }
+
+    // ── Model selection ──────────────────────────────────────────────────────
+    if (id === "aicore:provider:model") {
+      const cfg   = getProviderConfiguration();
+      const modal = new ModalBuilder().setCustomId("aicore:modal:model").setTitle("🧠 SELECT AI MODEL");
+      const model = new TextInputBuilder()
+        .setCustomId("model")
+        .setLabel(`Model provider (${cfg.provider})`)
+        .setPlaceholder(`Default: ${cfg.defaultModel}`)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setValue(cfg.model || cfg.defaultModel);
+      modal.addComponents(new ActionRowBuilder().addComponents(model));
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // ── AI settings ──────────────────────────────────────────────────────────
+    if (id === "aicore:provider:settings") {
+      const cfg   = getAICoreConfig();
+      const modal = new ModalBuilder().setCustomId("aicore:modal:config").setTitle("AI Core Configuration");
+      const limits = new TextInputBuilder().setCustomId("limits").setLabel("Timeout ms, max response chars").setStyle(TextInputStyle.Short).setRequired(true).setValue(`${cfg.timeoutMs}, ${cfg.maxResponse}`);
+      const flags  = new TextInputBuilder().setCustomId("flags").setLabel("error,investigation,code,vision,conversation (on/off)").setStyle(TextInputStyle.Short).setRequired(true).setValue([cfg.errorAnalysis, cfg.investigation, cfg.codeAnalysis, cfg.visionAnalysis, cfg.conversation].map((v) => v ? "on" : "off").join(","));
+      modal.addComponents(new ActionRowBuilder().addComponents(limits), new ActionRowBuilder().addComponents(flags));
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // ── Remove API key ───────────────────────────────────────────────────────
     if (id === "aicore:provider:remove") {
       await interaction.update({
-        embeds: [new EmbedBuilder().setColor(COLOR).setTitle("⚠️ REMOVE AI API KEY?").setDescription("API key provider akan dihapus dari secure storage. Project Knowledge, channel configuration, error history, dan AI Core tetap dipertahankan.")],
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLOR)
+            .setTitle("⚠️ REMOVE AI API KEY?")
+            .setDescription("API key provider akan dihapus dari secure storage. Project Knowledge, channel configuration, error history, dan AI Core tetap dipertahankan."),
+        ],
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId("aicore:provider:remove:confirm").setLabel("🗑️ Remove permanently").setStyle(ButtonStyle.Danger),
@@ -262,72 +369,108 @@ export async function handleAICoreInteraction(interaction) {
     }
     if (id === "aicore:provider:remove:confirm") {
       removeProviderApiKey();
-      await interaction.update({ embeds: [providerConfigEmbed("✅ API key dihapus. AI Core tetap berjalan dalam fallback/local mode.")], components: providerConfigComponents() });
+      await interaction.update({
+        embeds: [providerConfigEmbed("✅ API key dihapus. AI Core tetap berjalan dalam fallback/local mode.")],
+        components: providerConfigComponents(),
+      });
       return;
     }
+
+    // ── Rebuild project knowledge ────────────────────────────────────────────
     if (id === "aicore:knowledge") {
       await interaction.deferUpdate();
       const knowledge = rebuildKnowledge();
-      await interaction.editReply({ embeds: [panelEmbed(`✅ Project Knowledge diperbarui: ${knowledge.summary.fileCount} file di-index.`)], components: panelComponents() });
+      await interaction.editReply({
+        embeds: [panelEmbed(`✅ Project Knowledge diperbarui: ${knowledge.summary.fileCount} file di-index.`)],
+        components: panelComponents(),
+      });
       return;
     }
+
+    // ── Test core channels ───────────────────────────────────────────────────
     if (id === "aicore:test") {
-      const cfg = getAICoreConfig();
+      const cfg     = getAICoreConfig();
       const targets = [cfg.errorChannelId, cfg.investigationChannelId, cfg.conversationChannelId].filter(Boolean);
       let sent = 0;
       for (const channelId of new Set(targets)) {
-        const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
-        if (channel?.isTextBased()) {
-          await channel.send("🧪 **AI CORE TEST** — Channel connection aktif.").catch(() => {});
+        const ch = await interaction.client.channels.fetch(channelId).catch(() => null);
+        if (ch?.isTextBased()) {
+          await ch.send("🧪 **AI CORE TEST** — Channel connection aktif.").catch(() => {});
           sent++;
         }
       }
       await interaction.reply({ content: `✅ Test selesai. ${sent} channel berhasil diuji.`, ephemeral: true });
     }
+
   } catch (err) {
-    logger.warn("[AI Core] Setup interaction failed.");
+    logger.warn(`[AI Core] Setup interaction failed: ${err.message}`);
     const method = interaction.deferred ? "editReply" : interaction.replied ? "followUp" : "reply";
     await interaction[method]({ content: "❌ AI Core setup gagal diproses.", ephemeral: true }).catch(() => {});
   }
 }
 
+// ── Modal handler ──────────────────────────────────────────────────────────────
+
 export async function handleAICoreModal(interaction) {
   if (deny(interaction)) return;
+
+  // Access mode
   if (interaction.customId === "aicore:modal:access") {
     const mode = interaction.fields.getTextInputValue("mode").trim().toLowerCase();
-    const ids = interaction.fields.getTextInputValue("ids").split(",").map((id) => id.trim()).filter((id) => /^\d{15,25}$/.test(id));
+    const ids  = interaction.fields.getTextInputValue("ids").split(",").map((id) => id.trim()).filter((id) => /^\d{15,25}$/.test(id));
     if (!["owner", "staff", "admin", "role", "user"].includes(mode)) {
       await interaction.reply({ content: "❌ Mode harus owner, staff, role, atau user.", ephemeral: true });
       return;
     }
-    updateAICoreConfig({ accessMode: mode, allowedRoleIds: mode === "role" ? ids : [], allowedUserIds: mode === "user" ? ids : [] });
+    updateAICoreConfig({
+      accessMode:      mode,
+      allowedRoleIds:  mode === "role" ? ids : [],
+      allowedUserIds:  mode === "user" ? ids : [],
+    });
     await interaction.reply({ content: `✅ AI Core access disimpan: **${mode}**.`, ephemeral: true });
     return;
   }
+
+  // API key
   if (interaction.customId === "aicore:modal:apikey") {
     await interaction.deferReply({ ephemeral: true });
     try {
-      const apiKey = interaction.fields.getTextInputValue("apiKey");
+      const apiKey = interaction.fields.getTextInputValue("apiKey").trim();
       const result = await updateProviderApiKey(apiKey);
-      await interaction.editReply({
-        content: [
-          `✅ **API KEY DISIMPAN**`,
-          `Provider: **${result.provider}**`,
-          `API Key: ${result.apiKeyMask}`,
-          `Status: 🟡 Tersimpan — belum diuji`,
-          ``,
-          `Gunakan tombol **🧪 Test Connection** untuk memverifikasi koneksi ke provider.`,
-        ].join("\n"),
-      });
+
+      if (result.detectionNeeded) {
+        // Auto-detection failed — ask user to pick a provider
+        await interaction.editReply({
+          content: [
+            "✅ **API KEY DISIMPAN**",
+            `API Key: ${result.apiKeyMask}`,
+            `Status: 🟡 Tersimpan — provider tidak dapat dideteksi otomatis`,
+            "",
+            "**Pilih provider yang sesuai** menggunakan tombol di panel ⚙️ AI Configuration → 🔄 Change Provider.",
+          ].join("\n"),
+        });
+      } else {
+        await interaction.editReply({
+          content: [
+            "✅ **API KEY DISIMPAN**",
+            `Provider: **${result.provider}**`,
+            `Model: \`${result.model}\``,
+            `API Key: ${result.apiKeyMask}`,
+            `Status: 🟡 Tersimpan — belum diuji`,
+            "",
+            "Gunakan tombol **🧪 Test Connection** untuk memverifikasi koneksi ke provider.",
+          ].join("\n"),
+        });
+      }
     } catch (error) {
-      const reason = String(error?.providerReason || error?.message || "Gagal menyimpan API key.").slice(0, 240);
+      const reason   = String(error?.providerReason || error?.message || "Gagal menyimpan API key.").slice(0, 240);
       const category = error?.providerCategory ? `\nCategory: \`${error.providerCategory}\`` : "";
-      await interaction.editReply({
-        content: `❌ **API KEY GAGAL DISIMPAN**\nReason: ${reason}${category}`,
-      });
+      await interaction.editReply({ content: `❌ **API KEY GAGAL DISIMPAN**\nReason: ${reason}${category}` });
     }
     return;
   }
+
+  // Model selection
   if (interaction.customId === "aicore:modal:model") {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -336,21 +479,25 @@ export async function handleAICoreModal(interaction) {
       updateAICoreConfig({ model });
       await interaction.editReply({ content: `✅ Model berhasil disimpan: \`${model}\`.` });
     } catch (error) {
-      await interaction.editReply({ content: `❌ Model tidak dapat divalidasi. ${String(error.message || "Provider rejected the model.").slice(0, 240)}` });
+      await interaction.editReply({
+        content: `❌ Model tidak dapat divalidasi.\n${String(error.message || "Provider rejected the model.").slice(0, 240)}`,
+      });
     }
     return;
   }
+
+  // AI settings
   if (interaction.customId === "aicore:modal:config") {
     const [timeoutMs, maxResponse] = interaction.fields.getTextInputValue("limits").split(",").map((v) => Number.parseInt(v.trim(), 10));
     const flags = interaction.fields.getTextInputValue("flags").split(",").map((v) => v.trim().toLowerCase() === "on");
     updateAICoreConfig({
-      timeoutMs: Number.isFinite(timeoutMs) ? Math.min(120000, Math.max(5000, timeoutMs)) : 30000,
-      maxResponse: Number.isFinite(maxResponse) ? Math.min(4000, Math.max(300, maxResponse)) : 1800,
-      errorAnalysis: flags[0] ?? true,
-      investigation: flags[1] ?? true,
-      codeAnalysis: flags[2] ?? true,
-      visionAnalysis: flags[3] ?? true,
-      conversation: flags[4] ?? true,
+      timeoutMs:    Number.isFinite(timeoutMs)   ? Math.min(120_000, Math.max(5_000, timeoutMs))   : 30_000,
+      maxResponse:  Number.isFinite(maxResponse) ? Math.min(4_000,   Math.max(300,   maxResponse)) : 1_800,
+      errorAnalysis:    flags[0] ?? true,
+      investigation:    flags[1] ?? true,
+      codeAnalysis:     flags[2] ?? true,
+      visionAnalysis:   flags[3] ?? true,
+      conversation:     flags[4] ?? true,
     });
     await interaction.reply({ content: "✅ AI Core configuration disimpan secara persistent.", ephemeral: true });
   }

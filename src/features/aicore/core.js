@@ -1,31 +1,34 @@
 /**
- * AI Core — one central intelligence service for error analysis,
- * investigation, project knowledge, vision input, and fix prompts.
+ * AI Core — multi-provider central intelligence service.
  *
- * It is deliberately advisory: it never edits source code or executes a
- * generated fix. All provider failures are isolated from the bot.
+ * Supports: OpenAI, Google Gemini, Anthropic Claude, Groq, OpenRouter.
+ * The active provider is auto-detected from the API key prefix, or can be
+ * set manually via the Discord setup panel.
+ *
+ * Advisory only: never edits source code or executes a generated fix.
+ * All provider failures are isolated from the bot.
  */
 import crypto from "node:crypto";
-import OpenAI from "openai";
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from "discord.js";
 import { aiCoreDB, encryptionSourceLabel } from "../../database/aiCoreDB.js";
 import { rebuildProjectIndex, searchProject } from "./projectIndexer.js";
 import { isOwner, isStaff } from "../../middleware/permissions.js";
 import { logger } from "../../utils/logger.js";
+import * as registry from "./providers/registry.js";
 
-let client = null;
-let openai = null;
-let runtimeApiKey = null;
-let openaiApiKey = null;
-const recentRequests = [];
-const activeErrorAnalyses = new Set();
-// Conservative default — matches typical free-tier RPM (gpt-4o-mini: 3 RPM).
-// Raise this only if the API key plan supports a higher rate.
-const MAX_REQUESTS_PER_MINUTE = 3;
-// Concurrent request guard: prevents two features from firing simultaneously
-// and doubling the per-minute load on the provider.
-let activeAIRequests = 0;
+// ── Module-level runtime state ─────────────────────────────────────────────────
+let client          = null;   // Discord client
+let activeClient    = null;   // Provider SDK client / config object
+let runtimeApiKey   = null;   // In-memory key (set after updateProviderApiKey)
+let activeApiKey    = null;   // Key used to build the current activeClient
+let activeAdapter   = null;   // Provider adapter module (from registry)
+const recentRequests        = [];
+const activeErrorAnalyses   = new Set();
+const MAX_REQUESTS_PER_MINUTE   = 3;
+let activeAIRequests            = 0;
 const MAX_CONCURRENT_AI_REQUESTS = 2;
+
+// ── Utilities ──────────────────────────────────────────────────────────────────
 
 function truncate(value, max) {
   const text = String(value ?? "");
@@ -37,8 +40,8 @@ export function sleep(ms) {
 }
 
 /**
- * Extract the Retry-After delay (in ms) from a raw OpenAI SDK error.
- * Must be called BEFORE safeProviderError() discards the headers.
+ * Extract the Retry-After delay (ms) from a raw provider SDK error.
+ * Must be called BEFORE safeProviderError() wraps the error.
  */
 function extractRetryAfterMs(error) {
   try {
@@ -52,77 +55,95 @@ function extractRetryAfterMs(error) {
   return null;
 }
 
+/** Redact API keys of any supported provider from log output / Discord messages. */
 export function redact(value) {
   return String(value ?? "")
+    // Anthropic
+    .replace(/\bsk-ant-[A-Za-z0-9_-]{8,}\b/g, "sk-ant-************")
+    // OpenRouter
+    .replace(/\bsk-or-[A-Za-z0-9_-]{8,}\b/g, "sk-or-************")
+    // Groq
+    .replace(/\bgsk_[A-Za-z0-9_-]{8,}\b/g, "gsk_************")
+    // Gemini
+    .replace(/\bAIza[A-Za-z0-9_-]{8,}\b/g, "AIza************")
+    // OpenAI (must come AFTER more-specific patterns above)
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-************")
+    // Env-var assignment patterns
     .replace(/\b(BOT_TOKEN|OPENAI_API_KEY|SESSION_SECRET|API_KEY)\s*=\s*[^\s]+/gi, "$1=************")
     .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1************");
 }
 
-/**
- * Send a structured error to the existing error-log channel via logError.
- * Uses a lazy dynamic import to avoid the circular dependency:
- *   core.js ← errorLogger.js → core.js (recordError / getAICoreConfig)
- *
- * Errors from "AI Core" are intentionally filtered out of recordError to
- * prevent analysis loops, but logError still sends the embed to the channel.
- * Never logs API keys, secrets, or ciphertext.
- */
-async function logAICoreError(payload) {
-  try {
-    const { logError } = await import("../../utils/errorLogger.js");
-    void logError(payload).catch(() => {});
-  } catch (_) { /* never let error-reporting crash the caller */ }
-}
-
-function providerReady() {
-  return Boolean(getActiveApiKey());
-}
+// ── Provider helpers ───────────────────────────────────────────────────────────
 
 function config() {
   return aiCoreDB.getConfig();
 }
 
+function resolveAdapter() {
+  const cfg = config();
+  return registry.get(cfg.provider || "openai");
+}
+
 function getActiveApiKey() {
   if (runtimeApiKey) return runtimeApiKey;
+  const cfg = aiCoreDB.getConfig();
+  // A key marked "provider_selection_needed" was saved to DB but the provider
+  // has not yet been confirmed. Block it from use — any request would route the
+  // key to an unverified endpoint. The owner must call setActiveProvider() first.
+  if (cfg.keyStatus === "provider_selection_needed") return null;
+  // Fallback chain: secure storage → OPENAI_API_KEY env var (legacy)
   return aiCoreDB.getApiKey() || process.env.OPENAI_API_KEY?.trim() || null;
 }
 
 function providerLabel() {
-  return config().provider === "openai" ? "OpenAI" : String(config().provider || "OpenAI");
+  const adapter = activeAdapter ?? resolveAdapter();
+  return adapter.PROVIDER_NAME;
 }
 
 function keyMask(apiKey) {
   if (!apiKey) return "Not configured";
-  const suffix = apiKey.slice(-4);
-  return `Configured ••••${suffix}`;
+  return `Configured ••••${apiKey.slice(-4)}`;
 }
 
 function keyDiagnostics(apiKey, extra = {}) {
   const value = String(apiKey || "");
   return {
-    hasApiKey: Boolean(value),
-    keyLength: value.length,
-    maskedPrefix: value ? value.slice(0, 3) : null,
-    maskedSuffix: value ? value.slice(-4) : null,
-    provider: providerLabel(),
-    model: config().model,
+    hasApiKey:     Boolean(value),
+    keyLength:     value.length,
+    maskedPrefix:  value ? value.slice(0, 4) : null,
+    maskedSuffix:  value ? value.slice(-4)   : null,
+    provider:      providerLabel(),
+    model:         config().model,
     ...extra,
   };
 }
 
 function apiKeyHash(apiKey) {
   const value = String(apiKey || "");
-  return value
-    ? crypto.createHash("sha256").update(value, "utf8").digest("hex")
-    : null;
+  return value ? crypto.createHash("sha256").update(value, "utf8").digest("hex") : null;
 }
+
+function providerReady() {
+  return Boolean(getActiveApiKey());
+}
+
+function logProviderDiagnostic(stage, apiKey, extra = {}) {
+  if (process.env.AI_CORE_DIAGNOSTICS !== "true") return;
+  logger.info(`[AI Core] ${stage}`, {
+    ...keyDiagnostics(apiKey),
+    apiKeySha256: apiKeyHash(apiKey),
+    ...extra,
+  });
+}
+
+// ── Error classification ───────────────────────────────────────────────────────
 
 function providerErrorStatus(error) {
   return Number.isFinite(Number(error?.status)) ? Number(error.status) : null;
 }
 
 function providerErrorText(error) {
+  // Support both SDK-style (.error object) and fetch-based error objects
   const detail = error?.error;
   if (typeof detail === "string") return detail.toLowerCase();
   if (detail && typeof detail === "object") {
@@ -132,11 +153,11 @@ function providerErrorText(error) {
 }
 
 function providerErrorCategory(error, { modelRequest = false } = {}) {
-  const status = providerErrorStatus(error);
-  const code = String(error?.code || "").toLowerCase();
+  const status  = providerErrorStatus(error);
+  const code    = String(error?.code || "").toLowerCase();
   const message = providerErrorText(error);
-  if (code === "ai_key_format") return "invalid_key_format";
-  if (code === "ai_storage") return "secure_storage";
+  if (code === "ai_key_format")  return "invalid_key_format";
+  if (code === "ai_storage")     return "secure_storage";
   if (status === 401) return "authentication_401";
   if (status === 403) return "permission_403";
   if (status === 404) {
@@ -146,18 +167,18 @@ function providerErrorCategory(error, { modelRequest = false } = {}) {
   }
   if (status === 429) return "rate_limit_429";
   if (status === 400) return "invalid_request_400";
-  if (status >= 500) return `provider_${status}`;
+  if (status >= 500)  return `provider_${status}`;
   if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) return "timeout";
   if (/network|fetch|econn|socket|dns|connection error/.test(message)) return "network";
   return "unknown";
 }
 
 function classifyProviderError(error, { modelRequest = false } = {}) {
-  const status = providerErrorStatus(error);
-  const code = String(error?.code || "").toLowerCase();
+  const status  = providerErrorStatus(error);
+  const code    = String(error?.code || "").toLowerCase();
   const message = providerErrorText(error);
   if (code === "ai_key_format") return "API key format is invalid.";
-  if (code === "ai_storage") return "Secure credential storage failed.";
+  if (code === "ai_storage")    return "Secure credential storage failed.";
   if (status === 401 || /authentication failed|invalid api key|incorrect api key|unauthorized/.test(message)) {
     return `Provider authentication failed${status ? ` (HTTP ${status})` : ""}.`;
   }
@@ -172,7 +193,7 @@ function classifyProviderError(error, { modelRequest = false } = {}) {
     return `Provider rate limit or quota reached${status ? ` (HTTP ${status})` : ""}.`;
   }
   if (status === 400) return "Provider rejected the request format (HTTP 400).";
-  if (status >= 500) return `Provider service error (HTTP ${status}).`;
+  if (status >= 500)  return `Provider service error (HTTP ${status}).`;
   if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) {
     return "Provider request timed out.";
   }
@@ -180,49 +201,51 @@ function classifyProviderError(error, { modelRequest = false } = {}) {
     return "Provider network request failed.";
   }
   if (status) return `Provider request failed (HTTP ${status}).`;
-  if (/model|not_found/.test(message)) {
-    return "The selected model is unavailable.";
-  }
+  if (/model|not_found/.test(message)) return "The selected model is unavailable.";
   return "Provider connection failed.";
 }
 
 function classifyProviderStatus(error, { modelRequest = false } = {}) {
-  const status = providerErrorStatus(error);
   const category = providerErrorCategory(error, { modelRequest });
-  if (category === "model_404") return "model_error";
-  if (
-    category === "timeout" ||
-    category === "network"
-  ) return "network_error";
+  if (category === "model_404")                   return "model_error";
+  if (category === "timeout" || category === "network") return "network_error";
   return "provider_error";
 }
 
 function safeProviderError(error, options = {}) {
   const safe = new Error(classifyProviderError(error, options));
-  safe.providerStatus = classifyProviderStatus(error, options);
+  safe.providerStatus   = classifyProviderStatus(error, options);
   safe.providerCategory = providerErrorCategory(error, options);
-  safe.httpStatus = providerErrorStatus(error);
-  safe.providerReason = safe.message;
+  safe.httpStatus       = providerErrorStatus(error);
+  safe.providerReason   = safe.message;
   return safe;
 }
 
-function logProviderDiagnostic(stage, apiKey, extra = {}) {
-  if (process.env.AI_CORE_DIAGNOSTICS !== "true") return;
-  logger.info(`[AI Core] ${stage}`, {
-    ...keyDiagnostics(apiKey),
-    apiKeySha256: apiKeyHash(apiKey),
-    ...extra,
-  });
+// ── Lazy dynamic import (avoids circular dependency with errorLogger) ──────────
+
+async function logAICoreError(payload) {
+  try {
+    const { logError } = await import("../../utils/errorLogger.js");
+    void logError(payload).catch(() => {});
+  } catch (_) { /* never let error-reporting crash the caller */ }
 }
+
+// ── Access control ─────────────────────────────────────────────────────────────
 
 function canUseAI(member) {
   const cfg = config();
   if (!member) return false;
   if (cfg.accessMode === "staff" || cfg.accessMode === "admin") return isStaff(member);
-  if (cfg.accessMode === "role") return cfg.allowedRoleIds.some((id) => member.roles?.cache?.has(id));
-  if (cfg.accessMode === "user") return cfg.allowedUserIds.includes(member.id);
+  if (cfg.accessMode === "role")  return cfg.allowedRoleIds.some((id) => member.roles?.cache?.has(id));
+  if (cfg.accessMode === "user")  return cfg.allowedUserIds.includes(member.id);
   return isOwner(member);
 }
+
+export function isAICoreAllowed(member) {
+  return canUseAI(member);
+}
+
+// ── Rate limiting ──────────────────────────────────────────────────────────────
 
 function withinRateLimit() {
   const now = Date.now();
@@ -231,6 +254,8 @@ function withinRateLimit() {
   recentRequests.push(now);
   return true;
 }
+
+// ── Error fingerprinting ───────────────────────────────────────────────────────
 
 function fingerprint(payload) {
   const source = [
@@ -245,6 +270,8 @@ function makeErrorId(payload, hash) {
   return `ERR-${feature}-${hash.slice(0, 4).toUpperCase()}`;
 }
 
+// ── Initialisation ─────────────────────────────────────────────────────────────
+
 export function initAICore(discordClient) {
   client = discordClient;
   try {
@@ -252,19 +279,27 @@ export function initAICore(discordClient) {
   } catch (encErr) {
     logger.warn(`[AI Core] Encryption unavailable at startup: ${encErr.message}`);
   }
-  const activeKey = getActiveApiKey();
-  if (activeKey) {
-    logger.info("[AI Core] [KEY_STORED_NOT_TESTED] API key found in storage; connection not yet verified at startup.");
-    openai = new OpenAI({
-      apiKey: activeKey,
-      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
-    });
-    openaiApiKey = activeKey;
+
+  const storedKey = getActiveApiKey();
+  if (storedKey) {
+    const cfg     = config();
+    activeAdapter = registry.get(cfg.provider || "openai");
+    try {
+      activeClient = activeAdapter.createClient(storedKey, Number(cfg.timeoutMs) || 30_000);
+      activeApiKey = storedKey;
+      logger.info(`[AI Core] [KEY_STORED_NOT_TESTED] API key found; provider: ${activeAdapter.PROVIDER_NAME}; connection not yet verified.`);
+    } catch (initErr) {
+      logger.warn(`[AI Core] Client init failed at startup: ${initErr.message}`);
+      activeClient = null;
+      activeApiKey = null;
+    }
   } else {
     logger.info("[AI Core] [NO_KEY_STORED] No API key configured.");
-    openai = null;
-    openaiApiKey = null;
+    activeClient = null;
+    activeApiKey = null;
+    activeAdapter = registry.get("openai");
   }
+
   const knowledge = aiCoreDB.getKnowledge();
   if (!knowledge.builtAt || !knowledge.files.length) {
     try {
@@ -276,29 +311,33 @@ export function initAICore(discordClient) {
   }
 }
 
+// ── Status / config accessors ──────────────────────────────────────────────────
+
 export function getAICoreStatus() {
-  const cfg = config();
-  const knowledge = aiCoreDB.getKnowledge();
-  const activeKey = getActiveApiKey();
-  const hasKey = Boolean(activeKey);
-  // Derive keyStatus: if a key exists but DB says "no_key_stored", correct to "key_stored_not_tested"
-  const rawKeyStatus = cfg.keyStatus || "no_key_stored";
-  const keyStatus = hasKey && rawKeyStatus === "no_key_stored" ? "key_stored_not_tested" : rawKeyStatus;
-  const connectionStatus = hasKey ? (cfg.providerStatus || "not_tested") : "not_configured";
+  const cfg        = config();
+  const storedKey  = getActiveApiKey();
+  const hasKey     = Boolean(storedKey);
+  const rawStatus  = cfg.keyStatus || "no_key_stored";
+  const keyStatus  = hasKey && rawStatus === "no_key_stored" ? "key_stored_not_tested" : rawStatus;
+  const connStatus = hasKey ? (cfg.providerStatus || "not_tested") : "not_configured";
   return {
-    online: Boolean(client),
-    providerReady: providerReady(),
+    online:             Boolean(client),
+    providerReady:      providerReady(),
     keyStatus,
-    providerStatus: connectionStatus,
+    providerStatus:     connStatus,
     providerStatusReason: hasKey ? (cfg.providerStatusReason || null) : null,
-    providerKeyMask: keyMask(activeKey),
-    providerSource: runtimeApiKey ? "runtime" : aiCoreDB.hasStoredApiKey() ? "secure_storage" : activeKey ? "environment" : "none",
-    knowledgeReady: Boolean(knowledge.builtAt && knowledge.files.length),
-    fileCount: knowledge.summary?.fileCount ?? knowledge.files.length,
-    errorChannelId: cfg.errorChannelId,
+    providerKeyMask:    keyMask(storedKey),
+    providerSource:     runtimeApiKey ? "runtime"
+                        : aiCoreDB.hasStoredApiKey() ? "secure_storage"
+                        : storedKey ? "environment"
+                        : "none",
+    knowledgeReady:     Boolean(aiCoreDB.getKnowledge().builtAt && aiCoreDB.getKnowledge().files.length),
+    fileCount:          aiCoreDB.getKnowledge().summary?.fileCount ?? aiCoreDB.getKnowledge().files.length,
+    errorChannelId:     cfg.errorChannelId,
     investigationChannelId: cfg.investigationChannelId,
-    accessMode: cfg.accessMode,
-    model: cfg.model,
+    accessMode:         cfg.accessMode,
+    model:              cfg.model,
+    provider:           cfg.provider,
   };
 }
 
@@ -318,95 +357,318 @@ export function updateAICoreConfig(patch) {
 }
 
 export function getProviderConfiguration() {
-  const cfg = config();
-  const activeKey = getActiveApiKey();
-  const hasKey = Boolean(activeKey);
-  // Derive keyStatus: if a key exists but DB says "no_key_stored", correct to "key_stored_not_tested"
-  const rawKeyStatus = cfg.keyStatus || "no_key_stored";
-  const keyStatus = hasKey && rawKeyStatus === "no_key_stored" ? "key_stored_not_tested" : rawKeyStatus;
-  const connectionStatus = hasKey ? (cfg.providerStatus || "not_tested") : "not_configured";
+  const cfg       = config();
+  const storedKey = getActiveApiKey();
+  const hasKey    = Boolean(storedKey);
+  const rawStatus = cfg.keyStatus || "no_key_stored";
+  const keyStatus = hasKey && rawStatus === "no_key_stored" ? "key_stored_not_tested" : rawStatus;
+  const connStatus = hasKey ? (cfg.providerStatus || "not_tested") : "not_configured";
+  const adapter   = registry.get(cfg.provider || "openai");
   return {
-    provider: providerLabel(),
-    model: cfg.model,
+    provider:         adapter.PROVIDER_NAME,
+    providerId:       adapter.PROVIDER_ID,
+    model:            cfg.model,
+    defaultModel:     adapter.DEFAULT_MODEL,
+    models:           adapter.MODELS,
     apiKeyConfigured: hasKey,
-    apiKeyMask: keyMask(activeKey),
+    apiKeyMask:       keyMask(storedKey),
     keyStatus,
-    source: runtimeApiKey ? "runtime" : aiCoreDB.hasStoredApiKey() ? "secure_storage" : activeKey ? "environment" : "none",
-    status: connectionStatus,
-    statusReason: hasKey ? (cfg.providerStatusReason || null) : null,
-    checkedAt: cfg.providerCheckedAt || null,
-    errorAnalysis: cfg.errorAnalysis,
-    investigation: cfg.investigation,
-    codeAnalysis: cfg.codeAnalysis,
-    visionAnalysis: cfg.visionAnalysis,
+    source:           runtimeApiKey ? "runtime"
+                      : aiCoreDB.hasStoredApiKey() ? "secure_storage"
+                      : storedKey ? "environment"
+                      : "none",
+    status:           connStatus,
+    statusReason:     hasKey ? (cfg.providerStatusReason || null) : null,
+    checkedAt:        cfg.providerCheckedAt || null,
+    errorAnalysis:    cfg.errorAnalysis,
+    investigation:    cfg.investigation,
+    codeAnalysis:     cfg.codeAnalysis,
+    visionAnalysis:   cfg.visionAnalysis,
   };
 }
+
+// ── API key management ─────────────────────────────────────────────────────────
 
 function validateApiKeyFormat(apiKey) {
   const value = String(apiKey || "").trim();
   if (!value || value.length < 20 || /\s/.test(value)) {
-    const error = new Error("API key format is invalid.");
+    const error = new Error("API key format is invalid (too short or contains whitespace).");
     error.code = "AI_KEY_FORMAT";
     throw error;
   }
   return value;
 }
 
-async function checkProvider(apiKey) {
-  let candidate = null;
+/**
+ * Save a new API key.
+ *
+ * Steps:
+ *  1. Basic format sanity check
+ *  2. Auto-detect provider from key prefix
+ *  3. Provider-specific format validation (if provider detected)
+ *  4. Persist key to secure storage
+ *  5. Instantiate the provider client
+ *
+ * Returns the new provider configuration.
+ * If the provider could not be auto-detected, returns detectionNeeded: true —
+ * the caller (setupInteraction) should prompt the user to select a provider.
+ */
+export async function updateProviderApiKey(apiKey) {
+  const previousConfig = aiCoreDB.getConfig();
   try {
-    candidate = new OpenAI({
-      apiKey,
-      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
+    const value = validateApiKeyFormat(apiKey);
+
+    // Auto-detect provider
+    const detected = registry.detect(value);
+
+    // If detected, run provider-specific key-format validation for better error messages
+    if (detected) {
+      try {
+        detected.validateKeyFormat(value);
+      } catch (fmtErr) {
+        fmtErr.code = fmtErr.code || "AI_KEY_FORMAT";
+        throw fmtErr;
+      }
+    }
+
+    // Persist key
+    aiCoreDB.saveApiKey(value);
+    if (!aiCoreDB.hasStoredApiKey() || aiCoreDB.getApiKey() !== value) {
+      const storageError = new Error("Secure credential storage failed.");
+      storageError.code = "AI_STORAGE";
+      throw storageError;
+    }
+
+    if (detected === null) {
+      // Provider could not be auto-detected from the key prefix.
+      // IMPORTANT: Do NOT set runtimeApiKey, activeClient, activeAdapter, or
+      // activeApiKey here. Applying an unknown key to the existing provider's
+      // endpoint would route it to the wrong service.
+      // Mark the key as pending until the owner explicitly chooses a provider.
+      aiCoreDB.updateConfig({
+        // Do NOT change config.provider — leave it as-is to avoid confusion
+        keyStatus:          "provider_selection_needed",
+        providerStatus:     "not_configured",
+        providerStatusReason: "Provider harus dipilih sebelum key dapat digunakan.",
+        providerCheckedAt:  new Date().toISOString(),
+      });
+      logger.info("[AI Core] [KEY_STORED] API key saved but provider unknown — owner must select provider.");
+      const result = getProviderConfiguration();
+      result.detectionNeeded    = true;
+      result.detectedProviderId = null;
+      return result;
+    }
+
+    // Provider detected — apply key and client to runtime
+    runtimeApiKey = value;
+    activeAdapter = detected;
+    activeClient  = detected.createClient(value, Number(config().timeoutMs) || 30_000);
+    activeApiKey  = value;
+
+    const cfg = config();
+    aiCoreDB.updateConfig({
+      provider:             detected.PROVIDER_ID,
+      // Switch to the new provider's default model if the current model is still
+      // the OpenAI built-in default and we switched to a different provider
+      model:                cfg.model === "gpt-4o-mini" && detected.PROVIDER_ID !== "openai"
+                              ? detected.DEFAULT_MODEL
+                              : cfg.model,
+      keyStatus:            "key_stored_not_tested",
+      providerStatus:       "not_tested",
+      providerStatusReason: null,
+      providerCheckedAt:    new Date().toISOString(),
     });
-    logProviderDiagnostic("Provider client initialized", apiKey, {
-      clientInitialized: true,
-      runtimeConfigLoaded: true,
-      checkProviderApiKeySha256: apiKeyHash(apiKey),
-      baseURL: candidate.baseURL,
-      sdkUsage: "openai.models.list",
-    });
+
+    logger.info(`[AI Core] [KEY_STORED_NOT_TESTED] API key saved; provider: ${detected.PROVIDER_NAME}; use Test Connection to verify.`);
+
+    const result = getProviderConfiguration();
+    result.detectionNeeded    = false;
+    result.detectedProviderId = detected.PROVIDER_ID;
+    return result;
+
   } catch (error) {
-    logProviderDiagnostic("Provider client initialization failed", apiKey, {
-      clientInitialized: false,
-      requestStarted: false,
-      requestCompleted: false,
-      httpStatus: providerErrorStatus(error),
+    // Restore previous config — never lose an existing valid key because a new one fails
+    try {
+      aiCoreDB.updateConfig({
+        keyStatus:          previousConfig.keyStatus  || (aiCoreDB.hasStoredApiKey() ? "key_stored_not_tested" : "no_key_stored"),
+        providerStatus:     previousConfig.providerStatus,
+        providerStatusReason: previousConfig.providerStatusReason,
+        providerCheckedAt:  previousConfig.providerCheckedAt,
+      });
+    } catch (_) { /* ignore config-restore failure */ }
+
+    const code = String(error?.code || "").toLowerCase();
+    if (code === "ai_key_format") {
+      error.providerCategory = "invalid_key_format";
+      error.providerStatus   = "not_configured";
+      error.providerReason   = error.message;
+      throw error;
+    }
+    const msg = code === "ai_storage"
+      ? (error.message || "Secure credential storage failed.")
+      : `Key storage failed: ${String(error?.message || "Unknown error.").slice(0, 180)}`;
+    const safe = new Error(msg);
+    safe.providerCategory = "secure_storage";
+    safe.providerStatus   = "not_configured";
+    safe.providerReason   = msg;
+    logger.warn(`[AI Core] [KEY_SAVE_FAILED] (${code || "unknown"}): ${redact(msg)}`);
+    void logAICoreError({
+      feature:    "AI Core — Secure Storage",
+      stage:      "api_key_save",
+      reason:     redact(msg),
+      errorCategory: "secure_storage",
+      suggestion: "Set AI_CORE_ENCRYPTION_KEY or SESSION_SECRET in environment variables.",
+    });
+    throw safe;
+  }
+}
+
+/**
+ * Override the active provider for an already-saved key (called when user
+ * selects provider manually after auto-detection fails).
+ */
+export function setActiveProvider(providerId) {
+  const adapter = registry.get(providerId);
+  const cfg     = config();
+
+  // Prefer the key that was stored in DB — this is the correct path when the
+  // key was saved in the "provider_selection_needed" state (detection failed).
+  // Fall back to runtimeApiKey only if no DB key is present.
+  const dbKey   = aiCoreDB.getApiKey();
+  const keyToUse = dbKey || runtimeApiKey;
+
+  if (keyToUse) {
+    try {
+      activeAdapter = adapter;
+      activeClient  = adapter.createClient(keyToUse, Number(cfg.timeoutMs) || 30_000);
+      activeApiKey  = keyToUse;
+      runtimeApiKey = keyToUse; // promote the pending DB key to runtime
+    } catch (err) {
+      logger.warn(`[AI Core] setActiveProvider client init failed: ${err.message}`);
+      activeAdapter = adapter;  // still update adapter for display
+      activeClient  = null;
+      activeApiKey  = null;
+    }
+  } else {
+    activeAdapter = adapter;
+  }
+
+  // Switch to the new provider's default model when the current model clearly
+  // belongs to a different provider's namespace (e.g. "gpt-*" → Gemini switch)
+  const currentModel      = cfg.model || "";
+  const needsModelUpdate  = !adapter.MODELS.some((m) => currentModel.startsWith(m.split("/")[0]));
+  const newModel          = needsModelUpdate ? adapter.DEFAULT_MODEL : currentModel;
+
+  aiCoreDB.updateConfig({
+    provider:             adapter.PROVIDER_ID,
+    model:                newModel,
+    keyStatus:            keyToUse ? "key_stored_not_tested" : "no_key_stored",
+    providerStatus:       keyToUse ? "not_tested" : "not_configured",
+    providerStatusReason: null,
+    providerCheckedAt:    new Date().toISOString(),
+  });
+
+  logger.info(`[AI Core] Provider manually set to: ${adapter.PROVIDER_NAME} (model: ${newModel})`);
+  return getProviderConfiguration();
+}
+
+export function removeProviderApiKey() {
+  runtimeApiKey = null;
+  activeClient  = null;
+  activeApiKey  = null;
+  activeAdapter = registry.get("openai"); // reset to default for display
+  aiCoreDB.removeApiKey();
+  const envKeyPresent = Boolean(process.env.OPENAI_API_KEY?.trim());
+  logger.info(envKeyPresent
+    ? "[AI Core] [KEY_STORED_NOT_TESTED] Stored key removed; env key still present."
+    : "[AI Core] [NO_KEY_STORED] API key removed from secure storage.");
+  aiCoreDB.updateConfig({
+    keyStatus:          envKeyPresent ? "key_stored_not_tested" : "no_key_stored",
+    providerStatus:     envKeyPresent ? "not_tested" : "not_configured",
+    providerStatusReason: null,
+    providerCheckedAt:  null,
+  });
+  return getProviderConfiguration();
+}
+
+// ── Provider connection test ───────────────────────────────────────────────────
+
+async function buildCheckedClient(apiKey) {
+  const cfg     = config();
+  const adapter = registry.get(cfg.provider || "openai");
+  const c       = adapter.createClient(apiKey, Number(cfg.timeoutMs) || 30_000);
+  logProviderDiagnostic("Provider request started", apiKey, {
+    provider: adapter.PROVIDER_NAME,
+    clientInitialized: true,
+    requestStarted: true,
+  });
+  try {
+    await adapter.testConnection(c);
+    logProviderDiagnostic("Provider request completed", apiKey, {
+      provider: adapter.PROVIDER_NAME,
+      httpStatus: 200,
+    });
+    return { adapter, c };
+  } catch (error) {
+    logProviderDiagnostic("Provider request failed", apiKey, {
+      provider:             adapter.PROVIDER_NAME,
+      httpStatus:           providerErrorStatus(error),
       providerErrorCategory: providerErrorCategory(error),
     });
     throw error;
   }
+}
 
-  logProviderDiagnostic("Provider request started", apiKey, {
-    clientInitialized: true,
-    requestStarted: true,
-    requestCompleted: false,
-    endpoint: "/v1/models",
-  });
+export async function testProviderConnection() {
+  const apiKey = getActiveApiKey();
+  if (!apiKey) {
+    aiCoreDB.updateConfig({ keyStatus: "no_key_stored", providerStatus: "not_configured", providerStatusReason: null });
+    return { ok: false, reason: "No AI provider API key is configured.", configuration: getProviderConfiguration() };
+  }
+  logger.info(`[AI Core] [KEY_STORED_NOT_TESTED] Testing provider connection (${providerLabel()})…`);
   try {
-    await candidate.models.list();
-    logProviderDiagnostic("Provider request completed", apiKey, {
-      clientInitialized: true,
-      requestStarted: true,
-      requestCompleted: true,
-      httpStatus: 200,
-      baseURL: candidate.baseURL,
-      endpoint: "/v1/models",
-      providerErrorCategory: null,
+    aiCoreDB.updateConfig({ providerStatus: "validating", providerStatusReason: null, providerCheckedAt: new Date().toISOString() });
+    const { adapter, c } = await buildCheckedClient(apiKey);
+    activeAdapter = adapter;
+    activeClient  = c;
+    activeApiKey  = apiKey;
+    logger.info(`[AI Core] [PROVIDER_CONNECTED] ${adapter.PROVIDER_NAME} connection test successful.`);
+    aiCoreDB.updateConfig({
+      keyStatus:          "key_configured",
+      providerStatus:     "connected",
+      providerStatusReason: null,
+      providerCheckedAt:  new Date().toISOString(),
     });
-    return candidate;
+    return { ok: true, reason: null, configuration: getProviderConfiguration() };
   } catch (error) {
-    logProviderDiagnostic("Provider request failed", apiKey, {
-      clientInitialized: true,
-      requestStarted: true,
-      requestCompleted: false,
-      httpStatus: providerErrorStatus(error),
-      checkProviderApiKeySha256: apiKeyHash(apiKey),
-      baseURL: candidate.baseURL,
-      endpoint: "/v1/models",
-      providerErrorCategory: providerErrorCategory(error),
+    const safe     = safeProviderError(error);
+    const category = safe.providerCategory;
+    let keyStatus  = "key_stored_not_tested";
+    if (category === "authentication_401" || category === "permission_403") {
+      keyStatus = "authentication_failed";
+      logger.info(`[AI Core] [AUTHENTICATION_FAILED] ${safe.providerReason}`);
+    } else if (category === "model_404") {
+      keyStatus = "model_not_found";
+      logger.info(`[AI Core] [MODEL_NOT_FOUND] ${safe.providerReason}`);
+    } else {
+      logger.info(`[AI Core] [PROVIDER_ERROR] ${safe.providerReason}`);
+    }
+    aiCoreDB.updateConfig({
+      keyStatus,
+      providerStatus:     safe.providerStatus,
+      providerStatusReason: safe.providerReason,
+      providerCheckedAt:  new Date().toISOString(),
     });
-    throw error;
+    void logAICoreError({
+      feature:       "AI Core — Provider",
+      stage:         "provider_connection",
+      reason:        safe.providerReason,
+      errorCategory: category,
+      provider:      providerLabel(),
+      activeProvider: providerLabel(),
+      ...(safe.httpStatus ? { status: String(safe.httpStatus) } : {}),
+    });
+    return { ok: false, reason: safe.providerReason, configuration: getProviderConfiguration() };
   }
 }
 
@@ -415,302 +677,114 @@ export async function validateProviderModel(model) {
   if (!name) throw new Error("Model is required.");
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("No AI provider API key is configured.");
-  let candidate;
+
+  const cfg     = config();
+  const adapter = registry.get(cfg.provider || "openai");
+
+  // Step 1 — verify provider connectivity
+  let providerClient;
   try {
-    candidate = await checkProvider(apiKey);
+    const { c } = await buildCheckedClient(apiKey);
+    providerClient = c;
   } catch (error) {
     const safe = safeProviderError(error);
     aiCoreDB.updateConfig({
-      providerStatus: safe.providerStatus,
+      providerStatus:       safe.providerStatus,
       providerStatusReason: safe.providerReason,
-      providerCheckedAt: new Date().toISOString(),
+      providerCheckedAt:    new Date().toISOString(),
     });
     throw safe;
   }
-  try {
-    await candidate.models.retrieve(name);
-    return true;
-  } catch (error) {
-    const safe = safeProviderError(error, { modelRequest: true });
-    aiCoreDB.updateConfig({
-      providerStatus: safe.providerStatus,
-      providerStatusReason: safe.providerReason,
-      providerCheckedAt: new Date().toISOString(),
-    });
-    throw safe;
-  }
-}
 
-export async function updateProviderApiKey(apiKey) {
-  const previousConfig = aiCoreDB.getConfig();
-  try {
-    const rawInputApiKeySha256 = apiKeyHash(apiKey);
-    const value = validateApiKeyFormat(apiKey);
-    logProviderDiagnostic("Provider key storage started", value, {
-      inputApiKeySha256: rawInputApiKeySha256,
-      validatedApiKeySha256: apiKeyHash(value),
-      storageWriteSuccess: false,
-    });
-
-    // Save the key immediately after format validation.
-    // Connection test is deliberately separated — use testProviderConnection() for that.
-    aiCoreDB.saveApiKey(value);
-    const storageWriteSuccess = aiCoreDB.hasStoredApiKey();
-    const storageReadValue = aiCoreDB.getApiKey();
-    const storageReadSuccess = storageReadValue === value;
-
-    logProviderDiagnostic("Provider credential persisted", value, {
-      storageWriteSuccess,
-      storageReadSuccess,
-      inputApiKeySha256: rawInputApiKeySha256,
-      validatedApiKeySha256: apiKeyHash(value),
-      storedApiKeySha256: storageReadValue ? apiKeyHash(storageReadValue) : null,
-    });
-
-    if (!storageWriteSuccess || !storageReadSuccess) {
-      const storageError = new Error("Secure credential storage failed.");
-      storageError.code = "AI_STORAGE";
-      throw storageError;
-    }
-
-    runtimeApiKey = value;
-    openai = new OpenAI({
-      apiKey: value,
-      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
-    });
-    openaiApiKey = value;
-
-    logger.info("[AI Core] [KEY_STORED_NOT_TESTED] API key saved to secure storage; use Test Connection to verify.");
-
-    aiCoreDB.updateConfig({
-      keyStatus: "key_stored_not_tested",
-      providerStatus: "not_tested",
-      providerStatusReason: null,
-      providerCheckedAt: new Date().toISOString(),
-    });
-
-    return getProviderConfiguration();
-  } catch (error) {
-    // Restore previous state fully — never drop an existing valid key because a new one fails.
-    // NOTE: this function makes NO HTTP requests, so safeProviderError (designed for HTTP errors)
-    // must NOT be used here. Classify errors directly to avoid misclassification.
+  // Step 2 — validate the specific model identifier via the adapter
+  if (typeof adapter.validateModel === "function") {
     try {
+      await adapter.validateModel(providerClient, name);
+    } catch (error) {
+      const safe = safeProviderError(error, { modelRequest: true });
       aiCoreDB.updateConfig({
-        keyStatus: previousConfig.keyStatus || (aiCoreDB.hasStoredApiKey() ? "key_stored_not_tested" : "no_key_stored"),
-        providerStatus: previousConfig.providerStatus,
-        providerStatusReason: previousConfig.providerStatusReason,
-        providerCheckedAt: previousConfig.providerCheckedAt,
+        providerStatus:       safe.providerStatus,
+        providerStatusReason: safe.providerReason,
+        providerCheckedAt:    new Date().toISOString(),
       });
-    } catch (_) { /* ignore config-restore failure */ }
-
-    const code = String(error?.code || "").toLowerCase();
-
-    // Format errors already have a clear message; rethrow as-is.
-    if (code === "ai_key_format") {
-      error.providerCategory = "invalid_key_format";
-      error.providerStatus = "not_configured";
-      error.providerReason = error.message;
-      throw error;
+      throw safe;
     }
-
-    // Storage errors (encryption unavailable, write/read mismatch).
-    const storageMsg = code === "ai_storage"
-      ? (error.message || "Secure credential storage failed.")
-      : `Key storage failed: ${String(error?.message || "Unknown error.").slice(0, 180)}`;
-    const safe = new Error(storageMsg);
-    safe.providerCategory = "secure_storage";
-    safe.providerStatus = "not_configured";
-    safe.providerReason = storageMsg;
-    logger.warn(`[AI Core] [KEY_SAVE_FAILED] (${code || "unknown"}): ${redact(storageMsg)}`);
-    void logAICoreError({
-      feature: "AI Core — Secure Storage",
-      stage: "api_key_save",
-      reason: redact(storageMsg),
-      errorCategory: "secure_storage",
-      suggestion: "Set AI_CORE_ENCRYPTION_KEY or SESSION_SECRET in environment variables, or ensure the data/ directory is writable.",
-    });
-    throw safe;
   }
-}
-
-export function removeProviderApiKey() {
-  runtimeApiKey = null;
-  openai = null;
-  openaiApiKey = null;
-  aiCoreDB.removeApiKey();
-  const envKeyPresent = Boolean(process.env.OPENAI_API_KEY?.trim());
-  logger.info(envKeyPresent ? "[AI Core] [KEY_STORED_NOT_TESTED] Stored key removed; env key still present." : "[AI Core] [NO_KEY_STORED] API key removed from secure storage.");
-  aiCoreDB.updateConfig({
-    keyStatus: envKeyPresent ? "key_stored_not_tested" : "no_key_stored",
-    providerStatus: envKeyPresent ? "not_tested" : "not_configured",
-    providerStatusReason: null,
-    providerCheckedAt: null,
-  });
-  logProviderDiagnostic("Provider credential removed", null, {
-    runtimeConfigLoaded: false,
-    storageWriteSuccess: !aiCoreDB.hasStoredApiKey(),
-    storageReadSuccess: aiCoreDB.getApiKey() === null,
-    clientInitialized: false,
-  });
-  return getProviderConfiguration();
-}
-
-export async function testProviderConnection() {
-  const apiKey = getActiveApiKey();
-  if (!apiKey) {
-    logger.info("[AI Core] [NO_KEY_STORED] Test Connection called but no API key is configured.");
-    aiCoreDB.updateConfig({ keyStatus: "no_key_stored", providerStatus: "not_configured", providerStatusReason: null });
-    return { ok: false, reason: "No AI provider API key is configured.", configuration: getProviderConfiguration() };
-  }
-  logger.info("[AI Core] [KEY_STORED_NOT_TESTED] Testing provider connection...");
-  try {
-    aiCoreDB.updateConfig({
-      providerStatus: "validating",
-      providerStatusReason: null,
-      providerCheckedAt: new Date().toISOString(),
-    });
-    const candidate = await checkProvider(apiKey);
-    openai = candidate;
-    openaiApiKey = apiKey;
-    logProviderDiagnostic("Provider runtime connection checked", apiKey, {
-      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
-      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
-      openaiApiKeySha256: apiKeyHash(openaiApiKey),
-      baseURL: candidate.baseURL,
-      endpoint: "/v1/models",
-    });
-    logger.info("[AI Core] [PROVIDER_CONNECTED] Connection test successful.");
-    aiCoreDB.updateConfig({
-      keyStatus: "key_configured",
-      providerStatus: "connected",
-      providerStatusReason: null,
-      providerCheckedAt: new Date().toISOString(),
-    });
-    return { ok: true, reason: null, configuration: getProviderConfiguration() };
-  } catch (error) {
-    const safe = safeProviderError(error);
-    const category = safe.providerCategory;
-    let keyStatus = "key_stored_not_tested";
-    let errorLogCategory = "provider_connection";
-
-    if (category === "authentication_401" || category === "permission_403") {
-      keyStatus = "authentication_failed";
-      errorLogCategory = "provider_authentication";
-      logger.info(`[AI Core] [AUTHENTICATION_FAILED] ${safe.providerReason}`);
-    } else if (category === "model_404") {
-      keyStatus = "model_not_found";
-      errorLogCategory = "model_not_found";
-      logger.info(`[AI Core] [MODEL_NOT_FOUND] ${safe.providerReason}`);
-    } else {
-      logger.info(`[AI Core] [PROVIDER_ERROR] ${safe.providerReason}`);
-    }
-
-    aiCoreDB.updateConfig({
-      keyStatus,
-      providerStatus: safe.providerStatus,
-      providerStatusReason: safe.providerReason,
-      providerCheckedAt: new Date().toISOString(),
-    });
-
-    void logAICoreError({
-      feature: "AI Core — Provider",
-      stage: "provider_connection",
-      reason: safe.providerReason,
-      errorCategory: errorLogCategory,
-      provider: providerLabel(),
-      activeProvider: providerLabel(),
-      ...(safe.httpStatus ? { status: String(safe.httpStatus) } : {}),
-    });
-
-    return { ok: false, reason: safe.providerReason, configuration: getProviderConfiguration() };
-  }
+  // If the adapter has no validateModel (shouldn't happen given all five define it),
+  // connectivity success is accepted as sufficient.
+  return true;
 }
 
 export function rebuildKnowledge() {
   return rebuildProjectIndex();
 }
 
+// ── Core request engine ────────────────────────────────────────────────────────
+
+/**
+ * Send a request to the active provider.
+ * All features (investigation, conversation, error analysis, fix gen) must
+ * go through this single function — never build a separate provider client.
+ */
 async function requestModel(messages, maxTokens = config().maxResponse) {
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("AI provider is not configured");
 
-  // Concurrency guard — prevent two simultaneous requests from doubling provider load
   if (activeAIRequests >= MAX_CONCURRENT_AI_REQUESTS) {
     const busy = new Error("AI Core is processing another request. Please wait a moment.");
     busy.providerCategory = "concurrent_limit";
-    busy.providerStatus = "provider_error";
-    busy.providerReason = busy.message;
+    busy.providerStatus   = "provider_error";
+    busy.providerReason   = busy.message;
     throw busy;
   }
 
   if (!withinRateLimit()) throw new Error("AI rate limit reached; try again shortly");
 
-  if (!openai || openaiApiKey !== apiKey) {
-    openai = new OpenAI({
-      apiKey,
-      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
-    });
-    openaiApiKey = apiKey;
-  }
   const cfg = config();
-  const model = cfg.model || "gpt-4o-mini";
+
+  // Re-build client if key or provider changed
+  if (!activeClient || activeApiKey !== apiKey) {
+    activeAdapter = registry.get(cfg.provider || "openai");
+    activeClient  = activeAdapter.createClient(apiKey, Number(cfg.timeoutMs) || 30_000);
+    activeApiKey  = apiKey;
+  }
+
+  const model     = cfg.model || activeAdapter.DEFAULT_MODEL;
+  const timeoutMs = Math.max(5000, Number(cfg.timeoutMs) || 30_000);
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
   logProviderDiagnostic("Model request prepared", apiKey, {
-    runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
-    getActiveApiKeySha256: apiKeyHash(apiKey),
-    openaiApiKeySha256: apiKeyHash(openaiApiKey),
-    baseURL: openai?.baseURL ?? null,
-    endpoint: "/v1/chat/completions",
+    provider: activeAdapter.PROVIDER_NAME,
     model,
     activeAIRequests,
   });
-  const controller = new AbortController();
-  const timeoutMs = Math.max(5000, Number(cfg.timeoutMs) || 30000);
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
   activeAIRequests++;
   try {
-    const response = await openai.chat.completions.create({
+    const text = await activeAdapter.chatCompletions(
+      activeClient,
       model,
       messages,
-      max_completion_tokens: Math.min(4000, Math.max(300, Number(maxTokens) || 1800)),
-    }, { signal: controller.signal });
+      Math.min(4000, Math.max(300, Number(maxTokens) || 1800)),
+      controller.signal,
+    );
     aiCoreDB.incrementStat("aiRequests");
     aiCoreDB.updateConfig({
-      providerStatus: "connected",
+      providerStatus:     "connected",
       providerStatusReason: null,
-      providerCheckedAt: new Date().toISOString(),
+      providerCheckedAt:  new Date().toISOString(),
     });
-    logProviderDiagnostic("Model request completed", apiKey, {
-      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
-      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
-      openaiApiKeySha256: apiKeyHash(openaiApiKey),
-      baseURL: openai?.baseURL ?? null,
-      endpoint: "/v1/chat/completions",
-      model,
-      httpStatus: 200,
-    });
-    return response.choices?.[0]?.message?.content?.trim() || "AI provider returned an empty response.";
+    return text || "AI provider returned an empty response.";
   } catch (err) {
-    // Extract Retry-After BEFORE safeProviderError discards the raw error headers
     const retryAfterMs = extractRetryAfterMs(err);
     const safe = safeProviderError(err, { modelRequest: true });
     if (retryAfterMs) safe.retryAfterMs = retryAfterMs;
-
-    logProviderDiagnostic("Model request failed", apiKey, {
-      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
-      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
-      openaiApiKeySha256: apiKeyHash(openaiApiKey),
-      baseURL: openai?.baseURL ?? null,
-      endpoint: "/v1/chat/completions",
-      model,
-      httpStatus: providerErrorStatus(err),
-      providerErrorCategory: providerErrorCategory(err, { modelRequest: true }),
-      retryAfterMs: retryAfterMs ?? null,
-    });
     aiCoreDB.incrementStat("failedRequests");
     aiCoreDB.updateConfig({
-      providerStatus: safe.providerStatus,
+      providerStatus:     safe.providerStatus,
       providerStatusReason: safe.providerReason,
-      providerCheckedAt: new Date().toISOString(),
+      providerCheckedAt:  new Date().toISOString(),
     });
     throw safe;
   } finally {
@@ -718,6 +792,8 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     clearTimeout(timeoutHandle);
   }
 }
+
+// ── Project context ────────────────────────────────────────────────────────────
 
 function relevantContext(query) {
   const matches = searchProject(query, 8);
@@ -738,13 +814,15 @@ function fallbackErrorAnalysis(record) {
   ].join("\n");
 }
 
+// ── Error analysis ─────────────────────────────────────────────────────────────
+
 async function analyzeError(record) {
   const cfg = config();
   if (!cfg.errorAnalysis || !cfg.errorChannelId || activeErrorAnalyses.has(record.errorId)) return;
   activeErrorAnalyses.add(record.errorId);
   try {
     const context = relevantContext(`${record.feature} ${record.module} ${record.function} ${record.reason}`);
-    const prompt = [
+    const prompt  = [
       "You are the central diagnostic intelligence for an existing Discord bot.",
       "Analyze only the supplied error and project excerpts. Never invent files, functions, causes, or certainty.",
       "Clearly label hypotheses as possible/suspected and distinguish facts from hypotheses.",
@@ -776,9 +854,9 @@ async function sendErrorAnalysis(record) {
     .setTitle(`🤖 AI CORE ANALYSIS • ${label}`)
     .setDescription(truncate(record.analysis || fallbackErrorAnalysis(record), 3900))
     .addFields(
-      { name: "Error ID", value: `\`${record.errorId}\``, inline: true },
-      { name: "Feature", value: truncate(record.feature || "Unknown", 100), inline: true },
-      { name: "Occurrences", value: String(record.occurrences || 1), inline: true },
+      { name: "Error ID",    value: `\`${record.errorId}\``,               inline: true },
+      { name: "Feature",     value: truncate(record.feature || "Unknown", 100), inline: true },
+      { name: "Occurrences", value: String(record.occurrences || 1),        inline: true },
     )
     .setTimestamp(new Date(record.timestamp));
   const row = new ActionRowBuilder().addComponents(
@@ -791,7 +869,7 @@ async function sendErrorAnalysis(record) {
 
 export async function recordError(payload = {}) {
   if (String(payload.feature || "").toLowerCase().includes("ai core")) return null;
-  const hash = fingerprint(payload);
+  const hash    = fingerprint(payload);
   const existing = aiCoreDB.findError(hash);
   if (existing) {
     const updated = aiCoreDB.updateError(existing.errorId, {
@@ -804,42 +882,43 @@ export async function recordError(payload = {}) {
     }
     return updated;
   }
-
-  const error = payload.error;
+  const error  = payload.error;
   const record = {
-    errorId: makeErrorId(payload, hash),
+    errorId:     makeErrorId(payload, hash),
     fingerprint: hash,
-    feature: redact(payload.feature || "Unknown"),
-    module: redact(payload.module || ""),
-    function: redact(payload.function || ""),
-    platform: redact(payload.platform || payload.provider || ""),
-    action: redact(payload.action || ""),
-    stage: redact(payload.stage || ""),
-    reason: redact(payload.reason || error?.message || "Unknown error"),
-    stack: redact(error?.stack || ""),
-    timestamp: new Date().toISOString(),
+    feature:     redact(payload.feature || "Unknown"),
+    module:      redact(payload.module  || ""),
+    function:    redact(payload.function || ""),
+    platform:    redact(payload.platform || payload.provider || ""),
+    action:      redact(payload.action  || ""),
+    stage:       redact(payload.stage   || ""),
+    reason:      redact(payload.reason  || error?.message || "Unknown error"),
+    stack:       redact(error?.stack    || ""),
+    timestamp:   new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
-    metadata: redact(JSON.stringify(payload.metadata ?? {})).slice(0, 3000),
+    metadata:    redact(JSON.stringify(payload.metadata ?? {})).slice(0, 3000),
     occurrences: 1,
-    lastSeen: new Date().toISOString(),
-    status: "open",
-    analysis: null,
+    lastSeen:    new Date().toISOString(),
+    status:      "open",
+    analysis:    null,
   };
   aiCoreDB.addError(record);
   void analyzeError(record);
   return record;
 }
 
+// ── Investigation & conversation (exported to conversation.js / events) ────────
+
 export async function investigate({ query, image }) {
-  const cfg = config();
+  const cfg     = config();
   const context = cfg.codeAnalysis ? relevantContext(query) : "";
   const messages = [
     {
-      role: "system",
+      role:    "system",
       content: "Anda adalah AI Core untuk developer. Jawab dalam bahasa Indonesia. Gunakan hanya fakta dari project excerpts. Jangan mengarang path/function. Tandai dugaan sebagai kemungkinan. Jangan mengubah source code.",
     },
     {
-      role: "user",
+      role:    "user",
       content: [
         { type: "text", text: `PERTANYAAN:\n${redact(query)}\n\nPROJECT EXCERPTS:\n${context || "Tidak ada excerpt yang cocok."}` },
         ...(image ? [{ type: "image_url", image_url: { url: image } }] : []),
@@ -850,7 +929,7 @@ export async function investigate({ query, image }) {
     return `🤖 AI CORE (mode lokal)\n\n${fallbackErrorAnalysis({
       errorId: "INVESTIGATION",
       feature: "Project Investigation",
-      reason: `Pertanyaan: ${query}`,
+      reason:  `Pertanyaan: ${query}`,
     })}`;
   }
   return redact(await requestModel(messages));
@@ -872,7 +951,7 @@ export async function generateFixPrompt(errorId) {
   }
   const prompt = await requestModel([
     { role: "system", content: "Buat FIX REQUEST yang aman untuk developer/Replit. Jangan mengusulkan file/function yang tidak ada di excerpts. Jangan minta auto-apply. Sertakan masalah, bukti, penyebab yang dibedakan dari dugaan, perubahan minimal, hal yang tidak boleh diubah, dan testing." },
-    { role: "user", content: `ERROR:\n${JSON.stringify(record, null, 2)}\n\nPROJECT EXCERPTS:\n${context}` },
+    { role: "user",   content: `ERROR:\n${JSON.stringify(record, null, 2)}\n\nPROJECT EXCERPTS:\n${context}` },
   ], 2200);
   return redact(prompt);
 }
@@ -892,12 +971,9 @@ export async function handleAICoreMessage(message) {
     await message.reply("❌ AI Investigation hanya tersedia untuk akses yang dikonfigurasi.").catch(() => {});
     return true;
   }
-  const query = message.content?.trim() || "";
+  const query           = message.content?.trim() || "";
   const imageAttachment = [...message.attachments.values()].find((item) => item.contentType?.startsWith("image/"));
   if (!query && !imageAttachment) return false;
-
-  // Require a minimum query length to avoid wasting provider quota on greetings.
-  // Images are always accepted regardless of text length.
   if (!imageAttachment && query.length < 10) {
     await message.reply("💡 Kirim pertanyaan teknis, kode, atau error untuk diinvestigasi AI Core.").catch(() => {});
     return true;
@@ -909,26 +985,23 @@ export async function handleAICoreMessage(message) {
     image = await attachmentAsDataUrl(imageAttachment).catch(() => null);
   }
 
-  // Bounded retry: 1 extra attempt, honouring Retry-After when available.
-  let answer;
-  let lastErr;
+  let answer, lastErr;
   for (let attempt = 0; attempt <= 1; attempt++) {
     try {
-      answer = await investigate({ query, image });
+      answer  = await investigate({ query, image });
       lastErr = null;
       break;
     } catch (err) {
       lastErr = err;
       const is429 = err?.providerCategory === "rate_limit_429" || err?.httpStatus === 429;
       if (is429 && attempt === 0) {
-        // Respect Retry-After; default 10 s; cap at 30 s so the user isn't left waiting too long.
         const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
-        logger.info(`[AI Core] Investigation 429 — waiting ${waitMs}ms before retry (Retry-After: ${err?.retryAfterMs ?? "n/a"})`);
+        logger.info(`[AI Core] Investigation 429 — waiting ${waitMs}ms before retry`);
         await sleep(waitMs);
         await message.channel.sendTyping().catch(() => {});
         continue;
       }
-      break; // non-429 or second attempt — stop retrying
+      break;
     }
   }
 
@@ -937,16 +1010,16 @@ export async function handleAICoreMessage(message) {
     return true;
   }
 
-  const err = lastErr;
+  const err           = lastErr;
   const providerReason = String(err?.providerReason || err?.message || "Unknown error").slice(0, 300);
-  const category = err?.providerCategory || "unknown";
-  const httpStatus = err?.httpStatus ?? null;
-  const isRateLimit = category === "rate_limit_429" || httpStatus === 429;
-  const isBusy = category === "concurrent_limit";
+  const category      = err?.providerCategory || "unknown";
+  const httpStatus    = err?.httpStatus ?? null;
+  const isRateLimit   = category === "rate_limit_429" || httpStatus === 429;
+  const isBusy        = category === "concurrent_limit";
+  const retryAfterSec = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
 
   logger.warn(`[AI Core] Investigation failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${redact(providerReason)}`);
 
-  const retryAfterSec = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
   const userMessage = isBusy
     ? "⏳ AI Core sedang memproses request lain. Coba lagi dalam beberapa detik."
     : isRateLimit
@@ -958,34 +1031,23 @@ export async function handleAICoreMessage(message) {
 
   if (!isBusy) {
     void logAICoreError({
-      feature: "AI Core — Investigation",
-      stage: "investigate",
-      reason: redact(providerReason),
+      feature:       "AI Core — Investigation",
+      stage:         "investigate",
+      reason:        redact(providerReason),
       errorCategory: category,
-      provider: providerLabel(),
+      provider:      providerLabel(),
       activeProvider: providerLabel(),
       ...(httpStatus ? { status: String(httpStatus) } : {}),
       ...(err?.retryAfterMs ? { retryAfterMs: String(err.retryAfterMs) } : {}),
-      metadata: {
-        channelId: message.channelId,
-        userId: message.author?.id,
-        queryLength: query?.length ?? 0,
-        hadImage: Boolean(image),
-        attempts: lastErr ? 2 : 1,
-      },
+      metadata: { channelId: message.channelId, userId: message.author?.id, queryLength: query?.length ?? 0, hadImage: Boolean(image) },
     });
   }
   return true;
 }
 
-export function isAICoreAllowed(member) {
-  return canUseAI(member);
-}
-
 /**
- * Thin wrapper around requestModel — lets conversation.js send arbitrary
- * message arrays through the same provider runtime without duplicating
- * any client / key / rate-limit logic.
+ * Thin wrapper — lets conversation.js send arbitrary message arrays through
+ * the same provider runtime without duplicating client/key/rate-limit logic.
  */
 export async function chatWithAI(messages, maxTokens) {
   return requestModel(messages, maxTokens);
@@ -993,7 +1055,7 @@ export async function chatWithAI(messages, maxTokens) {
 
 /**
  * Send a structured error payload to the error-log channel.
- * Exported so conversation.js can report 429 / provider failures without
+ * Exported so conversation.js can report 429/provider failures without
  * importing errorLogger directly or bypassing the redaction wrapper.
  */
 export async function reportError(payload) {
