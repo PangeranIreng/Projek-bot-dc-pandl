@@ -1,0 +1,171 @@
+The AI Core API key configuration is still failing.
+
+The Discord UI shows:
+
+❌ API KEY VALIDATION FAILED
+Provider: OpenAI
+Status: Connection failed
+Reason: Provider rejected the credentials or connection failed.
+
+Do NOT assume the API key is invalid.
+
+Do NOT ask me to create another API key.
+
+The implementation must be debugged from the actual source code.
+
+Trace the complete execution path from the Discord Modal submission to the actual OpenAI API request:
+
+1. Discord Modal submit event
+2. Input value extraction
+3. Input trimming
+4. API key validation
+5. OpenAI client construction
+6. Actual API request
+7. Error response parsing
+8. Encrypted storage write
+9. Runtime provider update
+10. AI Core status update
+
+Add temporary SAFE diagnostics only.
+
+NEVER log the API key.
+
+Allowed diagnostics:
+
+- hasApiKey: true/false
+- keyLength
+- maskedPrefix: first 3 characters only
+- maskedSuffix: last 4 characters only
+- provider
+- model
+- storageWriteSuccess
+- storageReadSuccess
+- runtimeConfigLoaded
+- clientInitialized
+- requestStarted
+- requestCompleted
+- HTTP status code
+- sanitized provider error category
+
+Do not log the full Authorization header.
+
+==================================================
+IMPORTANT: ACTUAL PROVIDER ERROR
+==================================================
+
+Do not convert every error into:
+
+"Provider rejected the credentials or connection failed."
+
+Capture and classify the real provider response safely.
+
+Differentiate:
+
+- 401 authentication error
+- 403 permission error
+- 404 model or endpoint error
+- 429 rate limit or quota error
+- 400 invalid request
+- 500 provider error
+- network error
+- timeout
+- missing configuration
+
+If the provider returns an actual error body, parse it and show only a sanitized reason.
+
+==================================================
+VERIFY THE OPENAI SDK IMPLEMENTATION
+==================================================
+
+Inspect the actual installed OpenAI SDK version.
+
+Verify that the code uses the correct API format for the installed SDK.
+
+Verify:
+
+- API key is passed to the correct client constructor.
+- The correct endpoint is used.
+- The selected model is valid for the current API.
+- The request format matches the installed SDK.
+- No outdated SDK syntax is being used.
+- No incorrect model name is being used.
+
+Do not assume that the configured model is valid simply because it is displayed in the UI.
+
+==================================================
+CRITICAL TEST
+==================================================
+
+Create a safe diagnostic provider test that uses the actual runtime configuration.
+
+The result must tell us whether the failure happens at:
+
+A. Modal input
+B. Encryption/storage
+C. Decryption/load
+D. Runtime config
+E. OpenAI client initialization
+F. Network connection
+G. Authentication
+H. Model availability
+I. Request format
+
+Do not fake a successful result.
+
+==================================================
+PERSISTENCE
+==================================================
+
+Verify:
+
+Discord Modal
+→ encrypted storage
+→ read storage
+→ decrypt
+→ runtime provider
+→ OpenAI client
+
+The same API key must be available to the client after decryption.
+
+If the key is stored successfully but the client receives an empty value, fix the runtime wiring.
+
+If the client receives the key but authentication fails, expose the sanitized actual provider error category.
+
+==================================================
+DO NOT CHANGE EXISTING FEATURES
+==================================================
+
+Do not remove:
+
+- AI Core
+- Error Analyzer
+- Investigation
+- Code Analysis
+- Vision Analysis
+- Fix Generator
+- Project Knowledge
+- Discord configuration
+- Existing channel configuration
+
+Do not rebuild the AI system.
+
+Only debug the provider configuration and validation flow.
+
+==================================================
+FINAL REPORT
+==================================================
+
+After debugging, report the exact failure layer:
+
+- Input
+- Storage
+- Encryption
+- Decryption
+- Runtime config
+- Client initialization
+- Network
+- Authentication
+- Model
+- Request format
+
+Do not claim the API key is invalid without a confirmed provider authentication error.

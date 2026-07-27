@@ -291,9 +291,13 @@ export async function handleAICoreModal(interaction) {
       await interaction.editReply({
         content: `✅ **AI API KEY UPDATED**\nProvider: **${result.provider}**\nStatus: 🟢 Connected\nModel: \`${result.model}\`\nAPI Key: ${result.apiKeyMask}\nAI Core: 🟢 ONLINE`,
       });
-    } catch {
+    } catch (error) {
+      const reason = String(error?.providerReason || error?.message || "Provider request failed.").slice(0, 240);
+      const category = error?.providerCategory ? `\nCategory: \`${error.providerCategory}\`` : "";
+      const status = error?.httpStatus ? `\nHTTP status: \`${error.httpStatus}\`` : "";
+      const providerStatus = providerStatusLabel(error?.providerStatus || "provider_error");
       await interaction.editReply({
-        content: "❌ **API KEY VALIDATION FAILED**\nProvider: **OpenAI**\nStatus: 🔴 Connection failed\nReason: Provider rejected the credentials or connection failed.",
+        content: `❌ **AI PROVIDER VALIDATION FAILED**\nProvider: **OpenAI**\nStatus: ${providerStatus}\nReason: ${reason}${category}${status}`,
       });
     }
     return;

@@ -37,3 +37,14 @@ and the owner-facing dashboard needs to direct troubleshooting correctly.
 **How to apply:** Set the status from provider/model/network error properties
 on connection, model validation, and real AI requests; successful requests
 should restore `connected`.
+
+The installed OpenAI SDK exposes HTTP failures through `error.status` and
+structured `error.error`; preserve those fields long enough to classify the
+failure, then expose only sanitized reason/category/status to Discord.
+
+**Why:** Replacing SDK errors with one generic message hides whether the
+failure is authentication, permission, endpoint, model, quota, request, or
+network related.
+
+**How to apply:** Keep diagnostics opt-in, never log authorization headers or
+full keys, and distinguish provider endpoint 404s from model 404s.

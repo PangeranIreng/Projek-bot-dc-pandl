@@ -56,39 +56,110 @@ function keyMask(apiKey) {
   return `Configured ••••${suffix}`;
 }
 
-function classifyProviderError(error) {
-  const status = Number(error?.status);
+function keyDiagnostics(apiKey, extra = {}) {
+  const value = String(apiKey || "");
+  return {
+    hasApiKey: Boolean(value),
+    keyLength: value.length,
+    maskedPrefix: value ? value.slice(0, 3) : null,
+    maskedSuffix: value ? value.slice(-4) : null,
+    provider: providerLabel(),
+    model: config().model,
+    ...extra,
+  };
+}
+
+function providerErrorStatus(error) {
+  return Number.isFinite(Number(error?.status)) ? Number(error.status) : null;
+}
+
+function providerErrorText(error) {
+  const detail = error?.error;
+  if (typeof detail === "string") return detail.toLowerCase();
+  if (detail && typeof detail === "object") {
+    return [detail.message, detail.type, detail.code].filter(Boolean).join(" ").toLowerCase();
+  }
+  return String(error?.message || "").toLowerCase();
+}
+
+function providerErrorCategory(error, { modelRequest = false } = {}) {
+  const status = providerErrorStatus(error);
   const code = String(error?.code || "").toLowerCase();
-  const message = String(error?.message || "").toLowerCase();
-  if (status === 401 || status === 403 || /auth|api key|credential|unauthorized|forbidden/.test(message)) {
-    return "Provider rejected the credentials.";
+  const message = providerErrorText(error);
+  if (code === "ai_key_format") return "invalid_key_format";
+  if (code === "ai_storage") return "secure_storage";
+  if (status === 401) return "authentication_401";
+  if (status === 403) return "permission_403";
+  if (status === 404) {
+    return modelRequest && /model|not[_ -]?found|does not exist/.test(message)
+      ? "model_404"
+      : "endpoint_404";
   }
-  if (status === 429 || code.includes("rate") || message.includes("rate limit")) {
-    return "Provider rate limit reached.";
+  if (status === 429) return "rate_limit_429";
+  if (status === 400) return "invalid_request_400";
+  if (status >= 500) return `provider_${status}`;
+  if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) return "timeout";
+  if (/network|fetch|econn|socket|dns|connection error/.test(message)) return "network";
+  return "unknown";
+}
+
+function classifyProviderError(error, { modelRequest = false } = {}) {
+  const status = providerErrorStatus(error);
+  const code = String(error?.code || "").toLowerCase();
+  const message = providerErrorText(error);
+  if (code === "ai_key_format") return "API key format is invalid.";
+  if (code === "ai_storage") return "Secure credential storage failed.";
+  if (status === 401 || /authentication|api key|credential|unauthorized/.test(message)) {
+    return `Provider authentication failed${status ? ` (HTTP ${status})` : ""}.`;
   }
-  if (/model|not_found/.test(message) || status === 404) {
-    return "The selected model is unavailable.";
+  if (status === 403 || /permission|forbidden/.test(message)) {
+    return `Provider permission denied${status ? ` (HTTP ${status})` : ""}.`;
   }
+  if (status === 404 && modelRequest && /model|not[_ -]?found|does not exist/.test(message)) {
+    return "The selected model is unavailable (HTTP 404).";
+  }
+  if (status === 404) return "The provider endpoint was not found (HTTP 404).";
+  if (status === 429 || code.includes("rate") || /rate limit|quota|too many request/.test(message)) {
+    return `Provider rate limit or quota reached${status ? ` (HTTP ${status})` : ""}.`;
+  }
+  if (status === 400) return "Provider rejected the request format (HTTP 400).";
+  if (status >= 500) return `Provider service error (HTTP ${status}).`;
   if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) {
     return "Provider request timed out.";
   }
-  if (/network|fetch|econn|socket|dns/.test(message)) {
+  if (/network|fetch|econn|socket|dns|connection error/.test(message)) {
     return "Provider network request failed.";
+  }
+  if (status) return `Provider request failed (HTTP ${status}).`;
+  if (/model|not_found/.test(message)) {
+    return "The selected model is unavailable.";
   }
   return "Provider connection failed.";
 }
 
-function classifyProviderStatus(error) {
-  const status = Number(error?.status);
-  const code = String(error?.code || "").toLowerCase();
-  const message = String(error?.message || "").toLowerCase();
-  if (status === 404 || /model|not_found/.test(message)) return "model_error";
+function classifyProviderStatus(error, { modelRequest = false } = {}) {
+  const status = providerErrorStatus(error);
+  const category = providerErrorCategory(error, { modelRequest });
+  if (category === "model_404") return "model_error";
   if (
-    error?.name === "AbortError" ||
-    code.includes("timeout") ||
-    /timeout|network|fetch|econn|socket|dns/.test(message)
+    category === "timeout" ||
+    category === "network"
   ) return "network_error";
   return "provider_error";
+}
+
+function safeProviderError(error, options = {}) {
+  const safe = new Error(classifyProviderError(error, options));
+  safe.providerStatus = classifyProviderStatus(error, options);
+  safe.providerCategory = providerErrorCategory(error, options);
+  safe.httpStatus = providerErrorStatus(error);
+  safe.providerReason = safe.message;
+  return safe;
+}
+
+function logProviderDiagnostic(stage, apiKey, extra = {}) {
+  if (process.env.AI_CORE_DIAGNOSTICS !== "true") return;
+  logger.info(`[AI Core] ${stage}`, keyDiagnostics(apiKey, extra));
 }
 
 function canUseAI(member) {
@@ -207,18 +278,61 @@ export function getProviderConfiguration() {
 function validateApiKeyFormat(apiKey) {
   const value = String(apiKey || "").trim();
   if (!value || value.length < 20 || /\s/.test(value)) {
-    throw new Error("API key format is invalid.");
+    const error = new Error("API key format is invalid.");
+    error.code = "AI_KEY_FORMAT";
+    throw error;
   }
   return value;
 }
 
 async function checkProvider(apiKey) {
-  const candidate = new OpenAI({
-    apiKey,
-    timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
+  let candidate = null;
+  try {
+    candidate = new OpenAI({
+      apiKey,
+      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
+    });
+    logProviderDiagnostic("Provider client initialized", apiKey, {
+      clientInitialized: true,
+      runtimeConfigLoaded: true,
+    });
+  } catch (error) {
+    logProviderDiagnostic("Provider client initialization failed", apiKey, {
+      clientInitialized: false,
+      requestStarted: false,
+      requestCompleted: false,
+      httpStatus: providerErrorStatus(error),
+      providerErrorCategory: providerErrorCategory(error),
+    });
+    throw error;
+  }
+
+  logProviderDiagnostic("Provider request started", apiKey, {
+    clientInitialized: true,
+    requestStarted: true,
+    requestCompleted: false,
+    endpoint: "/v1/models",
   });
-  await candidate.models.list();
-  return candidate;
+  try {
+    await candidate.models.list();
+    logProviderDiagnostic("Provider request completed", apiKey, {
+      clientInitialized: true,
+      requestStarted: true,
+      requestCompleted: true,
+      httpStatus: 200,
+      providerErrorCategory: null,
+    });
+    return candidate;
+  } catch (error) {
+    logProviderDiagnostic("Provider request failed", apiKey, {
+      clientInitialized: true,
+      requestStarted: true,
+      requestCompleted: false,
+      httpStatus: providerErrorStatus(error),
+      providerErrorCategory: providerErrorCategory(error),
+    });
+    throw error;
+  }
 }
 
 export async function validateProviderModel(model) {
@@ -226,17 +340,29 @@ export async function validateProviderModel(model) {
   if (!name) throw new Error("Model is required.");
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("No AI provider API key is configured.");
-  const candidate = await checkProvider(apiKey);
+  let candidate;
+  try {
+    candidate = await checkProvider(apiKey);
+  } catch (error) {
+    const safe = safeProviderError(error);
+    aiCoreDB.updateConfig({
+      providerStatus: safe.providerStatus,
+      providerStatusReason: safe.providerReason,
+      providerCheckedAt: new Date().toISOString(),
+    });
+    throw safe;
+  }
   try {
     await candidate.models.retrieve(name);
     return true;
   } catch (error) {
+    const safe = safeProviderError(error, { modelRequest: true });
     aiCoreDB.updateConfig({
-      providerStatus: classifyProviderStatus(error),
-      providerStatusReason: classifyProviderError(error),
+      providerStatus: safe.providerStatus,
+      providerStatusReason: safe.providerReason,
       providerCheckedAt: new Date().toISOString(),
     });
-    throw new Error(classifyProviderError(error));
+    throw safe;
   }
 }
 
@@ -245,6 +371,11 @@ export async function updateProviderApiKey(apiKey) {
   const previousConfig = aiCoreDB.getConfig();
   try {
     const value = validateApiKeyFormat(apiKey);
+    logProviderDiagnostic("Provider key validation started", value, {
+      runtimeConfigLoaded: false,
+      storageWriteSuccess: false,
+      storageReadSuccess: false,
+    });
     aiCoreDB.updateConfig({
       providerStatus: "validating",
       providerStatusReason: null,
@@ -252,9 +383,25 @@ export async function updateProviderApiKey(apiKey) {
     });
     candidate = await checkProvider(value);
     aiCoreDB.saveApiKey(value);
+    const storageWriteSuccess = aiCoreDB.hasStoredApiKey();
+    const storageReadValue = aiCoreDB.getApiKey();
+    const storageReadSuccess = storageReadValue === value;
+    logProviderDiagnostic("Provider credential persistence checked", value, {
+      storageWriteSuccess,
+      storageReadSuccess,
+    });
+    if (!storageWriteSuccess || !storageReadSuccess) {
+      const storageError = new Error("Secure credential storage failed.");
+      storageError.code = "AI_STORAGE";
+      throw storageError;
+    }
     runtimeApiKey = value;
     openai = candidate;
     openaiApiKey = value;
+    logProviderDiagnostic("Provider runtime configuration loaded", value, {
+      runtimeConfigLoaded: getActiveApiKey() === value,
+      clientInitialized: Boolean(openai && openaiApiKey === value),
+    });
     aiCoreDB.updateConfig({
       providerStatus: "connected",
       providerStatusReason: null,
@@ -262,6 +409,7 @@ export async function updateProviderApiKey(apiKey) {
     });
     return getProviderConfiguration();
   } catch (error) {
+    const safe = safeProviderError(error);
     const hadExistingKey = Boolean(getActiveApiKey());
     aiCoreDB.updateConfig(hadExistingKey
       ? {
@@ -270,11 +418,11 @@ export async function updateProviderApiKey(apiKey) {
           providerCheckedAt: previousConfig.providerCheckedAt,
         }
       : {
-          providerStatus: classifyProviderStatus(error),
-          providerStatusReason: classifyProviderError(error),
+          providerStatus: safe.providerStatus,
+          providerStatusReason: safe.providerReason,
           providerCheckedAt: new Date().toISOString(),
         });
-    throw new Error(classifyProviderError(error));
+    throw safe;
   }
 }
 
@@ -287,6 +435,12 @@ export function removeProviderApiKey() {
     providerStatus: process.env.OPENAI_API_KEY?.trim() ? "configured" : "not_configured",
     providerStatusReason: null,
     providerCheckedAt: null,
+  });
+  logProviderDiagnostic("Provider credential removed", null, {
+    runtimeConfigLoaded: false,
+    storageWriteSuccess: !aiCoreDB.hasStoredApiKey(),
+    storageReadSuccess: aiCoreDB.getApiKey() === null,
+    clientInitialized: false,
   });
   return getProviderConfiguration();
 }
@@ -313,13 +467,13 @@ export async function testProviderConnection() {
     });
     return { ok: true, reason: null, configuration: getProviderConfiguration() };
   } catch (error) {
-    const reason = classifyProviderError(error);
+    const safe = safeProviderError(error);
     aiCoreDB.updateConfig({
-      providerStatus: classifyProviderStatus(error),
-      providerStatusReason: reason,
+      providerStatus: safe.providerStatus,
+      providerStatusReason: safe.providerReason,
       providerCheckedAt: new Date().toISOString(),
     });
-    return { ok: false, reason, configuration: getProviderConfiguration() };
+    return { ok: false, reason: safe.providerReason, configuration: getProviderConfiguration() };
   }
 }
 
@@ -332,7 +486,10 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
   if (!apiKey) throw new Error("AI provider is not configured");
   if (!withinRateLimit()) throw new Error("AI rate limit reached; try again shortly");
   if (!openai || openaiApiKey !== apiKey) {
-    openai = new OpenAI({ apiKey });
+    openai = new OpenAI({
+      apiKey,
+      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
+    });
     openaiApiKey = apiKey;
   }
   const cfg = config();
@@ -352,13 +509,14 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     });
     return response.choices?.[0]?.message?.content?.trim() || "AI provider returned an empty response.";
   } catch (err) {
+    const safe = safeProviderError(err, { modelRequest: true });
     aiCoreDB.incrementStat("failedRequests");
     aiCoreDB.updateConfig({
-      providerStatus: classifyProviderStatus(err),
-      providerStatusReason: classifyProviderError(err),
+      providerStatus: safe.providerStatus,
+      providerStatusReason: safe.providerReason,
       providerCheckedAt: new Date().toISOString(),
     });
-    throw err;
+    throw safe;
   } finally {
     clearTimeout(timeout);
   }
