@@ -38,11 +38,14 @@ export async function handleMessageCreate(message, secrets) {
       processedMessageIds.delete(processedMessageIds.values().next().value);
     }
 
-    // AI Core investigation channel — must run before all other routers.
-    if (await handleAICoreMessage(message)) return;
-
-    // AI Conversation channel — natural multi-turn chat on top of AI Core.
+    // AI Conversation runs first — its smart routing decides whether to call
+    // investigate() or chatWithAI(), so casual messages in a shared channel
+    // never wastefully hit the investigation path.
     if (await handleAIConversationMessage(message)) return;
+
+    // AI Core investigation channel — dedicated technical query channel;
+    // only reached if the message is NOT in the conversation channel.
+    if (await handleAICoreMessage(message)) return;
 
     // Resource Manager file imports are handled before all feature routers so
     // cookies never enter the BoomBox queue or scanner pipeline.

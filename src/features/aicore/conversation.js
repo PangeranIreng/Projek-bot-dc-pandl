@@ -28,6 +28,7 @@ import {
   investigate,
   redact,
   reportError,
+  sleep,
 } from "./core.js";
 import { logger } from "../../utils/logger.js";
 
@@ -43,7 +44,13 @@ const USER_COOLDOWN_MS = 3_000;
 
 // ── Per-channel sliding-window rate limit ─────────────────────────────────────
 const channelRequestLog = new Map();
-const CHANNEL_MAX_PER_MINUTE = 10;
+// Keep this ≤ MAX_REQUESTS_PER_MINUTE in core.js (currently 3) so conversation
+// alone cannot exhaust the global per-minute budget.
+const CHANNEL_MAX_PER_MINUTE = 3;
+
+// ── Per-channel in-flight guard ───────────────────────────────────────────────
+// Prevents a second request firing before the first one returns.
+const channelInFlight = new Set();
 
 // ── AI personality system prompt ──────────────────────────────────────────────
 const SYSTEM_PROMPT = `Anda adalah AI Core Assistant untuk server Discord ini. Anda adalah asisten AI yang cerdas, membantu, dan ramah — spesialis di bidang developer tools, debugging, analisis kode, dan diskusi teknis maupun umum.
@@ -58,10 +65,6 @@ Pedoman:
 • Pertahankan konteks percakapan sebelumnya dalam satu sesi.`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** Returns true and records the timestamp if the user is within cooldown. */
 function isOnCooldown(userId) {
@@ -143,8 +146,9 @@ function shouldInvestigate(message, query) {
 // ── 429-aware request wrapper ─────────────────────────────────────────────────
 
 /**
- * Call fn(); if it throws with HTTP 429, wait 5 s and retry once.
- * After the second failure (or any non-429 error) the error is re-thrown.
+ * Call fn(); if it throws HTTP 429, wait (honouring Retry-After) then retry once.
+ * Any non-429 error, or a second 429, is re-thrown immediately.
+ * Maximum wait is capped at 30 s so the user isn't left hanging.
  */
 async function withRateLimitRetry(fn) {
   for (let attempt = 0; attempt <= 1; attempt++) {
@@ -153,8 +157,9 @@ async function withRateLimitRetry(fn) {
     } catch (err) {
       const is429 = err?.httpStatus === 429 || err?.providerCategory === "rate_limit_429";
       if (is429 && attempt === 0) {
-        logger.warn("[AI Conversation] 429 from provider — waiting 5 s before retry");
-        await sleep(5_000);
+        const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
+        logger.warn(`[AI Conversation] 429 — waiting ${waitMs}ms before retry (Retry-After: ${err?.retryAfterMs ?? "n/a"})`);
+        await sleep(waitMs);
         continue;
       }
       throw err;
@@ -213,6 +218,14 @@ export async function handleAIConversationMessage(message) {
     return true;
   }
 
+  // Per-channel in-flight guard — prevents a second request firing before the
+  // first one returns, which would waste a provider request slot and risk 429.
+  if (channelInFlight.has(message.channelId)) {
+    await message.reply("⏳ Masih memproses pesan sebelumnya. Tunggu sebentar.").catch(() => {});
+    return true;
+  }
+  channelInFlight.add(message.channelId);
+
   await message.channel.sendTyping().catch(() => {});
 
   const routeReason = shouldInvestigate(message, query);
@@ -252,16 +265,17 @@ export async function handleAIConversationMessage(message) {
     const category = err?.providerCategory || "unknown";
     const httpStatus = err?.httpStatus ?? null;
     const isRateLimit = category === "rate_limit_429" || httpStatus === 429;
-    const isLocalLimit = /rate limit reached/i.test(err?.message ?? "");
+    const isLocalLimit = /rate limit reached|concurrent_limit/i.test(`${err?.message ?? ""}${category}`);
+    const retryAfterSec = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
 
     logger.warn(`[AI Conversation] Failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${providerReason}`);
 
     // User-facing reply
     if (isLocalLimit) {
-      await message.reply("⚠️ AI Core sedang sibuk. Coba lagi dalam satu menit.").catch(() => {});
+      await message.reply("⏳ AI Core sedang sibuk memproses request lain. Coba lagi dalam beberapa detik.").catch(() => {});
     } else if (isRateLimit) {
       await message.reply(
-        `❌ **Rate Limit / Quota** (HTTP 429)\nProvider membatasi permintaan. Coba lagi dalam beberapa menit.\nReason: ${providerReason}`
+        `❌ **Rate Limit / Quota** (HTTP 429)\nProvider membatasi permintaan.${retryAfterSec ? ` Retry-After: ${retryAfterSec}s.` : " Coba lagi dalam beberapa menit."}\nReason: ${providerReason}`
       ).catch(() => {});
     } else if (httpStatus) {
       await message.reply(`❌ **Provider Error** (HTTP ${httpStatus})\n${providerReason}`).catch(() => {});
@@ -269,7 +283,7 @@ export async function handleAIConversationMessage(message) {
       await message.reply(`❌ AI Core tidak dapat memproses pesan ini.\n${providerReason}`).catch(() => {});
     }
 
-    // Structured error to error-log channel (skips local-rate-limit noise)
+    // Structured error to error-log channel (skips local-rate-limit and in-flight noise)
     if (!isLocalLimit) {
       void reportError({
         feature: "AI Core — Conversation",
@@ -278,6 +292,7 @@ export async function handleAIConversationMessage(message) {
         errorCategory: category,
         activeProvider: "OpenAI",
         ...(httpStatus ? { status: String(httpStatus) } : {}),
+        ...(err?.retryAfterMs ? { retryAfterMs: String(err.retryAfterMs) } : {}),
         metadata: {
           channelId: message.channelId,
           userId: message.author?.id,
@@ -287,6 +302,9 @@ export async function handleAIConversationMessage(message) {
         },
       });
     }
+  } finally {
+    // Always release the in-flight lock so subsequent messages can be processed
+    channelInFlight.delete(message.channelId);
   }
 
   return true;

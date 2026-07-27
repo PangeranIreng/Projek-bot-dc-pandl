@@ -19,11 +19,37 @@ let runtimeApiKey = null;
 let openaiApiKey = null;
 const recentRequests = [];
 const activeErrorAnalyses = new Set();
-const MAX_REQUESTS_PER_MINUTE = 8;
+// Conservative default — matches typical free-tier RPM (gpt-4o-mini: 3 RPM).
+// Raise this only if the API key plan supports a higher rate.
+const MAX_REQUESTS_PER_MINUTE = 3;
+// Concurrent request guard: prevents two features from firing simultaneously
+// and doubling the per-minute load on the provider.
+let activeAIRequests = 0;
+const MAX_CONCURRENT_AI_REQUESTS = 2;
 
 function truncate(value, max) {
   const text = String(value ?? "");
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+export function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Extract the Retry-After delay (in ms) from a raw OpenAI SDK error.
+ * Must be called BEFORE safeProviderError() discards the headers.
+ */
+function extractRetryAfterMs(error) {
+  try {
+    if (!error?.headers) return null;
+    const val = typeof error.headers.get === "function"
+      ? error.headers.get("retry-after")
+      : (error.headers["retry-after"] ?? error.headers["Retry-After"] ?? null);
+    const secs = Number(val);
+    if (Number.isFinite(secs) && secs > 0) return Math.min(secs * 1000, 60_000);
+  } catch { /* ignore */ }
+  return null;
 }
 
 export function redact(value) {
@@ -607,7 +633,18 @@ export function rebuildKnowledge() {
 async function requestModel(messages, maxTokens = config().maxResponse) {
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("AI provider is not configured");
+
+  // Concurrency guard — prevent two simultaneous requests from doubling provider load
+  if (activeAIRequests >= MAX_CONCURRENT_AI_REQUESTS) {
+    const busy = new Error("AI Core is processing another request. Please wait a moment.");
+    busy.providerCategory = "concurrent_limit";
+    busy.providerStatus = "provider_error";
+    busy.providerReason = busy.message;
+    throw busy;
+  }
+
   if (!withinRateLimit()) throw new Error("AI rate limit reached; try again shortly");
+
   if (!openai || openaiApiKey !== apiKey) {
     openai = new OpenAI({
       apiKey,
@@ -624,9 +661,12 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     baseURL: openai?.baseURL ?? null,
     endpoint: "/v1/chat/completions",
     model,
+    activeAIRequests,
   });
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(5000, Number(cfg.timeoutMs) || 30000));
+  const timeoutMs = Math.max(5000, Number(cfg.timeoutMs) || 30000);
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  activeAIRequests++;
   try {
     const response = await openai.chat.completions.create({
       model,
@@ -650,7 +690,11 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     });
     return response.choices?.[0]?.message?.content?.trim() || "AI provider returned an empty response.";
   } catch (err) {
+    // Extract Retry-After BEFORE safeProviderError discards the raw error headers
+    const retryAfterMs = extractRetryAfterMs(err);
     const safe = safeProviderError(err, { modelRequest: true });
+    if (retryAfterMs) safe.retryAfterMs = retryAfterMs;
+
     logProviderDiagnostic("Model request failed", apiKey, {
       runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
       getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
@@ -660,6 +704,7 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
       model,
       httpStatus: providerErrorStatus(err),
       providerErrorCategory: providerErrorCategory(err, { modelRequest: true }),
+      retryAfterMs: retryAfterMs ?? null,
     });
     aiCoreDB.incrementStat("failedRequests");
     aiCoreDB.updateConfig({
@@ -669,7 +714,8 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     });
     throw safe;
   } finally {
-    clearTimeout(timeout);
+    activeAIRequests--;
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -849,32 +895,68 @@ export async function handleAICoreMessage(message) {
   const query = message.content?.trim() || "";
   const imageAttachment = [...message.attachments.values()].find((item) => item.contentType?.startsWith("image/"));
   if (!query && !imageAttachment) return false;
+
+  // Require a minimum query length to avoid wasting provider quota on greetings.
+  // Images are always accepted regardless of text length.
+  if (!imageAttachment && query.length < 10) {
+    await message.reply("💡 Kirim pertanyaan teknis, kode, atau error untuk diinvestigasi AI Core.").catch(() => {});
+    return true;
+  }
+
   await message.channel.sendTyping().catch(() => {});
   let image = null;
   if (imageAttachment && cfg.visionAnalysis) {
     image = await attachmentAsDataUrl(imageAttachment).catch(() => null);
   }
-  try {
-    const answer = await investigate({ query, image });
+
+  // Bounded retry: 1 extra attempt, honouring Retry-After when available.
+  let answer;
+  let lastErr;
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    try {
+      answer = await investigate({ query, image });
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      const is429 = err?.providerCategory === "rate_limit_429" || err?.httpStatus === 429;
+      if (is429 && attempt === 0) {
+        // Respect Retry-After; default 10 s; cap at 30 s so the user isn't left waiting too long.
+        const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
+        logger.info(`[AI Core] Investigation 429 — waiting ${waitMs}ms before retry (Retry-After: ${err?.retryAfterMs ?? "n/a"})`);
+        await sleep(waitMs);
+        await message.channel.sendTyping().catch(() => {});
+        continue;
+      }
+      break; // non-429 or second attempt — stop retrying
+    }
+  }
+
+  if (!lastErr) {
     await message.reply(truncate(answer, 3900)).catch(() => {});
-  } catch (err) {
-    const providerReason = String(err?.providerReason || err?.message || "Unknown error").slice(0, 300);
-    const category = err?.providerCategory || "unknown";
-    const httpStatus = err?.httpStatus ?? null;
-    const isRateLimit = category === "rate_limit_429" || httpStatus === 429;
+    return true;
+  }
 
-    logger.warn(`[AI Core] Investigation failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${redact(providerReason)}`);
+  const err = lastErr;
+  const providerReason = String(err?.providerReason || err?.message || "Unknown error").slice(0, 300);
+  const category = err?.providerCategory || "unknown";
+  const httpStatus = err?.httpStatus ?? null;
+  const isRateLimit = category === "rate_limit_429" || httpStatus === 429;
+  const isBusy = category === "concurrent_limit";
 
-    // User-facing reply — show the actual provider reason so the user knows
-    // whether it is a rate-limit, auth issue, timeout, etc.
-    const userMessage = isRateLimit
-      ? `❌ **AI Core — Rate Limit / Quota** (HTTP 429)\nProvider membatasi request. Coba lagi dalam beberapa menit.\nReason: ${redact(providerReason)}`
+  logger.warn(`[AI Core] Investigation failed (${category}${httpStatus ? ` HTTP ${httpStatus}` : ""}): ${redact(providerReason)}`);
+
+  const retryAfterSec = err?.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
+  const userMessage = isBusy
+    ? "⏳ AI Core sedang memproses request lain. Coba lagi dalam beberapa detik."
+    : isRateLimit
+      ? `❌ **AI Core — Rate Limit** (HTTP 429)\nProvider membatasi request.${retryAfterSec ? ` Retry-After: ${retryAfterSec}s.` : " Coba lagi dalam beberapa menit."}\nReason: ${redact(providerReason)}`
       : httpStatus
         ? `❌ **AI Core — Provider Error** (HTTP ${httpStatus})\n${redact(providerReason)}`
         : `❌ **AI Core — Investigation Gagal**\n${redact(providerReason)}`;
-    await message.reply(userMessage).catch(() => {});
+  await message.reply(userMessage).catch(() => {});
 
-    // Send structured error to the configured error-log channel
+  if (!isBusy) {
     void logAICoreError({
       feature: "AI Core — Investigation",
       stage: "investigate",
@@ -883,11 +965,13 @@ export async function handleAICoreMessage(message) {
       provider: providerLabel(),
       activeProvider: providerLabel(),
       ...(httpStatus ? { status: String(httpStatus) } : {}),
+      ...(err?.retryAfterMs ? { retryAfterMs: String(err.retryAfterMs) } : {}),
       metadata: {
         channelId: message.channelId,
         userId: message.author?.id,
         queryLength: query?.length ?? 0,
         hadImage: Boolean(image),
+        attempts: lastErr ? 2 : 1,
       },
     });
   }
