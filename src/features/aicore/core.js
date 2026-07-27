@@ -207,12 +207,14 @@ export function initAICore(discordClient) {
   client = discordClient;
   const activeKey = getActiveApiKey();
   if (activeKey) {
+    logger.info("[AI Core] [KEY_STORED_NOT_TESTED] API key found in storage; connection not yet verified at startup.");
     openai = new OpenAI({
       apiKey: activeKey,
       timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
     });
     openaiApiKey = activeKey;
   } else {
+    logger.info("[AI Core] [NO_KEY_STORED] No API key configured.");
     openai = null;
     openaiApiKey = null;
   }
@@ -231,14 +233,17 @@ export function getAICoreStatus() {
   const cfg = config();
   const knowledge = aiCoreDB.getKnowledge();
   const activeKey = getActiveApiKey();
-  const currentProviderStatus = activeKey
-    ? (cfg.providerStatus === "not_configured" ? "configured" : (cfg.providerStatus || "configured"))
-    : "not_configured";
+  const hasKey = Boolean(activeKey);
+  // Derive keyStatus: if a key exists but DB says "no_key_stored", correct to "key_stored_not_tested"
+  const rawKeyStatus = cfg.keyStatus || "no_key_stored";
+  const keyStatus = hasKey && rawKeyStatus === "no_key_stored" ? "key_stored_not_tested" : rawKeyStatus;
+  const connectionStatus = hasKey ? (cfg.providerStatus || "not_tested") : "not_configured";
   return {
     online: Boolean(client),
     providerReady: providerReady(),
-    providerStatus: currentProviderStatus,
-    providerStatusReason: activeKey ? (cfg.providerStatusReason || null) : null,
+    keyStatus,
+    providerStatus: connectionStatus,
+    providerStatusReason: hasKey ? (cfg.providerStatusReason || null) : null,
     providerKeyMask: keyMask(activeKey),
     providerSource: runtimeApiKey ? "runtime" : aiCoreDB.hasStoredApiKey() ? "secure_storage" : activeKey ? "environment" : "none",
     knowledgeReady: Boolean(knowledge.builtAt && knowledge.files.length),
@@ -267,17 +272,20 @@ export function updateAICoreConfig(patch) {
 export function getProviderConfiguration() {
   const cfg = config();
   const activeKey = getActiveApiKey();
-  const storedStatus = cfg.providerStatus === "not_configured" && activeKey
-    ? "configured"
-    : (cfg.providerStatus || "not_configured");
+  const hasKey = Boolean(activeKey);
+  // Derive keyStatus: if a key exists but DB says "no_key_stored", correct to "key_stored_not_tested"
+  const rawKeyStatus = cfg.keyStatus || "no_key_stored";
+  const keyStatus = hasKey && rawKeyStatus === "no_key_stored" ? "key_stored_not_tested" : rawKeyStatus;
+  const connectionStatus = hasKey ? (cfg.providerStatus || "not_tested") : "not_configured";
   return {
     provider: providerLabel(),
     model: cfg.model,
-    apiKeyConfigured: Boolean(activeKey),
+    apiKeyConfigured: hasKey,
     apiKeyMask: keyMask(activeKey),
+    keyStatus,
     source: runtimeApiKey ? "runtime" : aiCoreDB.hasStoredApiKey() ? "secure_storage" : activeKey ? "environment" : "none",
-    status: activeKey ? storedStatus : "not_configured",
-    statusReason: activeKey ? (cfg.providerStatusReason || null) : null,
+    status: connectionStatus,
+    statusReason: hasKey ? (cfg.providerStatusReason || null) : null,
     checkedAt: cfg.providerCheckedAt || null,
     errorAnalysis: cfg.errorAnalysis,
     investigation: cfg.investigation,
@@ -386,74 +394,63 @@ export async function validateProviderModel(model) {
 }
 
 export async function updateProviderApiKey(apiKey) {
-  let candidate;
   const previousConfig = aiCoreDB.getConfig();
   try {
     const rawInputApiKeySha256 = apiKeyHash(apiKey);
     const value = validateApiKeyFormat(apiKey);
-    logProviderDiagnostic("Provider key validation started", value, {
+    logProviderDiagnostic("Provider key storage started", value, {
       inputApiKeySha256: rawInputApiKeySha256,
       validatedApiKeySha256: apiKeyHash(value),
-      runtimeConfigLoaded: false,
       storageWriteSuccess: false,
-      storageReadSuccess: false,
     });
-    aiCoreDB.updateConfig({
-      providerStatus: "validating",
-      providerStatusReason: null,
-      providerCheckedAt: new Date().toISOString(),
-    });
-    candidate = await checkProvider(value);
+
+    // Save the key immediately after format validation.
+    // Connection test is deliberately separated — use testProviderConnection() for that.
     aiCoreDB.saveApiKey(value);
     const storageWriteSuccess = aiCoreDB.hasStoredApiKey();
     const storageReadValue = aiCoreDB.getApiKey();
     const storageReadSuccess = storageReadValue === value;
-    logProviderDiagnostic("Provider credential persistence checked", value, {
+
+    logProviderDiagnostic("Provider credential persisted", value, {
       storageWriteSuccess,
       storageReadSuccess,
       inputApiKeySha256: rawInputApiKeySha256,
       validatedApiKeySha256: apiKeyHash(value),
-      checkProviderApiKeySha256: apiKeyHash(value),
       storedApiKeySha256: storageReadValue ? apiKeyHash(storageReadValue) : null,
-      decryptedApiKeySha256: storageReadValue ? apiKeyHash(storageReadValue) : null,
     });
+
     if (!storageWriteSuccess || !storageReadSuccess) {
       const storageError = new Error("Secure credential storage failed.");
       storageError.code = "AI_STORAGE";
       throw storageError;
     }
+
     runtimeApiKey = value;
-    openai = candidate;
-    openaiApiKey = value;
-    logProviderDiagnostic("Provider runtime configuration loaded", value, {
-      runtimeConfigLoaded: getActiveApiKey() === value,
-      clientInitialized: Boolean(openai && openaiApiKey === value),
-      inputApiKeySha256: apiKeyHash(value),
-      runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
-      getActiveApiKeySha256: apiKeyHash(getActiveApiKey()),
-      openaiApiKeySha256: apiKeyHash(openaiApiKey),
-      baseURL: openai?.baseURL ?? null,
+    openai = new OpenAI({
+      apiKey: value,
+      timeout: Math.max(5000, Number(config().timeoutMs) || 30000),
     });
+    openaiApiKey = value;
+
+    logger.info("[AI Core] [KEY_STORED_NOT_TESTED] API key saved to secure storage; use Test Connection to verify.");
+
     aiCoreDB.updateConfig({
-      providerStatus: "connected",
+      keyStatus: "key_stored_not_tested",
+      providerStatus: "not_tested",
       providerStatusReason: null,
       providerCheckedAt: new Date().toISOString(),
     });
+
     return getProviderConfiguration();
   } catch (error) {
     const safe = safeProviderError(error);
-    const hadExistingKey = Boolean(getActiveApiKey());
-    aiCoreDB.updateConfig(hadExistingKey
-      ? {
-          providerStatus: previousConfig.providerStatus,
-          providerStatusReason: previousConfig.providerStatusReason,
-          providerCheckedAt: previousConfig.providerCheckedAt,
-        }
-      : {
-          providerStatus: safe.providerStatus,
-          providerStatusReason: safe.providerReason,
-          providerCheckedAt: new Date().toISOString(),
-        });
+    // Restore previous state fully — never overwrite an existing valid key on failure
+    aiCoreDB.updateConfig({
+      keyStatus: previousConfig.keyStatus || (aiCoreDB.hasStoredApiKey() ? "key_stored_not_tested" : "no_key_stored"),
+      providerStatus: previousConfig.providerStatus,
+      providerStatusReason: previousConfig.providerStatusReason,
+      providerCheckedAt: previousConfig.providerCheckedAt,
+    });
     throw safe;
   }
 }
@@ -463,8 +460,11 @@ export function removeProviderApiKey() {
   openai = null;
   openaiApiKey = null;
   aiCoreDB.removeApiKey();
+  const envKeyPresent = Boolean(process.env.OPENAI_API_KEY?.trim());
+  logger.info(envKeyPresent ? "[AI Core] [KEY_STORED_NOT_TESTED] Stored key removed; env key still present." : "[AI Core] [NO_KEY_STORED] API key removed from secure storage.");
   aiCoreDB.updateConfig({
-    providerStatus: process.env.OPENAI_API_KEY?.trim() ? "configured" : "not_configured",
+    keyStatus: envKeyPresent ? "key_stored_not_tested" : "no_key_stored",
+    providerStatus: envKeyPresent ? "not_tested" : "not_configured",
     providerStatusReason: null,
     providerCheckedAt: null,
   });
@@ -480,9 +480,11 @@ export function removeProviderApiKey() {
 export async function testProviderConnection() {
   const apiKey = getActiveApiKey();
   if (!apiKey) {
-    aiCoreDB.updateConfig({ providerStatus: "not_configured", providerStatusReason: null });
+    logger.info("[AI Core] [NO_KEY_STORED] Test Connection called but no API key is configured.");
+    aiCoreDB.updateConfig({ keyStatus: "no_key_stored", providerStatus: "not_configured", providerStatusReason: null });
     return { ok: false, reason: "No AI provider API key is configured.", configuration: getProviderConfiguration() };
   }
+  logger.info("[AI Core] [KEY_STORED_NOT_TESTED] Testing provider connection...");
   try {
     aiCoreDB.updateConfig({
       providerStatus: "validating",
@@ -499,7 +501,9 @@ export async function testProviderConnection() {
       baseURL: candidate.baseURL,
       endpoint: "/v1/models",
     });
+    logger.info("[AI Core] [PROVIDER_CONNECTED] Connection test successful.");
     aiCoreDB.updateConfig({
+      keyStatus: "key_configured",
       providerStatus: "connected",
       providerStatusReason: null,
       providerCheckedAt: new Date().toISOString(),
@@ -507,7 +511,19 @@ export async function testProviderConnection() {
     return { ok: true, reason: null, configuration: getProviderConfiguration() };
   } catch (error) {
     const safe = safeProviderError(error);
+    const category = safe.providerCategory;
+    let keyStatus = "key_stored_not_tested";
+    if (category === "authentication_401" || category === "permission_403") {
+      keyStatus = "authentication_failed";
+      logger.info(`[AI Core] [AUTHENTICATION_FAILED] ${safe.providerReason}`);
+    } else if (category === "model_404") {
+      keyStatus = "model_not_found";
+      logger.info(`[AI Core] [MODEL_NOT_FOUND] ${safe.providerReason}`);
+    } else {
+      logger.info(`[AI Core] [PROVIDER_ERROR] ${safe.providerReason}`);
+    }
     aiCoreDB.updateConfig({
+      keyStatus,
       providerStatus: safe.providerStatus,
       providerStatusReason: safe.providerReason,
       providerCheckedAt: new Date().toISOString(),
@@ -532,19 +548,20 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     openaiApiKey = apiKey;
   }
   const cfg = config();
+  const model = cfg.model || "gpt-4o-mini";
   logProviderDiagnostic("Model request prepared", apiKey, {
     runtimeApiKeySha256: apiKeyHash(runtimeApiKey),
     getActiveApiKeySha256: apiKeyHash(apiKey),
     openaiApiKeySha256: apiKeyHash(openaiApiKey),
     baseURL: openai?.baseURL ?? null,
     endpoint: "/v1/chat/completions",
-    model: cfg.model || "gpt-5.4-mini",
+    model,
   });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(5000, Number(cfg.timeoutMs) || 30000));
   try {
     const response = await openai.chat.completions.create({
-      model: cfg.model || "gpt-5.4-mini",
+      model,
       messages,
       max_completion_tokens: Math.min(4000, Math.max(300, Number(maxTokens) || 1800)),
     }, { signal: controller.signal });
@@ -560,7 +577,7 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
       openaiApiKeySha256: apiKeyHash(openaiApiKey),
       baseURL: openai?.baseURL ?? null,
       endpoint: "/v1/chat/completions",
-      model: cfg.model || "gpt-5.4-mini",
+      model,
       httpStatus: 200,
     });
     return response.choices?.[0]?.message?.content?.trim() || "AI provider returned an empty response.";
@@ -572,7 +589,7 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
       openaiApiKeySha256: apiKeyHash(openaiApiKey),
       baseURL: openai?.baseURL ?? null,
       endpoint: "/v1/chat/completions",
-      model: cfg.model || "gpt-5.4-mini",
+      model,
       httpStatus: providerErrorStatus(err),
       providerErrorCategory: providerErrorCategory(err, { modelRequest: true }),
     });

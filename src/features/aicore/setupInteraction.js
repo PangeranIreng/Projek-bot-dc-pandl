@@ -57,17 +57,32 @@ function panelComponents() {
   ];
 }
 
-function providerStatusLabel(status) {
+function keyStatusLabel(keyStatus) {
   return {
-    configured: "🟢 CONFIGURED",
-    validating: "🟡 VALIDATING",
-    invalid: "🔴 INVALID",
-    provider_error: "🟠 PROVIDER ERROR",
+    no_key_stored: "🔴 NOT CONFIGURED",
+    key_stored_not_tested: "🟡 CONFIGURED (Belum diuji)",
+    key_configured: "🟢 CONFIGURED",
+    authentication_failed: "🔴 AUTH FAILED",
+    model_not_found: "🟠 CONFIGURED (Model error)",
+  }[keyStatus] || "🔴 NOT CONFIGURED";
+}
+
+function connectionStatusLabel(connectionStatus) {
+  return {
+    not_configured: "🔴 NOT CONFIGURED",
+    not_tested: "🟡 NOT TESTED",
+    validating: "🟡 VALIDATING...",
+    connected: "🟢 CONNECTED",
+    authentication_failed: "🔴 AUTHENTICATION FAILED",
+    model_not_found: "🔴 MODEL NOT FOUND",
+    provider_error: "🔴 PROVIDER ERROR",
     model_error: "🔴 MODEL ERROR",
     network_error: "🟠 NETWORK ERROR",
-    connected: "🟢 CONNECTED",
-    not_configured: "🔴 NOT CONFIGURED",
-  }[status] || "🟡 UNKNOWN";
+  }[connectionStatus] || "🟡 UNKNOWN";
+}
+
+function providerStatusLabel(status) {
+  return connectionStatusLabel(status);
 }
 
 function providerConfigEmbed(note = "") {
@@ -78,8 +93,8 @@ function providerConfigEmbed(note = "") {
     .setDescription(`${note ? `${note}\n\n` : ""}Pengaturan provider AI Core disimpan secara aman dan hanya dapat dikelola Owner.`)
     .addFields(
       { name: "Provider", value: `🟢 ${cfg.provider}`, inline: true },
-      { name: "API Key", value: `${providerStatusLabel(cfg.status)}\n${cfg.apiKeyMask}`, inline: true },
-      { name: "Connection", value: providerStatusLabel(cfg.status), inline: true },
+      { name: "API Key", value: `${keyStatusLabel(cfg.keyStatus)}\n${cfg.apiKeyMask}`, inline: true },
+      { name: "Connection", value: connectionStatusLabel(cfg.status), inline: true },
       { name: "Model", value: `\`${cfg.model}\``, inline: true },
       { name: "Error Analysis", value: cfg.errorAnalysis ? "🟢 ON" : "⚪ OFF", inline: true },
       { name: "Investigation", value: cfg.investigation ? "🟢 ON" : "⚪ OFF", inline: true },
@@ -203,7 +218,7 @@ export async function handleAICoreInteraction(interaction) {
         .setLabel("Model provider")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
-        .setValue(cfg.model || "gpt-5.4-mini");
+        .setValue(cfg.model || "gpt-4o-mini");
       modal.addComponents(new ActionRowBuilder().addComponents(model));
       await interaction.showModal(modal);
       return;
@@ -289,15 +304,20 @@ export async function handleAICoreModal(interaction) {
       const apiKey = interaction.fields.getTextInputValue("apiKey");
       const result = await updateProviderApiKey(apiKey);
       await interaction.editReply({
-        content: `✅ **AI API KEY UPDATED**\nProvider: **${result.provider}**\nStatus: 🟢 Connected\nModel: \`${result.model}\`\nAPI Key: ${result.apiKeyMask}\nAI Core: 🟢 ONLINE`,
+        content: [
+          `✅ **API KEY DISIMPAN**`,
+          `Provider: **${result.provider}**`,
+          `API Key: ${result.apiKeyMask}`,
+          `Status: 🟡 Tersimpan — belum diuji`,
+          ``,
+          `Gunakan tombol **🧪 Test Connection** untuk memverifikasi koneksi ke provider.`,
+        ].join("\n"),
       });
     } catch (error) {
-      const reason = String(error?.providerReason || error?.message || "Provider request failed.").slice(0, 240);
+      const reason = String(error?.providerReason || error?.message || "Gagal menyimpan API key.").slice(0, 240);
       const category = error?.providerCategory ? `\nCategory: \`${error.providerCategory}\`` : "";
-      const status = error?.httpStatus ? `\nHTTP status: \`${error.httpStatus}\`` : "";
-      const providerStatus = providerStatusLabel(error?.providerStatus || "provider_error");
       await interaction.editReply({
-        content: `❌ **AI PROVIDER VALIDATION FAILED**\nProvider: **OpenAI**\nStatus: ${providerStatus}\nReason: ${reason}${category}${status}`,
+        content: `❌ **API KEY GAGAL DISIMPAN**\nReason: ${reason}${category}`,
       });
     }
     return;
