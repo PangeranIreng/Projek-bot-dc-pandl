@@ -16,6 +16,7 @@
 import { EmbedBuilder } from "discord.js";
 import { IDS } from "../../config/constants.js";
 import { logger } from "./logger.js";
+import { recordError, getAICoreConfig } from "../features/aicore/core.js";
 
 let _client = null;
 /** Queue of payloads received before initErrorLogger was called. */
@@ -96,6 +97,11 @@ export function initErrorLogger(client) {
  * }} payload
  */
 export async function logError(payload) {
+  // AI Core consumes the same structured error stream; this is not a second
+  // process-level handler and is isolated so an AI failure cannot affect logs.
+  void recordError(payload).catch((err) => {
+    logger.debug(`[AI Core] Error intake skipped: ${err.message}`);
+  });
   if (!_client) {
     _queue.push(payload);
     return;
@@ -175,11 +181,12 @@ async function _sendError(payload) {
     .setFooter({ text: "Keylogger Scanner Bot — Error Log" });
 
   try {
-    const ch = await _client.channels.fetch(IDS.ERROR_LOG_CHANNEL_ID).catch(() => null);
+    const errorChannelId = getAICoreConfig().errorChannelId || IDS.ERROR_LOG_CHANNEL_ID;
+    const ch = await _client.channels.fetch(errorChannelId).catch(() => null);
     if (ch?.isTextBased()) {
       await ch.send({ embeds: [embed] });
     } else {
-      logger.warn(`[ErrorLogger] Error-log channel ${IDS.ERROR_LOG_CHANNEL_ID} not found or not text-based`);
+      logger.warn(`[ErrorLogger] Error-log channel ${errorChannelId} not found or not text-based`);
     }
   } catch (e) {
     logger.warn(`[ErrorLogger] Could not post to error channel: ${e.message}`);

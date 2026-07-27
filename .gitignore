@@ -22,6 +22,9 @@ storage/backup/*
 # logs
 logs/*.log
 
+# AI Core runtime knowledge and error history
+data/ai-core-db.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

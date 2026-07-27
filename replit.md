@@ -47,6 +47,7 @@ This is a **standalone repo-root project** — not a pnpm-workspace monorepo. It
 │       ├── logs/         BoomBox log dashboard
 │       ├── queue/        BoomBox queue (max 5 concurrent, with a 10-minute per-job timeout)
 │       ├── help/         Help command handler
+│       ├── aicore/       Central AI Core: project index, diagnostics, investigation, vision, fix prompts
 │       └── setup/        Setup page + CPanel role-button panels
 ├── data/                 Flat JSON databases (boombox-db, premium-db, ticket-db, etc.)
 ├── storage/              downloads/, cache/, temp/, backup/
@@ -63,6 +64,15 @@ This is a **standalone repo-root project** — not a pnpm-workspace monorepo. It
 - **Setup server path**: `src/features/setup/setupServer.js` accesses `.env` via `path.join(__dirname, "..", "..", "..", ".env")` (three levels up).
 - **Help command**: `src/features/help/handler.js` has the implementation; `src/commands/help.js` is a thin re-export so the command auto-loader picks it up.
 - No external database — flat JSON files in `data/` are intentional and survive restarts.
+- **AI Core**: `src/features/aicore/` is the single advisory intelligence layer.
+  It reuses `/setup`, the existing `errorLogger`, and the existing message router;
+  it never edits source code or answers public chat. Persistent AI configuration,
+  project-index metadata, error history, and debug records are stored in
+  `data/ai-core-db.json`.
+- AI Core uses the `OPENAI_API_KEY` secret for provider-backed text and vision
+  analysis. The key is never written to source, project knowledge, Discord, or
+  error history. Without the key, local indexing, error history, setup, and
+  conservative fallback analysis remain available.
 - **One premium/limit dashboard, not two**: `features/premium/statsDashboard.js` (the `ps:` custom-id namespace, driven by `/premstats`) is the only monitoring panel. An older, functionally-duplicate `features/monitoring/dashboard.js` (`mon:` namespace) was removed — both used to run side by side and get updated from the exact same call sites, producing two near-identical live panels in the channel. If an old "mon:" panel message is still visible in a channel, delete it manually; its buttons no longer respond.
 - **BoomBox queue never gets permanently stuck**: `features/queue/boomboxQueue.js` races every job against a 10-minute timeout. If a download hangs (network stall, dead host), the queue slot is freed and the failure is reported to Error Logs instead of silently occupying one of the 5 concurrency slots forever.
 
@@ -77,3 +87,6 @@ _None recorded yet._
 - `src/database/db.js` exports shared BoomBoxDB and PremiumDB singletons — import from there, never `new BoomBoxDB()` directly.
 - Run `pnpm install` (or `npm install`) at the repo root after a fresh clone — `node_modules` is not checked in.
 - Do not reintroduce a second premium/limit dashboard — extend `features/premium/statsDashboard.js` instead of adding a parallel panel.
+- AI Core is Owner Only by default and responds only in its configured
+  Investigation Channel. Configure it from `/setup` → `🤖 AI Core`; rebuild
+  Project Knowledge after major structural changes.

@@ -21,6 +21,7 @@ import { cleanupStaleBoomBoxTempDirs } from "../features/boombox/handler.js";
 import { db } from "../database/db.js";
 import { runConfigValidation } from "../utils/configValidator.js";
 import { initProviderMonitor } from "../services/providerMonitor.js";
+import { initAICore } from "../features/aicore/core.js";
 
 /**
  * @param {import("discord.js").Client} client
@@ -35,6 +36,7 @@ export async function handleReady(client, secrets, state) {
 
   // Initialize error logger first so subsequent errors can be posted to Discord.
   initErrorLogger(client);
+  initAICore(client);
 
   // Inisialisasi console logger DATABASE dan kirim log "Bot Online"
   initConsole(client);

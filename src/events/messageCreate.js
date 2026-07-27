@@ -13,6 +13,7 @@ import { handleTicketThreadMessage } from "../features/ticket/handler.js";
 import { handleLuaToolsMessage }     from "../features/luatools/handler.js";
 import { handleCookieUploadMessage } from "../features/boombox/resourceManagerInteraction.js";
 import { threadDB }              from "../database/threadDB.js";
+import { handleAICoreMessage }  from "../features/aicore/core.js";
 
 // Dedup guard: Discord can occasionally fire messageCreate twice for the same
 // message during reconnects. Bounded to a small rolling window.
@@ -35,6 +36,11 @@ export async function handleMessageCreate(message, secrets) {
     if (processedMessageIds.size > MAX_DEDUP_SIZE) {
       processedMessageIds.delete(processedMessageIds.values().next().value);
     }
+
+    // AI Core is intentionally isolated to its configured investigation
+    // channel. It must run before public feature routers so it never behaves
+    // like a general chatbot or consumes a message twice.
+    if (await handleAICoreMessage(message)) return;
 
     // Resource Manager file imports are handled before all feature routers so
     // cookies never enter the BoomBox queue or scanner pipeline.

@@ -15,6 +15,7 @@
  *   help:     Help command category select
  *   db:       Database system (Bot Setting, Backup, Console, Member List)
  *   ltsetup:  Lua Tools setup wizard
+ *   aicore:   AI Core setup, analysis, and fix prompt actions
  */
 
 import { logger }                   from "../utils/logger.js";
@@ -31,6 +32,7 @@ import { handleCpanelInteraction }       from "../features/setup/cpanel/interact
 import { handleHelpInteraction }         from "../features/help/handler.js";
 import { handleDatabaseInteraction }     from "../features/database/interaction.js";
 import { handleLuaToolsSetupInteraction } from "../features/luatools/setupInteraction.js";
+import { handleAICoreInteraction, handleAICoreModal } from "../features/aicore/setupInteraction.js";
 
 /**
  * @param {import("discord.js").Interaction} interaction
@@ -60,7 +62,9 @@ export async function handleInteractionCreate(interaction, commands, client) {
 
     const id = interaction.customId ?? "";
 
-    if (id.startsWith("setup:")) {
+    if (isModal && id.startsWith("aicore:")) {
+      await handleAICoreModal(interaction);
+    } else if (id.startsWith("setup:")) {
       await handleAdminSetupInteraction(interaction);
     } else if (id.startsWith("ps:")) {
       await handlePremStatsInteraction(interaction, client);
@@ -84,6 +88,8 @@ export async function handleInteractionCreate(interaction, commands, client) {
       await handleDatabaseInteraction(interaction);
     } else if (id.startsWith("ltsetup:")) {
       await handleLuaToolsSetupInteraction(interaction);
+    } else if (id.startsWith("aicore:")) {
+      await handleAICoreInteraction(interaction);
     }
 
   } catch (err) {

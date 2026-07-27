@@ -65,6 +65,7 @@ import { updateTicketDashboard }  from "../ticket/dashboard.js";
 import { sendBugPanel }           from "../bugreport/handler.js";
 import { buildBugPanelEmbed, buildBugPanelButtonRow } from "../bugreport/embed.js";
 import { updatePremStatsDashboard } from "../premium/statsDashboard.js";
+import { buildAICoreEmbed, buildAICoreComponents } from "../aicore/setupInteraction.js";
 
 const FOOTER = "Pangeran Assistant AI • Admin Setup";
 const COLOR = {
@@ -137,6 +138,7 @@ function _buildMainEmbed() {
       { name: "🎫 Ticket",         value: status(tc.panelChannelId), inline: true },
       { name: "🐞 Bug & Feature",  value: status(bc.panelChannelId), inline: true },
       { name: "👑 Premium Stats",  value: status(ps?.channelId),     inline: true },
+      { name: "🤖 AI Core",        value: "🟢 Central Intelligence",   inline: true },
     )
     .setFooter({ text: FOOTER })
     .setTimestamp();
@@ -155,6 +157,7 @@ function _buildMainComponents() {
           { label: "🎫 Ticket",        value: "ticket",    description: "Panel, Log, Mention Role, Claim Channel" },
           { label: "🐞 Bug & Feature", value: "bug",       description: "Panel, Log, Developer Role" },
           { label: "👑 Premium Stats", value: "premium",   description: "Channel panel statistik premium" },
+          { label: "🤖 AI Core",       value: "aicore",     description: "Error AI, Investigation, Project Knowledge" },
         ]),
     ),
     new ActionRowBuilder().addComponents(
@@ -339,6 +342,11 @@ export async function handleAdminSetupInteraction(interaction) {
         await interaction.update({
           embeds:     [_buildPremEmbed()],
           components: _buildPremComponents(!!(state?.channelId)),
+        });
+      } else if (val === "aicore") {
+        await interaction.update({
+          embeds:     [buildAICoreEmbed()],
+          components: buildAICoreComponents(),
         });
       }
       return;

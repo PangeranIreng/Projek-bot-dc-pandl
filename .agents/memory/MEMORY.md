@@ -10,6 +10,7 @@
 - [Lua AST analysis pitfalls](lua-ast-analysis-pitfalls.md) — Lua grammar forbids statements after return/break in the same block, so "dead code after return" checks can never fire; use no-break infinite-loop shape instead.
 - [BoomBox module architecture](boombox-module.md) — ESM rewrites of ytmp3gg/top4top, all IDs in boomboxConfig.js, JSON-file DB, wired into index.js before scanner guard.
 - [Keylogger scanner missing utils](keylogger-scanner-missing-utils.md) — five util files were empty/missing at import time; all fixed; see topic for what each exports.
+- [AI Core integration](ai-core-integration.md) — advisory, channel-scoped intelligence must reuse existing setup/error routing and never auto-edit source.
 - [BoomBox anti-bot vs permanent-failure bug](boombox-anti-bot-permanent-failure.md) — error-string substring matching silently aborted YouTube's multi-client fallback loop; watch for classifier keyword overlap.
 - [Discord thread component visibility & permission limits](discord-thread-component-visibility.md) — buttons can't be hidden per-viewer in a shared thread, and ephemeral replies need an interaction, not a plain message.
 - [Bot source layout](bot-source-layout.md) — bot code lives at the repo root (no artifacts/ dir), runs via `pnpm start`/`node src/index.js` on any panel.
