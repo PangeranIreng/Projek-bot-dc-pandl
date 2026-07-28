@@ -1,0 +1,432 @@
+Kamu adalah Senior Node.js + Discord.js + AI Systems Engineer.
+
+Tugasmu adalah MENYELESAIKAN AI Core sampai production-ready.
+
+JANGAN membuat AI baru.
+JANGAN membuat folder baru.
+JANGAN membuat file duplikat.
+JANGAN menghapus fitur yang sudah ada.
+JANGAN mengubah arsitektur project.
+JANGAN memecah AI Core menjadi versi baru.
+
+Kerjakan langsung pada implementasi yang sudah ada.
+
+==================================================
+TARGET
+==================================================
+
+AI Core harus benar-benar hidup.
+
+Saat user bertanya:
+
+- cek error
+- analisis source
+- baca project
+- jelaskan file
+- analisis gambar
+- bantu coding
+- debug bot
+
+AI harus bisa menjawab.
+
+==================================================
+AUDIT
+==================================================
+
+Audit seluruh AI Core.
+
+Cari semua bug.
+
+Jangan menebak.
+
+Cari root cause.
+
+==================================================
+PERBAIKI
+==================================================
+
+1.
+Perbaiki AI Configuration.
+
+Pastikan:
+
+- semua button bekerja
+- semua modal bekerja
+- semua select menu bekerja
+- tidak ada panel dobel
+- tidak ada interaction timeout
+- tidak ada interaction failed
+
+==================================================
+
+2.
+
+Pastikan API Key tersimpan permanen.
+
+Periksa:
+
+updateProviderApiKey()
+
+database
+
+provider registry
+
+reload config
+
+restart bot
+
+API key tidak boleh hilang setelah restart.
+
+==================================================
+
+3.
+
+Pastikan Test Connection benar-benar melakukan request.
+
+Jangan hanya cek apakah API key ada.
+
+Harus benar-benar request ke provider.
+
+Status harus berubah menjadi:
+
+🟢 Connected
+
+atau
+
+🔴 Failed
+
+==================================================
+
+4.
+
+Perbaiki seluruh error handling provider.
+
+Minimal support:
+
+401 Unauthorized
+
+403 Forbidden
+
+404 Not Found
+
+408 Timeout
+
+409 Conflict
+
+429 Rate Limit
+
+429 Quota Exhausted
+
+500
+
+502
+
+503
+
+504
+
+DNS Error
+
+Connection Refused
+
+Socket Error
+
+Abort
+
+Network Error
+
+SSL Error
+
+Model Not Found
+
+Invalid API Key
+
+Billing Disabled
+
+Project Disabled
+
+Organization Disabled
+
+Expired Key
+
+==================================================
+
+5.
+
+Jangan tampilkan error generik.
+
+Contoh salah:
+
+AI rate limit reached
+
+Contoh benar:
+
+Provider : OpenAI
+
+Status : HTTP 429
+
+Reason :
+
+Quota habis.
+
+Silakan gunakan provider lain atau ganti API key.
+
+==================================================
+
+6.
+
+Tambahkan Retry System.
+
+Retry otomatis jika:
+
+429
+
+500
+
+502
+
+503
+
+504
+
+Timeout
+
+Retry maksimal 3x.
+
+Gunakan exponential backoff.
+
+==================================================
+
+7.
+
+Tambahkan Automatic Provider Fallback.
+
+Urutan:
+
+OpenAI
+
+↓
+
+Gemini
+
+↓
+
+Groq
+
+↓
+
+Anthropic
+
+↓
+
+OpenRouter
+
+Jika provider pertama gagal,
+
+langsung coba provider berikutnya.
+
+Tanpa campur tangan user.
+
+==================================================
+
+8.
+
+Pastikan registry provider berjalan.
+
+Audit:
+
+setActiveProvider()
+
+getProvider()
+
+updateProviderApiKey()
+
+requestModel()
+
+testProviderConnection()
+
+Semua harus berjalan.
+
+==================================================
+
+9.
+
+Pastikan AI Conversation tetap bekerja.
+
+Tidak boleh rusak setelah patch.
+
+==================================================
+
+10.
+
+Pastikan AI Investigation bekerja.
+
+Saat user berkata:
+
+cek error
+
+analisis bug
+
+debug
+
+cek source
+
+AI harus membaca source project,
+
+bukan menjawab seperti chatbot biasa.
+
+==================================================
+
+11.
+
+Pastikan AI dapat membaca:
+
+source code
+
+json
+
+txt
+
+log
+
+stack trace
+
+embed
+
+attachment
+
+image
+
+jika provider vision mendukung.
+
+==================================================
+
+12.
+
+Perbaiki Context Builder.
+
+AI harus tahu:
+
+nama project
+
+struktur project
+
+fitur
+
+database
+
+provider aktif
+
+versi
+
+memory
+
+knowledge
+
+supaya jawabannya sesuai project.
+
+==================================================
+
+13.
+
+Pastikan Memory tetap bekerja.
+
+Conversation Memory
+
+Project Knowledge
+
+Index
+
+Database
+
+tidak boleh hilang.
+
+==================================================
+
+14.
+
+Perbaiki Prompt Builder.
+
+Jangan kirim prompt kosong.
+
+Jangan kirim undefined.
+
+Jangan kirim null.
+
+==================================================
+
+15.
+
+Cari semua kemungkinan:
+
+undefined
+
+null
+
+ButtonStyle salah
+
+interaction timeout
+
+duplicate collector
+
+duplicate interactionCreate
+
+duplicate command handler
+
+double reply
+
+double defer
+
+message leak
+
+memory leak
+
+dead code
+
+unused import
+
+unused provider
+
+dan perbaiki semuanya.
+
+==================================================
+SETELAH SELESAI
+==================================================
+
+Berikan laporan:
+
+1. Root cause semua bug.
+
+2. File yang diubah.
+
+3. Nomor baris yang diubah.
+
+4. Diff singkat.
+
+5. Alasan perubahan.
+
+6. Bug lain yang ditemukan.
+
+7. Hasil syntax check.
+
+8. Hasil build.
+
+9. Hasil test AI Configuration.
+
+10. Hasil test Provider.
+
+11. Hasil test Investigation.
+
+12. Hasil test Conversation.
+
+13. Hasil test Memory.
+
+14. Hasil test Vision.
+
+15. Hasil test Fallback Provider.
+
+16. Hasil test Retry.
+
+17. Konfirmasi project siap di-push.
+
+Jangan berhenti sebelum semua target di atas selesai.

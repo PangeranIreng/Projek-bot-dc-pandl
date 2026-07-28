@@ -30,7 +30,6 @@ import {
   investigate,
   redact,
   reportError,
-  sleep,
 } from "./core.js";
 import { logger } from "../../utils/logger.js";
 
@@ -148,41 +147,13 @@ function shouldInvestigate(message, query) {
 // ── 429-aware request wrapper ─────────────────────────────────────────────────
 
 /**
- * Call fn(); if it throws a TEMPORARY rate limit (rate_limit_429), wait
- * (honouring Retry-After) then retry ONCE.
- *
- * Rules:
- *  - quota_exhausted (billing ceiling) → NO retry, re-throw immediately.
- *  - rate_limit_429 (temporary throttle) → one retry after backoff (max 30 s).
- *  - Any other error → re-throw immediately.
- *  - A second 429 of any kind → re-throw immediately.
- *
- * This prevents the pattern:
- *   quota_exhausted → retry → quota_exhausted → retry → …
+ * Thin pass-through wrapper kept for call-site compatibility.
+ * Retries are now handled internally by requestModel (up to 3x exponential
+ * backoff for rate_limit_429, 5xx, timeout, network errors). quota_exhausted
+ * is never retried at either layer.
  */
 async function withRateLimitRetry(fn) {
-  for (let attempt = 0; attempt <= 1; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      // quota_exhausted is permanent — NEVER retry, even on attempt 0.
-      const isQuotaExhausted     = err?.providerCategory === "quota_exhausted";
-      // Temporary rate limit only (not quota_exhausted).
-      const isTemporaryRateLimit = err?.providerCategory === "rate_limit_429";
-
-      if (isQuotaExhausted) {
-        // Propagate immediately; caller will display the quota message.
-        throw err;
-      }
-      if (isTemporaryRateLimit && attempt === 0) {
-        const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
-        logger.warn(`[AI Conversation] rate_limit_429 — waiting ${waitMs}ms before single retry (Retry-After: ${err?.retryAfterMs ?? "n/a"}ms)`);
-        await sleep(waitMs);
-        continue;
-      }
-      throw err;
-    }
-  }
+  return fn();
 }
 
 // ── Image helper (same approach as in core.js handleAICoreMessage) ─────────────
@@ -286,9 +257,9 @@ export async function handleAIConversationMessage(message) {
       appendHistory(message.channelId, redact(query), redact(answer));
     }
 
-    // Discord message limit is 2000 chars; reply in chunks if needed
-    const safe = redact(String(answer ?? "")).slice(0, 1900);
-    await message.reply(safe).catch(() => {});
+    // Discord message limit is 2000 chars; guard against empty provider response
+    const safe = redact(String(answer ?? "")).trim().slice(0, 1900);
+    await message.reply(safe || "AI tidak memberikan respons.").catch(() => {});
 
   } catch (err) {
     const providerReason = redact(String(err?.providerReason || err?.message || "Unknown error")).slice(0, 280);

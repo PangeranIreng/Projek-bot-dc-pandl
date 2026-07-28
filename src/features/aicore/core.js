@@ -9,12 +9,23 @@
  * All provider failures are isolated from the bot.
  */
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath as _fileURLToPath } from "node:url";
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from "discord.js";
 import { aiCoreDB, encryptionSourceLabel } from "../../database/aiCoreDB.js";
 import { rebuildProjectIndex, searchProject } from "./projectIndexer.js";
 import { isOwner, isStaff } from "../../middleware/permissions.js";
 import { logger } from "../../utils/logger.js";
 import * as registry from "./providers/registry.js";
+
+// ── Project metadata (read once at startup for context enrichment) ─────────────
+let _pkgMeta = { name: "Discord Bot", version: "?" };
+try {
+  const _root = path.resolve(path.dirname(_fileURLToPath(import.meta.url)), "..", "..", "..");
+  const _pkg  = JSON.parse(fs.readFileSync(path.join(_root, "package.json"), "utf8"));
+  _pkgMeta = { name: String(_pkg.name ?? "Discord Bot"), version: String(_pkg.version ?? "?") };
+} catch { /* keep defaults */ }
 
 // ── Module-level runtime state ─────────────────────────────────────────────────
 let client          = null;   // Discord client
@@ -27,6 +38,24 @@ const activeErrorAnalyses   = new Set();
 const MAX_REQUESTS_PER_MINUTE   = 3;
 let activeAIRequests            = 0;
 const MAX_CONCURRENT_AI_REQUESTS = 2;
+
+// ── Retry / fallback configuration ────────────────────────────────────────────
+/** Error categories that warrant an automatic retry with backoff. */
+const RETRYABLE_CATEGORIES = new Set([
+  "rate_limit_429", "timeout", "network", "ssl_error",
+  "provider_500", "provider_502", "provider_503", "provider_504",
+]);
+const MAX_REQUEST_RETRIES = 3;
+/**
+ * Automatic provider fallback order.
+ * After all retries on the primary provider are exhausted, each provider in
+ * this list is tried IF the current API key is format-compatible with it.
+ * In a single-key setup only keys whose prefix matches another provider
+ * will get a useful fallback (e.g. an sk-or- key can use openrouter as
+ * primary and will fall back only to other sk-or- compatible routes — in
+ * practice the same provider). Per-provider key storage is a future feature.
+ */
+const FALLBACK_PROVIDER_ORDER = ["openai", "gemini", "groq", "anthropic", "openrouter"];
 
 // ── Quota exhaustion guard ─────────────────────────────────────────────────────
 // When a provider returns quota_exhausted/billing error, ALL subsequent
@@ -176,6 +205,8 @@ function providerErrorCategory(error, { modelRequest = false } = {}) {
   if (code === "ai_storage")     return "secure_storage";
   if (status === 401) return "authentication_401";
   if (status === 403) return "permission_403";
+  if (status === 408) return "timeout"; // HTTP 408 Request Timeout
+  if (status === 409) return "conflict_409";
   if (status === 404) {
     return modelRequest && /model|not[_ -]?found|does not exist/.test(message)
       ? "model_404"
@@ -189,8 +220,11 @@ function providerErrorCategory(error, { modelRequest = false } = {}) {
     return "rate_limit_429";
   }
   if (status === 400) return "invalid_request_400";
+  if (status === 408) return "timeout"; // HTTP 408 Request Timeout
+  if (status === 409) return "conflict_409";
   if (status >= 500)  return `provider_${status}`;
   if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) return "timeout";
+  if (/ssl|tls|certificate|cert/.test(message)) return "ssl_error";
   if (/network|fetch|econn|socket|dns|connection error/.test(message)) return "network";
   return "unknown";
 }
@@ -202,15 +236,22 @@ function classifyProviderError(error, { modelRequest = false } = {}) {
   if (code === "ai_key_format") return "API key format is invalid.";
   if (code === "ai_storage")    return "Secure credential storage failed.";
   if (status === 401 || /authentication failed|invalid api key|incorrect api key|unauthorized/.test(message)) {
-    return `Provider authentication failed${status ? ` (HTTP ${status})` : ""}.`;
+    // Distinguish specific auth sub-types for better user guidance
+    if (/expired|revoked/.test(message)) return "API key telah kedaluwarsa (HTTP 401). Buat key baru di dashboard provider.";
+    if (/billing|payment|disabled|deactivated/.test(message)) return `Billing atau project dinonaktifkan${status ? ` (HTTP ${status})` : ""}. Periksa status akun/billing provider Anda.`;
+    if (/organization|org/.test(message)) return `Akses organisasi ditolak${status ? ` (HTTP ${status})` : ""}. Periksa keanggotaan atau izin organisasi Anda.`;
+    return `Provider authentication failed${status ? ` (HTTP ${status})` : ""}. Periksa API key Anda.`;
   }
   if (status === 403 || /permission|forbidden/.test(message)) {
-    return `Provider permission denied${status ? ` (HTTP ${status})` : ""}.`;
+    if (/project|disabled/.test(message)) return `Project dinonaktifkan oleh provider (HTTP ${status || 403}). Periksa status project di dashboard.`;
+    return `Provider permission denied${status ? ` (HTTP ${status})` : ""}. Periksa izin API key Anda.`;
   }
   if (status === 404 && modelRequest && /model|not[_ -]?found|does not exist/.test(message)) {
     return "The selected model is unavailable (HTTP 404).";
   }
   if (status === 404) return "The provider endpoint was not found (HTTP 404).";
+  if (status === 408) return "Provider request timeout (HTTP 408). Coba lagi atau naikkan timeout di ⚙️ AI Settings.";
+  if (status === 409) return "Provider conflict error (HTTP 409). Request tidak dapat diproses saat ini.";
   if (status === 429 || code.includes("rate") || /rate limit|quota|too many request/.test(message)) {
     const isQuotaExhausted = /quota|exceeded|insufficient_quota|billing|credit|payment|balance|debit/i.test(message);
     if (isQuotaExhausted) {
@@ -222,6 +263,9 @@ function classifyProviderError(error, { modelRequest = false } = {}) {
   if (status >= 500)  return `Provider service error (HTTP ${status}).`;
   if (error?.name === "AbortError" || code.includes("timeout") || message.includes("timeout")) {
     return "Provider request timed out.";
+  }
+  if (/ssl|tls|certificate|cert/.test(message)) {
+    return "Provider SSL/TLS error. Periksa koneksi jaringan dan sertifikat.";
   }
   if (/network|fetch|econn|socket|dns|connection error/.test(message)) {
     return "Provider network request failed.";
@@ -832,7 +876,13 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
     throw busy;
   }
 
-  if (!withinRateLimit()) throw new Error("AI rate limit reached; try again shortly");
+  if (!withinRateLimit()) {
+    const limited = new Error("AI rate limit reached; try again shortly");
+    limited.providerCategory = "local_rate_limit";
+    limited.providerStatus   = "provider_error";
+    limited.providerReason   = limited.message;
+    throw limited;
+  }
 
   const cfg = config();
 
@@ -845,8 +895,7 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
 
   const model     = cfg.model || activeAdapter.DEFAULT_MODEL;
   const timeoutMs = Math.max(5000, Number(cfg.timeoutMs) || 30_000);
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  const maxTok    = Math.min(4000, Math.max(300, Number(maxTokens) || 1800));
 
   logProviderDiagnostic("Model request prepared", apiKey, {
     provider: activeAdapter.PROVIDER_NAME,
@@ -855,48 +904,97 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
   });
 
   activeAIRequests++;
+  let lastSafeError = null;
   try {
-    const text = await activeAdapter.chatCompletions(
-      activeClient,
-      model,
-      messages,
-      Math.min(4000, Math.max(300, Number(maxTokens) || 1800)),
-      controller.signal,
-    );
-    aiCoreDB.incrementStat("aiRequests");
-    aiCoreDB.updateConfig({
-      providerStatus:     "connected",
-      providerStatusReason: null,
-      providerCheckedAt:  new Date().toISOString(),
-    });
-    return text || "AI provider returned an empty response.";
-  } catch (err) {
-    const retryAfterMs = extractRetryAfterMs(err);
-    const safe = safeProviderError(err, { modelRequest: true });
-    if (retryAfterMs) safe.retryAfterMs = retryAfterMs;
-    aiCoreDB.incrementStat("failedRequests");
-    aiCoreDB.updateConfig({
-      providerStatus:     safe.providerStatus,
-      providerStatusReason: safe.providerReason,
-      providerCheckedAt:  new Date().toISOString(),
-    });
+    // ── Primary provider — retry loop with exponential backoff ───────────────
+    for (let attempt = 0; attempt <= MAX_REQUEST_RETRIES; attempt++) {
+      const controller    = new AbortController();
+      const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const text = await activeAdapter.chatCompletions(
+          activeClient, model, messages, maxTok, controller.signal,
+        );
+        aiCoreDB.incrementStat("aiRequests");
+        aiCoreDB.updateConfig({
+          providerStatus:       "connected",
+          providerStatusReason: null,
+          providerCheckedAt:    new Date().toISOString(),
+        });
+        return text || "AI provider returned an empty response.";
+      } catch (err) {
+        const retryAfterMs = extractRetryAfterMs(err);
+        const safe = safeProviderError(err, { modelRequest: true });
+        if (retryAfterMs) safe.retryAfterMs = retryAfterMs;
 
-    // ── Permanent quota exhaustion: block all future requests immediately ──
-    if (safe.providerCategory === "quota_exhausted") {
-      providerQuotaExhausted = true;
-      quotaExhaustedProvider = (activeAdapter ?? resolveAdapter()).PROVIDER_NAME;
-      quotaExhaustedAt       = new Date().toISOString();
-      safe.retry             = false;
-      logger.warn(
-        `[AI Core] [QUOTA_EXHAUSTED] Provider=${quotaExhaustedProvider} ` +
-        `— all future requests BLOCKED until provider/key changes.`
-      );
+        // Quota exhaustion → permanent block, never retry
+        if (safe.providerCategory === "quota_exhausted") {
+          providerQuotaExhausted = true;
+          quotaExhaustedProvider = (activeAdapter ?? resolveAdapter()).PROVIDER_NAME;
+          quotaExhaustedAt       = new Date().toISOString();
+          safe.retry             = false;
+          logger.warn(
+            `[AI Core] [QUOTA_EXHAUSTED] Provider=${quotaExhaustedProvider} ` +
+            `— all future requests BLOCKED until provider/key changes.`
+          );
+          throw safe;
+        }
+
+        lastSafeError = safe;
+        const isRetryable = RETRYABLE_CATEGORIES.has(safe.providerCategory);
+        if (!isRetryable || attempt >= MAX_REQUEST_RETRIES) break;
+
+        const backoffMs = retryAfterMs ?? Math.min(Math.pow(2, attempt) * 1_000, 30_000);
+        logger.info(
+          `[AI Core] Retry ${attempt + 1}/${MAX_REQUEST_RETRIES} in ${backoffMs}ms` +
+          ` (${safe.providerCategory}, ${activeAdapter.PROVIDER_NAME})`
+        );
+        await sleep(backoffMs);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
     }
 
-    throw safe;
+    // ── Automatic provider fallback ──────────────────────────────────────────
+    // After all retries on the primary provider fail with a retryable error,
+    // try other providers whose key format is compatible with the current key.
+    // In a single-key setup this helps only when the key prefix matches another
+    // provider (e.g. sk-or- keys detected as openrouter vs openai).
+    if (lastSafeError && RETRYABLE_CATEGORIES.has(lastSafeError.providerCategory)) {
+      const activePid = cfg.provider || "openai";
+      for (const fallbackId of FALLBACK_PROVIDER_ORDER) {
+        if (fallbackId === activePid) continue;
+        const fbAdapter = registry.get(fallbackId);
+        if (!fbAdapter.detectFromKey(apiKey)) continue; // key incompatible with provider
+        logger.info(`[AI Core] Trying fallback provider: ${fbAdapter.PROVIDER_NAME}`);
+        const fbClient   = fbAdapter.createClient(apiKey, timeoutMs);
+        const fbModel    = fbAdapter.DEFAULT_MODEL;
+        const controller = new AbortController();
+        const handle     = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const text = await fbAdapter.chatCompletions(fbClient, fbModel, messages, maxTok, controller.signal);
+          aiCoreDB.incrementStat("aiRequests");
+          logger.info(`[AI Core] Fallback provider ${fbAdapter.PROVIDER_NAME} succeeded.`);
+          return text || "AI provider returned an empty response.";
+        } catch (fbErr) {
+          logger.warn(`[AI Core] Fallback ${fbAdapter.PROVIDER_NAME} failed: ${fbErr.message}`);
+        } finally {
+          clearTimeout(handle);
+        }
+      }
+    }
+
+    // ── All attempts exhausted ────────────────────────────────────────────────
+    const finalErr = lastSafeError ?? new Error("AI provider is not configured");
+    aiCoreDB.incrementStat("failedRequests");
+    aiCoreDB.updateConfig({
+      providerStatus:       finalErr.providerStatus  ?? "provider_error",
+      providerStatusReason: finalErr.providerReason  ?? finalErr.message,
+      providerCheckedAt:    new Date().toISOString(),
+    });
+    throw finalErr;
+
   } finally {
     activeAIRequests--;
-    clearTimeout(timeoutHandle);
   }
 }
 
@@ -1051,11 +1149,20 @@ export async function investigate({ query, image }) {
     visionNote = `\n\n⚠️ **Vision tidak didukung oleh ${adapter.PROVIDER_NAME}.** Gambar tidak dapat dianalisis. Ganti provider ke OpenAI / Google Gemini / Anthropic untuk mengaktifkan vision analysis.`;
   }
 
+  // Build a rich system prompt so the AI knows the project context.
+  const meta = _pkgMeta ?? { name: "Discord Bot", version: "?" };
+  const systemContent = [
+    `Anda adalah AI Core untuk project: **${meta.name}** v${meta.version}.`,
+    `Provider aktif: ${adapter.PROVIDER_NAME} | Model: ${cfg.model || adapter.DEFAULT_MODEL}.`,
+    "Jawab dalam bahasa Indonesia.",
+    "Gunakan hanya fakta dari project excerpts yang disediakan.",
+    "Jangan mengarang path, function, atau file yang tidak ada di excerpts.",
+    "Tandai dugaan sebagai 'kemungkinan' atau 'mungkin'.",
+    "Jangan mengubah atau mengeksekusi source code secara otomatis.",
+  ].join(" ");
+
   const messages = [
-    {
-      role:    "system",
-      content: "Anda adalah AI Core untuk developer. Jawab dalam bahasa Indonesia. Gunakan hanya fakta dari project excerpts. Jangan mengarang path/function. Tandai dugaan sebagai kemungkinan. Jangan mengubah source code.",
-    },
+    { role: "system", content: systemContent },
     {
       role:    "user",
       content: [
@@ -1124,31 +1231,18 @@ export async function handleAICoreMessage(message) {
     image = await attachmentAsDataUrl(imageAttachment).catch(() => null);
   }
 
+  // requestModel handles retries internally (up to MAX_REQUEST_RETRIES with
+  // exponential backoff). A single outer attempt is sufficient here.
   let answer, lastErr;
-  for (let attempt = 0; attempt <= 1; attempt++) {
-    try {
-      answer  = await investigate({ query, image });
-      lastErr = null;
-      break;
-    } catch (err) {
-      lastErr = err;
-      // ONLY retry on temporary rate limit (429 rate_limit), NOT on quota_exhausted.
-      // quota_exhausted means the billing ceiling is hit — retrying would just burn
-      // another API call, get another 429, and potentially loop.
-      const isTemporaryRateLimit = err?.providerCategory === "rate_limit_429";
-      if (isTemporaryRateLimit && attempt === 0) {
-        const waitMs = Math.min(err?.retryAfterMs ?? 10_000, 30_000);
-        logger.info(`[AI Core] Investigation rate_limit_429 — waiting ${waitMs}ms before single retry`);
-        await sleep(waitMs);
-        await message.channel.sendTyping().catch(() => {});
-        continue;
-      }
-      break;
-    }
+  try {
+    answer = await investigate({ query, image });
+  } catch (err) {
+    lastErr = err;
   }
 
   if (!lastErr) {
-    await message.reply(truncate(answer, 3900)).catch(() => {});
+    const safe = String(answer ?? "").trim();
+    await message.reply(truncate(safe || "AI tidak memberikan respons.", 3900)).catch(() => {});
     return true;
   }
 
