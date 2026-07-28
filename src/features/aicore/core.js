@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath as _fileURLToPath } from "node:url";
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from "discord.js";
 import { aiCoreDB, encryptionSourceLabel } from "../../database/aiCoreDB.js";
-import { rebuildProjectIndex, searchProject } from "./projectIndexer.js";
+import { rebuildProjectIndex, searchProject, getProjectRoot } from "./projectIndexer.js";
 import { isOwner, isStaff } from "../../middleware/permissions.js";
 import { logger } from "../../utils/logger.js";
 import * as registry from "./providers/registry.js";
@@ -1007,6 +1007,107 @@ function relevantContext(query) {
   ).join("\n\n---\n\n").slice(0, 28_000);
 }
 
+// ── Deep investigation mode ───────────────────────────────────────────────────
+
+/**
+ * Keywords that indicate the user wants a real bug / error investigation,
+ * not a general Q&A. When matched, `investigate()` switches to deep mode:
+ * full file reads + import following instead of 55-line keyword excerpts.
+ */
+const INVESTIGATION_TRIGGERS = [
+  "cek error", "cek bug", "check error", "check bug",
+  "audit", "cari penyebab", "investigasi", "investigate",
+  "kenapa error", "kenapa crash", "kenapa gagal", "kenapa tidak",
+  "why error", "why crash", "why fail",
+  "trace bug", "find bug", "find error",
+  "analisis error", "analisa error", "analisis bug", "analisa bug",
+  "debug", "root cause",
+];
+
+function isInvestigationQuery(query) {
+  const lower = query.toLowerCase();
+  return INVESTIGATION_TRIGGERS.some((t) => lower.includes(t));
+}
+
+/**
+ * Read a file's full content with line numbers, capped at maxBytes.
+ * Returns null when unreadable.
+ */
+function readFileWithLineNumbers(absPath, maxBytes = 12_000) {
+  try {
+    const raw = fs.readFileSync(absPath, "utf8").slice(0, maxBytes);
+    return raw.split("\n").map((line, i) => `${String(i + 1).padStart(4)} | ${line}`).join("\n");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse local import specifiers from source text and resolve them to
+ * absolute paths relative to the current file's directory.
+ * Returns only paths for local (relative) imports — npm packages are skipped.
+ */
+function extractLocalImports(sourceText, currentFile) {
+  const result = [];
+  for (const match of sourceText.matchAll(/from\s+["']([^"']+)["']/g)) {
+    const spec = match[1];
+    if (!spec.startsWith(".")) continue;
+    let resolved = path.resolve(path.dirname(currentFile), spec);
+    if (!path.extname(resolved)) resolved += ".js";
+    result.push(resolved);
+  }
+  return result;
+}
+
+/**
+ * Build deep investigation context for bug-hunting:
+ *   1. Keyword-rank top candidate files via searchProject.
+ *   2. Read their FULL contents (not just 55-line excerpts).
+ *   3. Follow one level of local imports and read those too.
+ *   4. Return all content formatted with line numbers, capped at ~28 KB total.
+ *
+ * This gives the AI the actual source code it needs to find real bugs,
+ * rather than metadata snippets.
+ */
+function gatherDeepContext(query, root) {
+  const TOTAL_CAP    = 28_000;
+  const PER_FILE_CAP = 10_000;
+
+  const candidates = searchProject(query, 10);
+
+  // Primary candidates, keyed by absolute path, with priority index
+  const toRead = new Map();
+  for (let i = 0; i < candidates.length; i++) {
+    toRead.set(path.join(root, candidates[i].path), i);
+  }
+
+  // Follow one level of local imports from each primary candidate
+  for (const candidate of candidates) {
+    const abs = path.join(root, candidate.path);
+    let src = "";
+    try { src = fs.readFileSync(abs, "utf8").slice(0, 6_000); } catch { continue; }
+    for (const dep of extractLocalImports(src, abs)) {
+      if (!toRead.has(dep)) toRead.set(dep, candidates.length + toRead.size);
+    }
+  }
+
+  // Sort by priority, read full contents, accumulate up to cap
+  const sections = [];
+  let totalChars = 0;
+
+  for (const [absPath] of [...toRead.entries()].sort((a, b) => a[1] - b[1])) {
+    if (totalChars >= TOTAL_CAP) break;
+    const relPath = path.relative(root, absPath).replaceAll(path.sep, "/");
+    const content = readFileWithLineNumbers(absPath, PER_FILE_CAP);
+    if (!content) continue;
+    const section = `=== FILE: ${relPath} ===\n${content}`;
+    sections.push(section);
+    totalChars += section.length;
+  }
+
+  return sections.join("\n\n");
+}
+
 function fallbackErrorAnalysis(record) {
   const related = searchProject(`${record.feature} ${record.module} ${record.function} ${record.reason}`, 5);
   const paths = related.map((item) => `\`${item.path}\``).join(", ") || "Tidak ditemukan secara pasti dari project index.";
@@ -1138,10 +1239,26 @@ export async function recordError(payload = {}) {
 export async function investigate({ query, image }) {
   const cfg     = config();
   const adapter = activeAdapter ?? resolveAdapter();
-  const context = cfg.codeAnalysis ? relevantContext(query) : "";
+  const meta    = _pkgMeta ?? { name: "Discord Bot", version: "?" };
 
-  // Check vision support — if provider doesn't support vision, strip the image
-  // and prepend a clear warning so the user knows their image was not analyzed.
+  // Deep mode: full file reads + import following when user asks for bug/error investigation.
+  // Shallow mode: keyword-matched 55-line excerpts for general Q&A.
+  const deepMode = cfg.codeAnalysis && isInvestigationQuery(query);
+  let context = "";
+  if (cfg.codeAnalysis) {
+    if (deepMode) {
+      try {
+        context = gatherDeepContext(query, getProjectRoot());
+      } catch (e) {
+        logger.warn(`[AI Core] gatherDeepContext failed, falling back to relevantContext: ${e.message}`);
+        context = relevantContext(query);
+      }
+    } else {
+      context = relevantContext(query);
+    }
+  }
+
+  // Vision: strip image if provider does not support it.
   let effectiveImage = image;
   let visionNote = "";
   if (image && adapter.SUPPORTS_VISION === false) {
@@ -1149,28 +1266,67 @@ export async function investigate({ query, image }) {
     visionNote = `\n\n⚠️ **Vision tidak didukung oleh ${adapter.PROVIDER_NAME}.** Gambar tidak dapat dianalisis. Ganti provider ke OpenAI / Google Gemini / Anthropic untuk mengaktifkan vision analysis.`;
   }
 
-  // Build a rich system prompt so the AI knows the project context.
-  const meta = _pkgMeta ?? { name: "Discord Bot", version: "?" };
-  const systemContent = [
-    `Anda adalah AI Core untuk project: **${meta.name}** v${meta.version}.`,
-    `Provider aktif: ${adapter.PROVIDER_NAME} | Model: ${cfg.model || adapter.DEFAULT_MODEL}.`,
-    "Jawab dalam bahasa Indonesia.",
-    "Gunakan hanya fakta dari project excerpts yang disediakan.",
-    "Jangan mengarang path, function, atau file yang tidak ada di excerpts.",
-    "Tandai dugaan sebagai 'kemungkinan' atau 'mungkin'.",
-    "Jangan mengubah atau mengeksekusi source code secara otomatis.",
-  ].join(" ");
+  // System prompt — bug-hunting instructions in deep mode, advisory Q&A otherwise.
+  const providerLabel = `${adapter.PROVIDER_NAME} | Model: ${cfg.model || adapter.DEFAULT_MODEL}`;
+  const systemContent = deepMode
+    ? [
+        `Anda adalah static analysis engine untuk project: **${meta.name}** v${meta.version}. Provider: ${providerLabel}.`,
+        "TUGAS: Temukan bug nyata dalam source code yang disediakan.",
+        "WAJIB cari:",
+        "throw tanpa catch,",
+        "catch kosong atau catch hanya console.log/logger tanpa recovery,",
+        "Promise / async function yang tidak di-await (fire-and-forget tanpa void/catch),",
+        "race condition (state dishared antara beberapa async call tanpa lock),",
+        "interaction Discord timeout (>3 detik antara event masuk dan reply/deferReply pertama),",
+        "akses undefined atau null tanpa guard (obj.prop saat obj bisa null),",
+        "path file salah atau file yang diimpor tidak ada,",
+        "import symbol yang tidak dieksport dari modulnya,",
+        "event handler tidak ter-register atau ter-register lebih dari sekali (duplicate handler),",
+        "memory leak: setInterval/setTimeout tanpa clearInterval/clearTimeout, EventEmitter.on tanpa .off,",
+        "API request tanpa timeout dan tanpa error handling,",
+        "database call tanpa try/catch atau tanpa null check pada hasilnya.",
+        "FORMAT untuk setiap bug yang ditemukan:",
+        "🐛 BUG #N — <judul singkat>",
+        "Root Cause: ...",
+        "File: path/to/file.js",
+        "Line: N",
+        "Kode bermasalah: `...`",
+        "Penjelasan: ...",
+        "Dampak: ...",
+        "Patch:",
+        "```diff",
+        "- kode lama",
+        "+ kode baru",
+        "```",
+        "Jika tidak ada bug: tulis hanya '✅ Tidak ditemukan bug dalam file yang dianalisis.'",
+        "JANGAN menjelaskan isi file jika tidak ada bug di dalamnya.",
+        "JANGAN menjawab 'tidak ada informasi' — semua file sudah disediakan.",
+        "Jawab dalam bahasa Indonesia.",
+      ].join(" ")
+    : [
+        `Anda adalah AI Core untuk project: **${meta.name}** v${meta.version}. Provider aktif: ${providerLabel}.`,
+        "Jawab dalam bahasa Indonesia.",
+        "Gunakan hanya fakta dari project excerpts yang disediakan.",
+        "Jangan mengarang path, function, atau file yang tidak ada di excerpts.",
+        "Tandai dugaan sebagai 'kemungkinan' atau 'mungkin'.",
+        "Jangan mengubah atau mengeksekusi source code secara otomatis.",
+      ].join(" ");
+
+  const userText = deepMode
+    ? `PERMINTAAN INVESTIGASI:\n${redact(query)}\n\nSOURCE CODE PROJECT (baca seluruhnya, temukan semua bug):\n${context || "⚠️ Tidak ada file yang ditemukan — periksa konfigurasi codeAnalysis."}`
+    : `PERTANYAAN:\n${redact(query)}\n\nPROJECT EXCERPTS:\n${context || "Tidak ada excerpt yang cocok."}`;
 
   const messages = [
     { role: "system", content: systemContent },
     {
       role:    "user",
       content: [
-        { type: "text", text: `PERTANYAAN:\n${redact(query)}\n\nPROJECT EXCERPTS:\n${context || "Tidak ada excerpt yang cocok."}` },
+        { type: "text", text: userText },
         ...(effectiveImage ? [{ type: "image_url", image_url: { url: effectiveImage } }] : []),
       ],
     },
   ];
+
   if (!providerReady()) {
     return `🤖 AI CORE (mode lokal)\n\n${fallbackErrorAnalysis({
       errorId: "INVESTIGATION",
