@@ -20,7 +20,7 @@
  *   API keys are never displayed or sent to any channel.
  */
 
-import { EmbedBuilder } from "discord.js";
+// EmbedBuilder removed — conversation.js uses plain text replies only.
 import {
   getAICoreConfig,
   getProviderConfiguration,
@@ -31,6 +31,7 @@ import {
   redact,
   reportError,
 } from "./core.js";
+import { searchProject } from "./projectIndexer.js";
 import { logger } from "../../utils/logger.js";
 
 // ── Conversation memory ───────────────────────────────────────────────────────
@@ -54,7 +55,8 @@ const CHANNEL_MAX_PER_MINUTE = 3;
 const channelInFlight = new Set();
 
 // ── AI personality system prompt ──────────────────────────────────────────────
-const SYSTEM_PROMPT = `Anda adalah AI Core Assistant untuk server Discord ini. Anda adalah asisten AI yang cerdas, membantu, dan ramah — spesialis di bidang developer tools, debugging, analisis kode, dan diskusi teknis maupun umum.
+
+const SYSTEM_PROMPT_BASE = `Anda adalah AI Core Assistant untuk server Discord ini. Anda adalah asisten AI yang cerdas, membantu, dan ramah — spesialis di bidang developer tools, debugging, analisis kode, dan diskusi teknis maupun umum.
 
 Pedoman:
 • Jawab dalam bahasa Indonesia, kecuali user menggunakan bahasa lain — dalam kasus itu ikuti bahasa mereka.
@@ -62,8 +64,26 @@ Pedoman:
 • Berikan jawaban yang konkret dan dapat ditindaklanjuti.
 • Jika tidak yakin tentang sesuatu, tandai dengan jelas sebagai dugaan atau kemungkinan.
 • Jangan pernah membagikan API key, secret, token, credential, atau informasi sensitif apapun.
-• Jangan mengarang file, fungsi, atau path yang tidak ada.
+• Jangan mengarang file, fungsi, class, atau path yang tidak ada dalam project.
 • Pertahankan konteks percakapan sebelumnya dalam satu sesi.`;
+
+/**
+ * Build the system prompt, optionally enriched with project context snippets.
+ * `contextSnippet` is a compact excerpt from searchProject — only injected
+ * when the message looks like a technical project question.
+ */
+function buildSystemPrompt(contextSnippet = "") {
+  if (!contextSnippet) return SYSTEM_PROMPT_BASE;
+  return `${SYSTEM_PROMPT_BASE}\n\nKONTEKS PROJECT YANG RELEVAN (gunakan sebagai fakta, jangan mengarang):\n${contextSnippet}`;
+}
+
+/**
+ * Keywords that hint the message is about this specific project — worth
+ * injecting a lightweight search-project context into the chat prompt.
+ * These are lighter than INVESTIGATION_TRIGGERS; we don't switch to deep mode,
+ * just enrich the conversation with matching file metadata + short excerpts.
+ */
+const PROJECT_CONTEXT_KEYWORDS = /\b(boombox|scanner|ticket|bugreport|bug report|premium|queue|worker|luatools|cpanel|database|aicore|ai core|command|slash command|event|handler|middleware|service|provider|discord|ytdl|ytmp3|top4top|kaizen|spotify|ffmpeg|hesu|setup|channel|role|guild|embed|interaction|button|modal|collector|cron|scheduler|db\.js|config|permission|logger|readme)\b/i;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -119,7 +139,7 @@ function touchHistory(channelId) {
 
 // ── Routing logic ─────────────────────────────────────────────────────────────
 
-const INVESTIGATION_KEYWORDS = /\b(investigasi|investigate|debug|debugging|analisa|analisis|analyze|traceback|exception|stack trace|error log|perbaiki|generate fix|kode bermasalah|code review|bug|crash|gagal total|eror kritis)\b/i;
+const INVESTIGATION_KEYWORDS = /\b(investigasi|investigate|debug|debugging|analisa|analisis|analyze|traceback|exception|stack trace|error log|perbaiki|generate fix|kode bermasalah|code review|bug|crash|gagal total|eror kritis|root cause|penyebab|audit|flow|call flow)\b/i;
 const ERROR_PATTERN = /\b(error|exception|traceback|failed|crash|undefined|null pointer|segfault|ENOENT|ECONNREFUSED|TypeError|ReferenceError|SyntaxError|ERR_)\b/i;
 const CODE_BLOCK_PATTERN = /```[\s\S]+?```/;
 
@@ -144,16 +164,32 @@ function shouldInvestigate(message, query) {
   return null;
 }
 
-// ── 429-aware request wrapper ─────────────────────────────────────────────────
-
 /**
- * Thin pass-through wrapper kept for call-site compatibility.
- * Retries are now handled internally by requestModel (up to 3x exponential
- * backoff for rate_limit_429, 5xx, timeout, network errors). quota_exhausted
- * is never retried at either layer.
+ * Build a compact project context snippet for the conversation system prompt.
+ * Only called when the message matches PROJECT_CONTEXT_KEYWORDS.
+ * Returns a short string (max ~3000 chars) with relevant file metadata + excerpts.
  */
-async function withRateLimitRetry(fn) {
-  return fn();
+function buildProjectContextSnippet(query) {
+  try {
+    const cfg = getAICoreConfig();
+    if (!cfg.codeAnalysis) return "";
+    const matches = searchProject(query, 4);
+    if (!matches.length) return "";
+    return matches
+      .map((m) => {
+        const tags = [
+          m.exports?.length  ? `exports: ${m.exports.slice(0, 6).join(", ")}` : "",
+          m.functions?.length ? `functions: ${m.functions.slice(0, 6).join(", ")}` : "",
+          m.classes?.length  ? `classes: ${m.classes.join(", ")}` : "",
+        ].filter(Boolean).join(" | ");
+        const excerpt = (m.excerpt ?? "").slice(0, 400);
+        return `[${m.path}] ${tags}\n${excerpt}`;
+      })
+      .join("\n\n---\n\n")
+      .slice(0, 3_000);
+  } catch {
+    return "";
+  }
 }
 
 // ── Image helper (same approach as in core.js handleAICoreMessage) ─────────────
@@ -243,17 +279,24 @@ export async function handleAIConversationMessage(message) {
           image = await attachmentAsDataUrl(imgAttachment);
         }
       }
-      answer = await withRateLimitRetry(() => investigate({ query, image }));
+      answer = await investigate({ query, image });
       touchHistory(message.channelId);
     } else {
       // ── Conversation route ──────────────────────────────────────────────
+      // Inject lightweight project context when the query is about a known
+      // project feature — so the AI answers with actual code facts, not guesses.
       const history = getHistory(message.channelId);
+      let systemPrompt = SYSTEM_PROMPT_BASE;
+      if (cfg.codeAnalysis && PROJECT_CONTEXT_KEYWORDS.test(query)) {
+        const snippet = buildProjectContextSnippet(query);
+        if (snippet) systemPrompt = buildSystemPrompt(snippet);
+      }
       const messages = [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         ...history,
         { role: "user", content: redact(query) },
       ];
-      answer = await withRateLimitRetry(() => chatWithAI(messages, 1400));
+      answer = await chatWithAI(messages, 1400);
       appendHistory(message.channelId, redact(query), redact(answer));
     }
 

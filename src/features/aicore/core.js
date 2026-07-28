@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath as _fileURLToPath } from "node:url";
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from "discord.js";
 import { aiCoreDB, encryptionSourceLabel } from "../../database/aiCoreDB.js";
-import { rebuildProjectIndex, searchProject, getProjectRoot } from "./projectIndexer.js";
+import { rebuildProjectIndex, searchProject, getProjectRoot, getProjectKnowledge } from "./projectIndexer.js";
 import { isOwner, isStaff } from "../../middleware/permissions.js";
 import { logger } from "../../utils/logger.js";
 import * as registry from "./providers/registry.js";
@@ -1000,11 +1000,61 @@ async function requestModel(messages, maxTokens = config().maxResponse) {
 
 // ── Project context ────────────────────────────────────────────────────────────
 
+/**
+ * Build a one-paragraph summary of the project for the AI system prompt.
+ * Cached in memory for the process lifetime (changes only on index rebuild).
+ */
+let _projectSummaryCache = null;
+let _projectSummaryBuiltAt = 0;
+
+function getProjectSummary() {
+  const knowledge = getProjectKnowledge();
+  const builtAt   = knowledge.builtAt ?? "";
+  // Invalidate cache if knowledge was rebuilt since last summary
+  if (_projectSummaryCache && _projectSummaryBuiltAt === builtAt) return _projectSummaryCache;
+
+  const s = knowledge.summary ?? {};
+  const dirs = Object.entries(s.directoryCounts ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([dir, n]) => `${dir}/ (${n} files)`)
+    .join(", ");
+
+  const deps = (s.dependencies ?? []).slice(0, 12).join(", ");
+  const summary =
+    `Project: ${_pkgMeta.name} v${_pkgMeta.version} | ` +
+    `${s.fileCount ?? "?"} files, ${s.functionCount ?? "?"} functions, ${s.classCount ?? "?"} classes | ` +
+    `Directories: ${dirs || "unknown"} | ` +
+    `Dependencies: ${deps || "none"}`;
+
+  _projectSummaryCache    = summary;
+  _projectSummaryBuiltAt  = builtAt;
+  return summary;
+}
+
+/**
+ * Format rich metadata from a search result for the AI context block.
+ * Includes exports, classes, events, commands, and customIds when present.
+ */
+function formatFileContext(item) {
+  const lines = [`FILE: ${item.path}`];
+  if (item.functions?.length)  lines.push(`FUNCTIONS: ${item.functions.join(", ")}`);
+  if (item.classes?.length)    lines.push(`CLASSES: ${item.classes.join(", ")}`);
+  if (item.exports?.length)    lines.push(`EXPORTS: ${item.exports.join(", ")}`);
+  if (item.events?.length)     lines.push(`EVENTS: ${item.events.join(", ")}`);
+  if (item.commands?.length)   lines.push(`COMMANDS: ${item.commands.join(", ")}`);
+  if (item.customIds?.length)  lines.push(`CUSTOM_IDS: ${item.customIds.join(", ")}`);
+  if (item.imports?.length) {
+    const localImports = item.imports.filter((i) => i.startsWith(".")).slice(0, 10);
+    if (localImports.length) lines.push(`IMPORTS: ${localImports.join(", ")}`);
+  }
+  lines.push(`EXCERPT:\n${item.excerpt}`);
+  return lines.join("\n");
+}
+
 function relevantContext(query) {
   const matches = searchProject(query, 8);
-  return matches.map((item) =>
-    `FILE: ${item.path}\nFUNCTIONS: ${item.functions.join(", ") || "none"}\nEXCERPT:\n${item.excerpt}`
-  ).join("\n\n---\n\n").slice(0, 28_000);
+  return matches.map(formatFileContext).join("\n\n---\n\n").slice(0, 28_000);
 }
 
 // ── Deep investigation mode ───────────────────────────────────────────────────
@@ -1012,16 +1062,24 @@ function relevantContext(query) {
 /**
  * Keywords that indicate the user wants a real bug / error investigation,
  * not a general Q&A. When matched, `investigate()` switches to deep mode:
- * full file reads + import following instead of 55-line keyword excerpts.
+ * full file reads + import following instead of keyword excerpts.
  */
 const INVESTIGATION_TRIGGERS = [
+  // Indonesian — explicit investigation / bug-check requests
   "cek error", "cek bug", "check error", "check bug",
-  "audit", "cari penyebab", "investigasi", "investigate",
+  "audit", "cari penyebab", "investigasi",
   "kenapa error", "kenapa crash", "kenapa gagal", "kenapa tidak",
-  "why error", "why crash", "why fail",
-  "trace bug", "find bug", "find error",
   "analisis error", "analisa error", "analisis bug", "analisa bug",
-  "debug", "root cause",
+  "penyebab", "root cause", "trace bug",
+  // English — investigation keywords
+  "investigate", "why error", "why crash", "why fail",
+  "find bug", "find error", "trace", "debug",
+  // Flow / architecture questions that benefit from deep context
+  "flow", "call flow", "how does", "gimana cara", "gimana flow",
+  "jelaskan flow", "explain flow", "explain how",
+  // Code review / security / performance
+  "code review", "security review", "performance review",
+  "memory leak", "race condition", "deadlock",
 ];
 
 function isInvestigationQuery(query) {
@@ -1061,35 +1119,47 @@ function extractLocalImports(sourceText, currentFile) {
 
 /**
  * Build deep investigation context for bug-hunting:
- *   1. Keyword-rank top candidate files via searchProject.
- *   2. Read their FULL contents (not just 55-line excerpts).
- *   3. Follow one level of local imports and read those too.
- *   4. Return all content formatted with line numbers, capped at ~28 KB total.
+ *   1. Keyword-rank top candidate files via searchProject (up to 10 primary).
+ *   2. Read their FULL contents (not just keyword excerpts).
+ *   3. Follow TWO levels of local imports and read those too.
+ *   4. Return all content formatted with line numbers, capped at ~32 KB total.
  *
- * This gives the AI the actual source code it needs to find real bugs,
- * rather than metadata snippets.
+ * Two-level import following catches bugs that span: primary file → helper →
+ * shared utility — the most common real-world bug chain depth.
  */
 function gatherDeepContext(query, root) {
-  const TOTAL_CAP    = 28_000;
+  const TOTAL_CAP    = 32_000;
   const PER_FILE_CAP = 10_000;
 
   const candidates = searchProject(query, 10);
 
-  // Primary candidates, keyed by absolute path, with priority index
+  // primary candidates, keyed by absolute path → priority index (lower = higher priority)
   const toRead = new Map();
   for (let i = 0; i < candidates.length; i++) {
     toRead.set(path.join(root, candidates[i].path), i);
   }
 
-  // Follow one level of local imports from each primary candidate
-  for (const candidate of candidates) {
-    const abs = path.join(root, candidate.path);
-    let src = "";
-    try { src = fs.readFileSync(abs, "utf8").slice(0, 6_000); } catch { continue; }
-    for (const dep of extractLocalImports(src, abs)) {
-      if (!toRead.has(dep)) toRead.set(dep, candidates.length + toRead.size);
+  /**
+   * Follow local imports from a set of absolute paths, assigning them a
+   * priority that is one tier below their importer.
+   */
+  function followImports(absPaths, basePriority) {
+    for (const abs of absPaths) {
+      let src = "";
+      try { src = fs.readFileSync(abs, "utf8").slice(0, 8_000); } catch { continue; }
+      for (const dep of extractLocalImports(src, abs)) {
+        if (!toRead.has(dep)) toRead.set(dep, basePriority + toRead.size);
+      }
     }
   }
+
+  // Level 1 — imports from primary candidates
+  const level1Paths = candidates.map((c) => path.join(root, c.path));
+  followImports(level1Paths, candidates.length + 100);
+
+  // Level 2 — imports from level-1 deps (the ones added by the first followImports)
+  const level2Paths = [...toRead.keys()].filter((p) => !level1Paths.includes(p));
+  followImports(level2Paths, candidates.length + 300);
 
   // Sort by priority, read full contents, accumulate up to cap
   const sections = [];
@@ -1266,55 +1336,82 @@ export async function investigate({ query, image }) {
     visionNote = `\n\n⚠️ **Vision tidak didukung oleh ${adapter.PROVIDER_NAME}.** Gambar tidak dapat dianalisis. Ganti provider ke OpenAI / Google Gemini / Anthropic untuk mengaktifkan vision analysis.`;
   }
 
-  // System prompt — bug-hunting instructions in deep mode, advisory Q&A otherwise.
-  const providerLabel = `${adapter.PROVIDER_NAME} | Model: ${cfg.model || adapter.DEFAULT_MODEL}`;
+  // System prompt — structured bug-hunting in deep mode, advisory Q&A otherwise.
+  const providerLabel  = `${adapter.PROVIDER_NAME} | Model: ${cfg.model || adapter.DEFAULT_MODEL}`;
+  const projectSummary = getProjectSummary();
+
   const systemContent = deepMode
     ? [
-        `Anda adalah static analysis engine untuk project: **${meta.name}** v${meta.version}. Provider: ${providerLabel}.`,
-        "TUGAS: Temukan bug nyata dalam source code yang disediakan.",
-        "WAJIB cari:",
-        "throw tanpa catch,",
-        "catch kosong atau catch hanya console.log/logger tanpa recovery,",
-        "Promise / async function yang tidak di-await (fire-and-forget tanpa void/catch),",
-        "race condition (state dishared antara beberapa async call tanpa lock),",
-        "interaction Discord timeout (>3 detik antara event masuk dan reply/deferReply pertama),",
-        "akses undefined atau null tanpa guard (obj.prop saat obj bisa null),",
-        "path file salah atau file yang diimpor tidak ada,",
-        "import symbol yang tidak dieksport dari modulnya,",
-        "event handler tidak ter-register atau ter-register lebih dari sekali (duplicate handler),",
-        "memory leak: setInterval/setTimeout tanpa clearInterval/clearTimeout, EventEmitter.on tanpa .off,",
-        "API request tanpa timeout dan tanpa error handling,",
-        "database call tanpa try/catch atau tanpa null check pada hasilnya.",
-        "FORMAT untuk setiap bug yang ditemukan:",
-        "🐛 BUG #N — <judul singkat>",
-        "Root Cause: ...",
-        "File: path/to/file.js",
-        "Line: N",
-        "Kode bermasalah: `...`",
-        "Penjelasan: ...",
-        "Dampak: ...",
-        "Patch:",
-        "```diff",
-        "- kode lama",
-        "+ kode baru",
-        "```",
-        "Jika tidak ada bug: tulis hanya '✅ Tidak ditemukan bug dalam file yang dianalisis.'",
-        "JANGAN menjelaskan isi file jika tidak ada bug di dalamnya.",
-        "JANGAN menjawab 'tidak ada informasi' — semua file sudah disediakan.",
-        "Jawab dalam bahasa Indonesia.",
-      ].join(" ")
+        `Anda adalah Principal Software Engineer & Static Analysis Engine untuk project berikut:`,
+        `${projectSummary}`,
+        `Provider aktif: ${providerLabel}`,
+        ``,
+        `TUGAS UTAMA: Temukan bug nyata dalam source code yang disediakan. Baca SELURUH kode yang diberikan sebelum menjawab.`,
+        ``,
+        `WAJIB CARI (cek setiap item):`,
+        `1. throw tanpa catch yang menanganinya`,
+        `2. catch kosong atau catch yang hanya console.log/logger tanpa recovery`,
+        `3. Promise / async function tidak di-await (fire-and-forget tanpa void/catch)`,
+        `4. Race condition — state dishared antara beberapa async call tanpa lock/mutex`,
+        `5. Discord interaction timeout — >3 detik antara event masuk dan deferReply/reply pertama`,
+        `6. Akses property pada nilai yang bisa null/undefined tanpa optional chaining atau guard`,
+        `7. Import symbol yang tidak dieksport dari modulnya (import non-existent export)`,
+        `8. Event handler tidak ter-register, atau ter-register lebih dari sekali (duplicate listener)`,
+        `9. Memory leak — setInterval/setTimeout tanpa clearInterval/clearTimeout, EventEmitter.on tanpa .off, collector tanpa stop()`,
+        `10. API/fetch request tanpa timeout dan tanpa error handling`,
+        `11. Database call tanpa try/catch atau tanpa null-check pada hasil`,
+        `12. Unused import, dead code, atau variabel yang tidak pernah dibaca`,
+        ``,
+        `FORMAT WAJIB untuk setiap bug yang ditemukan:`,
+        `🐛 BUG #N — <judul singkat>`,
+        `Root Cause: <penjelasan teknis akar masalah>`,
+        `File: <path/to/file.js>`,
+        `Line: <nomor baris>`,
+        `Kode bermasalah: \`<kode>\``,
+        `Penjelasan: <mengapa ini bug>`,
+        `Dampak: <apa yang bisa terjadi>`,
+        `Severity: CRITICAL / HIGH / MEDIUM / LOW`,
+        `Confidence: <persen>%`,
+        `Patch:`,
+        `\`\`\`diff`,
+        `- kode lama`,
+        `+ kode baru`,
+        `\`\`\``,
+        ``,
+        `Jika tidak ada bug: tulis hanya "✅ Tidak ditemukan bug dalam file yang dianalisis."`,
+        `JANGAN menjelaskan isi file jika tidak ada bug di dalamnya.`,
+        `JANGAN mengarang file atau function yang tidak ada dalam source yang diberikan.`,
+        `Jawab dalam bahasa Indonesia.`,
+      ].join("\n")
     : [
-        `Anda adalah AI Core untuk project: **${meta.name}** v${meta.version}. Provider aktif: ${providerLabel}.`,
-        "Jawab dalam bahasa Indonesia.",
-        "Gunakan hanya fakta dari project excerpts yang disediakan.",
-        "Jangan mengarang path, function, atau file yang tidak ada di excerpts.",
-        "Tandai dugaan sebagai 'kemungkinan' atau 'mungkin'.",
-        "Jangan mengubah atau mengeksekusi source code secara otomatis.",
-      ].join(" ");
+        `Anda adalah AI Core Assistant untuk project: **${meta.name}** v${meta.version}.`,
+        `Provider aktif: ${providerLabel}`,
+        `${projectSummary}`,
+        ``,
+        `Pedoman:`,
+        `- Jawab dalam bahasa Indonesia (kecuali user menggunakan bahasa lain).`,
+        `- Gunakan HANYA fakta dari project excerpts yang disediakan.`,
+        `- Jangan mengarang path, function, class, atau file yang tidak ada di excerpts.`,
+        `- Tandai dugaan sebagai "kemungkinan" atau "mungkin".`,
+        `- Jangan mengubah atau mengeksekusi source code secara otomatis.`,
+        `- Untuk call flow: ikuti import dari file utama → helper → utility.`,
+      ].join("\n");
 
   const userText = deepMode
-    ? `PERMINTAAN INVESTIGASI:\n${redact(query)}\n\nSOURCE CODE PROJECT (baca seluruhnya, temukan semua bug):\n${context || "⚠️ Tidak ada file yang ditemukan — periksa konfigurasi codeAnalysis."}`
-    : `PERTANYAAN:\n${redact(query)}\n\nPROJECT EXCERPTS:\n${context || "Tidak ada excerpt yang cocok."}`;
+    ? [
+        `PERMINTAAN INVESTIGASI:`,
+        redact(query),
+        ``,
+        `SOURCE CODE PROJECT (baca seluruhnya sebelum menjawab):`,
+        context || "⚠️ Tidak ada file yang ditemukan — periksa konfigurasi codeAnalysis.",
+      ].join("\n")
+    : [
+        `PERTANYAAN:`,
+        redact(query),
+        ``,
+        `PROJECT EXCERPTS (gunakan sebagai sumber kebenaran):`,
+        context || "Tidak ada excerpt yang cocok untuk query ini.",
+      ].join("\n");
 
   const messages = [
     { role: "system", content: systemContent },
