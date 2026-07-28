@@ -27,10 +27,12 @@ import { enqueue, getAllSnapshots } from "./workerManager.js";
 import { PRIORITY }   from "./workerConfig.js";
 
 // Map platform name → worker name
+// "Other" covers Instagram, Facebook, Twitter/X, Mediafire, SoundCloud, Threads, etc.
 const PLATFORM_WORKER_MAP = {
   YouTube: "youtube",
   TikTok:  "tiktok",
   Spotify: "spotify",
+  Other:   "youtube",  // reuse YouTube worker slot for misc platforms
 };
 
 /**

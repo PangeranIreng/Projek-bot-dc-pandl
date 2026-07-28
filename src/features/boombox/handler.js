@@ -35,6 +35,7 @@ import { BOOMBOX_CONFIG, ALLOWED_ROLES, UNLIMITED_ROLES } from "./config.js";
 import { OWNER_ROLE_ID, DEVELOPER_ROLE_ID, PREMIUM_ROLE_ID } from "../../../config/roles.js";
 import { OWNER_USER_IDS, DEVELOPER_USER_IDS } from "../../../config/owner.js";
 import { ytdl, getVideoInfo }  from "../../services/ytmp3gg.js";
+import { kyzzAioDownload, kyzzInstagramDownload } from "../../services/kyzzDownloader.js";
 import { top4top }             from "../../services/top4top.js";
 import { db, premDB }          from "../../database/db.js";
 import * as boomboxCache       from "../../services/boomboxCache.js";
@@ -115,6 +116,11 @@ const PLATFORM_PATTERNS = [
     name:  "Spotify",
     regex: /^https?:\/\/open\.spotify\.com\/track\//i,
   },
+  // ── Extended platforms via Kyzz AIO ─────────────────────────────────────────
+  {
+    name:  "Other",
+    regex: /^https?:\/\/(www\.)?(instagram\.com|threads\.net|facebook\.com|fb\.com|fb\.watch|twitter\.com|x\.com|mediafire\.com|soundcloud\.com)\//i,
+  },
 ];
 
 function extractUrls(text) {
@@ -146,6 +152,7 @@ function resolveBoomBoxChannel(channelId) {
     youtube: "YouTube",
     tiktok:  "TikTok",
     spotify: "Spotify",
+    other:   "Other",   // optional dedicated channel for extended platforms
   };
 
   for (const [key, platform] of Object.entries(platformMap)) {
@@ -154,7 +161,7 @@ function resolveBoomBoxChannel(channelId) {
     }
   }
 
-  // Fallback: legacy single channel (V1 compat)
+  // Fallback: legacy single channel (V1 compat) — accepts any platform including "Other"
   const legacyId = BOOMBOX_CONFIG.BOOMBOX_CHANNEL_ID;
   if (legacyId && legacyId === channelId) {
     return { platform: null, isLegacy: true }; // any platform accepted
@@ -754,9 +761,14 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       logger.info(`[BoomBox] ⚡ Cache HIT | videoId=${videoId} | url=${boomboxUrl}`);
 
     } else {
-      let info = boomboxCache.getCachedMeta(videoId);
+      // "Other" platforms (Instagram, Facebook, Twitter/X, etc.) go straight to
+      // Kyzz — getVideoInfo is yt-dlp based and won't work for them.
+      let info = platform === "Other" ? null : boomboxCache.getCachedMeta(videoId);
       let infoMs = 0;
-      if (info) {
+      if (platform === "Other") {
+        // Metadata will be retrieved during the Kyzz download step
+        logger.info(`[BoomBox] Platform=Other — skipping getVideoInfo (Kyzz AIO will retrieve metadata)`);
+      } else if (info) {
         logger.info(`[BoomBox] Meta cache HIT | videoId=${videoId}`);
       } else if (platform !== "Spotify") {
         const infoStart = Date.now();
@@ -779,7 +791,8 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       logger.info(`[BoomBox] Meta | title="${spotifyMeta?.title ?? info?.title}" dur=${info?.duration ?? "?"}s`);
 
       // V2: Duration limit menggunakan effective limit dari role member
-      if (info?.duration !== null && info?.duration > maxDurationSec) {
+      // Skip duration check for "Other" platforms — duration is unknown until download
+      if (platform !== "Other" && info?.duration !== null && info?.duration > maxDurationSec) {
         logger.info(`[BoomBox] Rejected: dur ${info.duration}s > ${maxDurationSec}s`);
         await statusMsg.edit({
           content:    userMention,
@@ -796,12 +809,29 @@ async function runBoomBoxJob(message, url, platform, userMention, unlimited, lim
       logger.info(`[BoomBox] ── Downloading | ${platform} | ${downloadUrl}`);
       const downloadStart = Date.now();
 
+      // ── Other platform: Kyzz AIO (Instagram, Facebook, Twitter/X, Mediafire, SoundCloud, Threads) ──
+      const spotifySearchCandidates = spotifyMeta?.searchCandidates ?? null;
+      if (platform === "Other") {
+        currentStage = "Download Audio (Kyzz AIO)";
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "boombox-kyzz-"));
+        const isInstagram = /instagram\.com/i.test(url);
+        ytResult = await withRetry(
+          () => withStageTimeout(
+            (signal) => isInstagram
+              ? kyzzInstagramDownload(url, tmpDir, signal)
+              : kyzzAioDownload(url, tmpDir, signal),
+            5 * 60_000,
+            "Download audio (Kyzz AIO)",
+          ),
+          2,
+          "Download Audio (Kyzz AIO)",
+        );
+
       // ── Spotify: try each search candidate in sequence if the primary fails ──
       // spotifyMeta.searchCandidates is a priority-ordered list of ytsearch1: queries.
       // Without this loop, a single bad search result aborts the entire Spotify job.
-      const spotifySearchCandidates = spotifyMeta?.searchCandidates ?? null;
-      let spotifyDownloadErr = null;
-      if (spotifySearchCandidates && spotifySearchCandidates.length > 1) {
+      } else if (spotifySearchCandidates && spotifySearchCandidates.length > 1) {
+        let spotifyDownloadErr = null;
         for (let si = 0; si < spotifySearchCandidates.length; si++) {
           const candidate = spotifySearchCandidates[si];
           if (si > 0) {

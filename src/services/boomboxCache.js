@@ -195,6 +195,20 @@ export function setCachedMeta(videoId, meta) {
 /**
  * @returns {{ resultSize:number, metaSize:number, hits:number, misses:number, hitRate:string }}
  */
+/**
+ * Delete a cached result (and its metadata) by videoId.
+ * Used by !ulang to force a fresh re-download.
+ *
+ * @param {string} videoId
+ * @returns {boolean} true if an entry was deleted, false if it wasn't present
+ */
+export function deleteCachedResult(videoId) {
+  const deleted = _resultCache.delete(videoId);
+  _metaCache.delete(videoId);
+  if (deleted) logger.debug(`[BoomBoxCache] Invalidated cache entry: ${videoId}`);
+  return deleted;
+}
+
 export function getCacheStats() {
   const total   = _hits + _misses;
   const hitRate = total > 0 ? `${((100 * _hits) / total).toFixed(1)}%` : "n/a";

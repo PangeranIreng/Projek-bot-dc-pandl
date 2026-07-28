@@ -20,7 +20,7 @@ import {
 
 import { db }             from "../../database/db.js";
 import * as boomboxCache  from "../../services/boomboxCache.js";
-import { extractVideoId } from "../../services/boomboxCache.js";
+import { extractVideoId, deleteCachedResult } from "../../services/boomboxCache.js";
 import { top4top }        from "../../services/top4top.js";
 import { ytdl }           from "../../services/ytmp3gg.js";
 import { kyzzYtAudio, kyzzAioDownload } from "../../services/kyzzDownloader.js";
@@ -110,12 +110,9 @@ export async function handleUlangCommand(message) {
 
   // Invalidate cache for this URL so it re-downloads fresh
   const videoId = extractVideoId(targetUrl, platform === "Other" ? undefined : platform);
-  boomboxCache.getCachedResult(videoId); // touch so we can invalidate
-  // Remove from in-memory result cache
-  try {
-    // setCachedResult with a fake/expired entry triggers LRU eviction on next set
-    // Best-effort: just log it (we re-run the full pipeline below regardless)
-  } catch {}
+  const wasInCache = deleteCachedResult(videoId);
+  logger.info(`[Ulang] Cache invalidated for ${videoId} (was cached: ${wasInCache})`);
+  boomboxCache; // keep import reference used for setCachedResult below
 
   // ── Initial status message ────────────────────────────────────────────────
   const statusMsg = await message.reply({

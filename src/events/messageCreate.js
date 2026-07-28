@@ -69,6 +69,9 @@ export async function handleMessageCreate(message, secrets) {
       return;
     }
 
+    // !ulang — regenerate BoomBox URL (must run before BoomBox so it short-circuits)
+    if (await handleUlangCommand(message)) return;
+
     // BoomBox runs on a different channel from the scanner
     await handleBoomBoxMessage(message);
 

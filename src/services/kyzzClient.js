@@ -252,10 +252,10 @@ export async function kyzzHealthCheck() {
 }
 
 /**
- * Returns current Kyzz provider health status.
+ * Returns the PROVIDER_KEY string so callers can look up status
+ * via getAllStatuses() from providerHealth.js directly.
  */
 export function getKyzzStatus() {
-  const { getStatus } = await import("./providerHealth.js").catch(() => ({ getStatus: () => null }));
   return null; // use getAllStatuses() from providerHealth directly
 }
 

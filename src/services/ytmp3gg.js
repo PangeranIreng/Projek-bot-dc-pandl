@@ -28,6 +28,7 @@ import { recordProviderResult }          from "./providerMonitor.js";
 import { FFMPEG_PATH, ffmpegAvailable } from "../utils/ffmpegPath.js";
 import { COOKIES_ARGS, hasCookies, markCookiesUsed } from "../utils/cookiesResolver.js";
 import { ENV_INFO }                     from "../utils/envDetector.js";
+import { kyzzYtAudio, kyzzAioDownload } from "./kyzzDownloader.js";
 
 // ── Temporary cookie disable ──────────────────────────────────────────────────
 // If cookies cause an error (expired, invalid format, etc.), we disable them
@@ -1780,10 +1781,43 @@ export async function ytdl(input, type = "mp3", quality = "128", onProgress = nu
   logger.info(`[ytmp3gg] ▶ Starting download | url="${resolvedInput}" type=${type} quality=${quality}`);
 
   if (isTikTok) {
-    return _ytdlTikTok(resolvedInput, type, quality, onProgress, signal);
+    try {
+      return await _ytdlTikTok(resolvedInput, type, quality, onProgress, signal);
+    } catch (ytdlErr) {
+      if (ytdlErr.name === "AbortError" || ytdlErr.code === "BOOMBOX_STAGE_TIMEOUT") throw ytdlErr;
+      logger.warn(`[ytmp3gg] All TikTok methods exhausted — trying Kyzz AIO fallback: ${ytdlErr.message}`);
+      await onProgress?.("Mencoba Kyzz...");
+      const kyzzTmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-kyzz-"));
+      try {
+        const result = await kyzzAioDownload(input, kyzzTmpDir, signal);
+        logger.info(`[ytmp3gg] ✅ Kyzz AIO (TikTok) fallback OK | title="${result.title}"`);
+        return result;
+      } catch (kyzzErr) {
+        try { fs.rmSync(kyzzTmpDir, { recursive: true, force: true }); } catch {}
+        logger.error(`[ytmp3gg] Kyzz AIO also failed for TikTok: ${kyzzErr.message}`);
+        throw new Error(`TikTok gagal setelah semua provider. yt-dlp: ${ytdlErr.message.slice(0, 120)}`);
+      }
+    }
   }
 
-  return _ytdlYouTube(resolvedInput, type, quality, onProgress, signal);
+  // YouTube (and everything else routed here)
+  try {
+    return await _ytdlYouTube(resolvedInput, type, quality, onProgress, signal);
+  } catch (ytdlErr) {
+    if (ytdlErr.name === "AbortError" || ytdlErr.code === "BOOMBOX_STAGE_TIMEOUT") throw ytdlErr;
+    logger.warn(`[ytmp3gg] All YouTube methods exhausted — trying Kyzz YtAudio fallback: ${ytdlErr.message}`);
+    await onProgress?.("Mencoba Kyzz...");
+    const kyzzTmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "boombox-kyzz-"));
+    try {
+      const result = await kyzzYtAudio(input, Number(quality) || 128, kyzzTmpDir, signal);
+      logger.info(`[ytmp3gg] ✅ Kyzz YtAudio fallback OK | title="${result.title}"`);
+      return result;
+    } catch (kyzzErr) {
+      try { fs.rmSync(kyzzTmpDir, { recursive: true, force: true }); } catch {}
+      logger.error(`[ytmp3gg] Kyzz YtAudio also failed for YouTube: ${kyzzErr.message}`);
+      throw new Error(`YouTube gagal setelah semua provider. yt-dlp: ${ytdlErr.message.slice(0, 120)}`);
+    }
+  }
 }
 
 // ── Metadata-only pre-check (no download) ────────────────────────────────────
