@@ -15,6 +15,7 @@ import { handleCookieUploadMessage } from "../features/boombox/resourceManagerIn
 import { threadDB }              from "../database/threadDB.js";
 import { handleAICoreMessage }  from "../features/aicore/core.js";
 import { handleAIConversationMessage } from "../features/aicore/conversation.js";
+import { handleUlangCommand }   from "../features/kyzz/ulangHandler.js";
 
 // Dedup guard: Discord can occasionally fire messageCreate twice for the same
 // message during reconnects. Bounded to a small rolling window.

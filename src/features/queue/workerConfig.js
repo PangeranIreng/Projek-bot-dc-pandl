@@ -16,19 +16,38 @@
  * the worker level would abort valid long downloads before the stage guard fires.
  */
 export const WORKER_DEFAULTS = {
-  // BoomBox — no worker-level timeout; stage-level guards in handler.js own the limit.
-  // Concurrency 5: allows up to 5 simultaneous downloads per platform so a long video
-  // never blocks shorter ones. Each platform has its own pool → YouTube, TikTok, Spotify
-  // all run fully in parallel with no shared slot.
+  // ── BoomBox workers ─────────────────────────────────────────────────────────
+  // No worker-level timeout; stage-level guards in handler.js own the limit.
+  // Concurrency 5: allows up to 5 simultaneous downloads per platform.
+  // Each platform has its own pool → YouTube, TikTok, Spotify all run fully
+  // in parallel with no shared slot.
   youtube:    { maxConcurrent: 5, timeoutMs: 0,       maxRetries: 3 },
   tiktok:     { maxConcurrent: 5, timeoutMs: 0,       maxRetries: 3 },
   spotify:    { maxConcurrent: 5, timeoutMs: 0,       maxRetries: 3 },
-  // Feature workers — simpler operations with predictable ceilings.
+
+  // ── Universal downloader (Kyzz AIO) ─────────────────────────────────────────
+  // Separate from BoomBox; handles /download command, Instagram, Facebook, etc.
+  // 45s timeout covers API call + file download + optional transcode.
+  download:   { maxConcurrent: 4, timeoutMs: 45_000,  maxRetries: 2 },
+
+  // ── Feature workers ─────────────────────────────────────────────────────────
+  // Simpler operations with predictable ceilings.
   scanner:    { maxConcurrent: 5, timeoutMs: 120_000, maxRetries: 1 },
   obfuscator: { maxConcurrent: 5, timeoutMs: 60_000,  maxRetries: 1 },
   beautify:   { maxConcurrent: 5, timeoutMs: 60_000,  maxRetries: 1 },
   ai:         { maxConcurrent: 5, timeoutMs: 60_000,  maxRetries: 1 },
   database:   { maxConcurrent: 3, timeoutMs: 30_000,  maxRetries: 2 },
+
+  // ── Kyzz API workers ─────────────────────────────────────────────────────────
+  // search: YouTube, Anime, App, WA Group, Discord Server, Sticker, etc.
+  // Separate pool so search/image never blocks BoomBox or downloads.
+  search:     { maxConcurrent: 5, timeoutMs: 20_000,  maxRetries: 2 },
+
+  // image: /api/image/* endpoints — fast, public, no auth required.
+  image:      { maxConcurrent: 5, timeoutMs: 15_000,  maxRetries: 2 },
+
+  // admin: CPanel, setup, moderation operations — low concurrency, high priority.
+  admin:      { maxConcurrent: 3, timeoutMs: 30_000,  maxRetries: 1 },
 };
 
 /**
