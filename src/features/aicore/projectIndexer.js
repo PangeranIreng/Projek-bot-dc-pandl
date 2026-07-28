@@ -48,14 +48,18 @@ function collectFiles(dir, result = []) {
 
 /**
  * Extract rich metadata from source text.
- * Returns: functions, classes, events, commands, customIds, imports, exports.
+ * Returns: functions, classes, methods, constants, events, commands, customIds,
+ *          imports, exports, todos.
  */
 function extractMetadata(text) {
   const functions = [];
   const classes   = [];
+  const methods   = [];
+  const constants = [];
   const events    = [];
   const commands  = [];
   const customIds = [];
+  const todos     = [];
 
   // Named function declarations + arrow functions / regular functions assigned to const/let/var
   const functionPattern =
@@ -68,6 +72,28 @@ function extractMetadata(text) {
   // Class declarations: class Foo { ... }
   for (const match of text.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) {
     if (!classes.includes(match[1])) classes.push(match[1]);
+  }
+
+  // Class methods: detect lines like `  methodName(` or `  async methodName(` inside class bodies
+  // Pattern: 2–8 spaces indent + optional modifiers + identifier + (
+  for (const match of text.matchAll(
+    /^[ \t]{2,8}(?:(?:static|async|get|set)\s+)*([A-Za-z_$][\w$]*)\s*\(/gm,
+  )) {
+    const name = match[1];
+    // Exclude constructor, common reserved keywords
+    if (name && name !== "constructor" && name !== "if" && name !== "for" &&
+        name !== "while" && name !== "switch" && name !== "return" &&
+        !methods.includes(name)) {
+      methods.push(name);
+    }
+  }
+
+  // Named constants: ALL_CAPS or UPPER_First exported/top-level const/let/var
+  // We capture: export const FOO, const MAX_RETRY, let DEFAULT_TIMEOUT
+  for (const match of text.matchAll(
+    /(?:export\s+)?(?:const|let|var)\s+([A-Z][A-Z0-9_$]{2,})\s*=/gm,
+  )) {
+    if (!constants.includes(match[1])) constants.push(match[1]);
   }
 
   // Event listeners: client.on('ready'), .on("messageCreate"), emitter.once("event")
@@ -93,6 +119,16 @@ function extractMetadata(text) {
     if (!customIds.includes(raw)) customIds.push(raw);
   }
 
+  // TODO / FIXME / DEPRECATED / HACK / NOTE annotations
+  for (const match of text.matchAll(
+    /\/\/\s*(TODO|FIXME|DEPRECATED|HACK|NOTE|XXX)\s*[:\-]?\s*(.{0,80})/gi,
+  )) {
+    const tag  = match[1].toUpperCase();
+    const note = match[2].trim().slice(0, 60);
+    const entry = note ? `${tag}: ${note}` : tag;
+    if (!todos.includes(entry)) todos.push(entry);
+  }
+
   // Imports: from "..." or import "..."
   const imports = [...text.matchAll(/from\s+["']([^"']+)["']|import\s+["']([^"']+)["']/g)]
     .map((m) => m[1] || m[2])
@@ -115,7 +151,7 @@ function extractMetadata(text) {
   }
   const exports = [...exportedNames].slice(0, 40);
 
-  return { functions, classes, events, commands, customIds, imports, exports };
+  return { functions, classes, methods, constants, events, commands, customIds, imports, exports, todos };
 }
 
 /**
@@ -160,7 +196,7 @@ export function rebuildProjectIndex() {
     try {
       text = fs.readFileSync(file, "utf8");
     } catch {
-      return { path: rel, size, lines: 0, functions: [], classes: [], events: [], commands: [], customIds: [], imports: [], exports: [], skipped: "unreadable" };
+      return { path: rel, size, lines: 0, functions: [], classes: [], methods: [], constants: [], events: [], commands: [], customIds: [], imports: [], exports: [], todos: [], skipped: "unreadable" };
     }
     const metadata = extractMetadata(text);
     return {
@@ -177,16 +213,27 @@ export function rebuildProjectIndex() {
     byDirectory[top] = (byDirectory[top] ?? 0) + 1;
   }
 
+  // Collect all TODOs/FIXMEs across the project for global visibility
+  const allTodos = indexed
+    .filter((f) => f.todos?.length)
+    .map((f) => f.todos.map((t) => `${f.path}: ${t}`))
+    .flat()
+    .slice(0, 100);
+
   const knowledge = {
     builtAt: new Date().toISOString(),
     summary: {
       fileCount:       indexed.length,
       functionCount:   indexed.reduce((s, f) => s + f.functions.length, 0),
       classCount:      indexed.reduce((s, f) => s + (f.classes?.length ?? 0), 0),
+      methodCount:     indexed.reduce((s, f) => s + (f.methods?.length ?? 0), 0),
+      constantCount:   indexed.reduce((s, f) => s + (f.constants?.length ?? 0), 0),
       eventCount:      indexed.reduce((s, f) => s + (f.events?.length ?? 0), 0),
       commandCount:    indexed.reduce((s, f) => s + (f.commands?.length ?? 0), 0),
+      todoCount:       allTodos.length,
       directoryCounts: byDirectory,
       dependencies:    readDependencies(),
+      todos:           allTodos,
     },
     dependencyGraph: buildDependencyGraph(indexed),
     files: indexed,
@@ -252,25 +299,31 @@ export function searchProject(query, limit = 8) {
 
   const ranked = knowledge.files
     .map((file) => {
-      const pathLower     = file.path.toLowerCase();
-      const fnLower       = (file.functions ?? []).join(" ").toLowerCase();
-      const clsLower      = (file.classes   ?? []).join(" ").toLowerCase();
-      const evtLower      = (file.events    ?? []).join(" ").toLowerCase();
-      const cmdLower      = (file.commands  ?? []).join(" ").toLowerCase();
-      const cuidLower     = (file.customIds ?? []).join(" ").toLowerCase();
-      const expLower      = (file.exports   ?? []).join(" ").toLowerCase();
-      const impLower      = (file.imports   ?? []).join(" ").toLowerCase();
+      const pathLower    = file.path.toLowerCase();
+      const fnLower      = (file.functions ?? []).join(" ").toLowerCase();
+      const clsLower     = (file.classes   ?? []).join(" ").toLowerCase();
+      const mtdLower     = (file.methods   ?? []).join(" ").toLowerCase();
+      const cstLower     = (file.constants ?? []).join(" ").toLowerCase();
+      const evtLower     = (file.events    ?? []).join(" ").toLowerCase();
+      const cmdLower     = (file.commands  ?? []).join(" ").toLowerCase();
+      const cuidLower    = (file.customIds ?? []).join(" ").toLowerCase();
+      const expLower     = (file.exports   ?? []).join(" ").toLowerCase();
+      const impLower     = (file.imports   ?? []).join(" ").toLowerCase();
+      const todoLower    = (file.todos     ?? []).join(" ").toLowerCase();
 
       let score = 0;
       for (const term of terms) {
-        if (pathLower.includes(term))   score += 3;
-        if (expLower.includes(term))    score += 2;
-        if (clsLower.includes(term))    score += 2;
-        if (cmdLower.includes(term))    score += 2;
-        if (cuidLower.includes(term))   score += 2;
-        if (evtLower.includes(term))    score += 1;
-        if (fnLower.includes(term))     score += 1;
-        if (impLower.includes(term))    score += 1;
+        if (pathLower.includes(term))  score += 3;
+        if (expLower.includes(term))   score += 2;
+        if (clsLower.includes(term))   score += 2;
+        if (cmdLower.includes(term))   score += 2;
+        if (cuidLower.includes(term))  score += 2;
+        if (cstLower.includes(term))   score += 2;
+        if (mtdLower.includes(term))   score += 1;
+        if (evtLower.includes(term))   score += 1;
+        if (fnLower.includes(term))    score += 1;
+        if (impLower.includes(term))   score += 1;
+        if (todoLower.includes(term))  score += 1;
       }
       return { file, score };
     })

@@ -1,62 +1,47 @@
 ---
 name: AI Core integration
-description: Durable boundaries for the bot's central intelligence layer
+description: Advisory, channel-scoped intelligence; architecture rules, investigation modes, file handling, and search scoring for AI Core.
 ---
 
-AI Core is an advisory, owner-controlled layer that must stay inside the existing
-setup, error logging, and message-routing architecture. It may analyze and
-generate fix prompts, but it must not edit source code, respond to public chat,
-or create a second process-level error handler.
+# AI Core — Integration Rules & Architecture
 
-**Why:** The bot already has centralized routing and structured error logging;
-duplicating those paths would risk breaking BoomBox, scanner, and admin features.
+**Why:** Multiple rounds of enhancement; these constraints prevent regressions.
 
-**How to apply:** Add new AI capabilities behind the existing AI Core service,
-keep investigation channel-scoped, redact secrets before persistence/provider
-calls, and preserve a local fallback when the model provider is unavailable.
+## Architecture Rules
+- Advisory only — AI Core never edits source code or executes a generated fix.
+- All provider calls go through `requestModel()` in `core.js` — never build separate provider clients.
+- `investigate()` is the main entry point for deep analysis; `chatWithAI()` is for conversation.
+- `getProjectKnowledge()` auto-rebuilds the project index when stale (TTL 1 hr + package.json mtime).
 
-Provider credentials may be managed from the Owner-only AI Configuration panel:
-validate before commit, encrypt at rest with `AI_CORE_ENCRYPTION_KEY` or
-`SESSION_SECRET`, hot-reload the provider client, and fall back to
-`OPENAI_API_KEY` when no stored credential exists.
+## Investigation Modes (`getInvestigationMode(query)` in core.js)
+Returns one of: `"security"` | `"performance"` | `"discord"` | `"provider"` | `"database"` | `null` (generic bug hunt).  
+Each mode has a dedicated system prompt in `buildSpecializedSystemPrompt()`.
 
-**Why:** The bot needs Discord-based key rotation without exposing credentials in
-messages or logs, while existing deployments must continue working unchanged.
+Triggers (in `INVESTIGATION_TRIGGERS`):
+- Generic: "cek bug", "cek error", "audit", "review", "investigasi", "root cause", "trace", "debug", "flow"
+- Specialized: "security review/audit", "performance review/audit", "discord review", "provider review", "database review"
 
-**How to apply:** Keep provider status and masked key metadata in the AI Core
-config, never persist plaintext credentials, preserve the existing key on failed
-replacement validation, and keep removal limited to provider credentials.
+## File Attachment Handling (conversation.js)
+- **Image attachments** → `attachmentAsDataUrl()` → passed as `image` to `investigate()`
+- **Text attachments** (.js, .json, .log, .yml, .sql, .csv, .md, .txt, etc.) → `attachmentAsText()` → passed as `fileContent` to `investigate()`
+- `fileContent` is prepended to project context in `investigate()` as highest-priority source
+- Max text attachment size: 20 KB per file
+- ZIP and PDF/DOCX are NOT yet supported (separate follow-up tasks proposed)
 
-Provider status must distinguish an unavailable model, provider-side failure,
-and network failure (`model_error`, `provider_error`, `network_error`) rather
-than treating every failed request as an invalid credential.
+## Project Index Fields (`extractMetadata()` in projectIndexer.js)
+Extracted per file: `functions`, `classes`, `methods`, `constants`, `events`, `commands`, `customIds`, `imports`, `exports`, `todos`
 
-**Why:** A valid credential can fail for reasons unrelated to authentication,
-and the owner-facing dashboard needs to direct troubleshooting correctly.
+Search scoring weights:
+- +3: path match
+- +2: exports, classes, commands, customIds, constants
+- +1: methods, events, functions, imports, todos
 
-**How to apply:** Set the status from provider/model/network error properties
-on connection, model validation, and real AI requests; successful requests
-should restore `connected`.
+## Context Building
+- **Deep mode** (`gatherDeepContext`): top 10 candidate files, full contents + 2 levels of local imports, 32 KB cap
+- **Shallow mode** (`relevantContext`): top 8 files, 60-line keyword-anchored excerpts, 28 KB cap
+- **Conversation injection** (`buildProjectContextSnippet`): top 4 matches, 3 KB cap, only when PROJECT_CONTEXT_KEYWORDS regex matches
 
-The installed OpenAI SDK exposes HTTP failures through `error.status` and
-structured `error.error`; preserve those fields long enough to classify the
-failure, then expose only sanitized reason/category/status to Discord.
-
-**Why:** Replacing SDK errors with one generic message hides whether the
-failure is authentication, permission, endpoint, model, quota, request, or
-network related.
-
-**How to apply:** Keep diagnostics opt-in, never log authorization headers or
-full keys, and distinguish provider endpoint 404s from model 404s.
-
-The OpenAI JavaScript SDK client constructor does not make an HTTP request.
-With `openai` 6.x, `models.list()` reaches `/v1/models` and chat completions
-reach `/v1/chat/completions`; a 401 from the former is an authentication
-rejection after client construction, not a constructor or model-name failure.
-
-**Why:** This separates credential-flow defects from provider-side rejection
-without guessing at or replacing the credential.
-
-**How to apply:** Trace the credential with opt-in SHA-256 fingerprints at the
-modal, validation, secure-storage, runtime, and request boundaries; validate a
-configured model separately after `/v1/models` succeeds.
+## How to Apply
+- When adding new review modes: add detection regex to `getInvestigationMode()`, add prompt lines to `modeLines` in `buildSpecializedSystemPrompt()`.
+- When adding new metadata fields: update `extractMetadata()`, `rebuildProjectIndex()` return shape, `formatFileContext()`, and `searchProject()` scoring.
+- When adding new attachment types: add to `TEXT_EXTENSIONS`/`TEXT_MIME_PATTERN` in conversation.js.

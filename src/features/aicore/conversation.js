@@ -192,7 +192,7 @@ function buildProjectContextSnippet(query) {
   }
 }
 
-// ── Image helper (same approach as in core.js handleAICoreMessage) ─────────────
+// ── Attachment helpers ────────────────────────────────────────────────────────
 
 async function attachmentAsDataUrl(attachment) {
   if (!attachment?.contentType?.startsWith("image/") || Number(attachment.size) > 4_000_000) return null;
@@ -201,6 +201,47 @@ async function attachmentAsDataUrl(attachment) {
     if (!response.ok) return null;
     const buffer = Buffer.from(await response.arrayBuffer());
     return `data:${attachment.contentType};base64,${buffer.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extensions and MIME types that we can meaningfully pass to the AI as text.
+ * Binary formats (images, executables, etc.) are excluded — they need special handling.
+ */
+const TEXT_EXTENSIONS = /\.(js|mjs|cjs|ts|tsx|jsx|json|env|yml|yaml|toml|md|txt|log|sql|sh|bash|zsh|fish|ps1|csv|xml|html|css|scss|less|config|ini|cfg|gitignore|dockerignore|lockfile|lock)$/i;
+const TEXT_MIME_PATTERN = /^(text\/|application\/(json|xml|x-yaml|yaml|javascript|typescript|sql|csv|x-sh|x-shellscript|x-toml|x-ini))/i;
+const MAX_TEXT_ATTACHMENT_BYTES = 20_000; // 20 KB text cap per file
+
+/**
+ * Fetch a text-based file attachment and return its content as a formatted string.
+ * Returns null if the file is too large, binary, or cannot be fetched.
+ */
+async function attachmentAsText(attachment) {
+  const name = attachment.name ?? "";
+  const mime = attachment.contentType ?? "";
+  const size = Number(attachment.size ?? 0);
+
+  // Guard: reject binary types (images handled separately)
+  if (mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/")) return null;
+
+  // Accept if extension matches or MIME is known text type
+  const isText = TEXT_EXTENSIONS.test(name) || TEXT_MIME_PATTERN.test(mime);
+  if (!isText) return null;
+
+  // Guard: reject oversized files
+  if (size > MAX_TEXT_ATTACHMENT_BYTES * 3) {
+    return `=== FILE: ${name} ===\n[File terlalu besar untuk dianalisis (${Math.round(size / 1024)} KB). Maksimal ${Math.round(MAX_TEXT_ATTACHMENT_BYTES / 1024)} KB.]`;
+  }
+
+  try {
+    const res = await fetch(attachment.url);
+    if (!res.ok) return null;
+    const text = await res.text();
+    const content = text.slice(0, MAX_TEXT_ATTACHMENT_BYTES);
+    const truncated = text.length > MAX_TEXT_ATTACHMENT_BYTES ? `\n[... ${text.length - MAX_TEXT_ATTACHMENT_BYTES} karakter dipotong]` : "";
+    return `=== FILE YANG DIUPLOAD: ${name} ===\n${content}${truncated}`;
   } catch {
     return null;
   }
@@ -272,14 +313,25 @@ export async function handleAIConversationMessage(message) {
 
     if (routeReason) {
       // ── Investigation route ─────────────────────────────────────────────
-      let image = null;
-      if (routeReason === "vision" || attachments.some((a) => a.contentType?.startsWith("image/"))) {
-        const imgAttachment = attachments.find((a) => a.contentType?.startsWith("image/"));
-        if (imgAttachment && cfg.visionAnalysis) {
-          image = await attachmentAsDataUrl(imgAttachment);
-        }
+      let image       = null;
+      let fileContent = null;
+
+      // Fetch image attachment (vision mode)
+      const imgAttachment  = attachments.find((a) => a.contentType?.startsWith("image/"));
+      const textAttachments = attachments.filter((a) => !a.contentType?.startsWith("image/"));
+
+      if (imgAttachment && cfg.visionAnalysis) {
+        image = await attachmentAsDataUrl(imgAttachment);
       }
-      answer = await investigate({ query, image });
+
+      // Fetch text-based file attachments — combine content if multiple
+      if (textAttachments.length) {
+        const contents = await Promise.all(textAttachments.map(attachmentAsText));
+        const joined   = contents.filter(Boolean).join("\n\n");
+        if (joined) fileContent = joined;
+      }
+
+      answer = await investigate({ query, image, fileContent });
       touchHistory(message.channelId);
     } else {
       // ── Conversation route ──────────────────────────────────────────────

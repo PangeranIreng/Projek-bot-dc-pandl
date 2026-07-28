@@ -1034,16 +1034,20 @@ function getProjectSummary() {
 
 /**
  * Format rich metadata from a search result for the AI context block.
- * Includes exports, classes, events, commands, and customIds when present.
+ * Includes all extracted fields: exports, classes, methods, constants,
+ * events, commands, customIds, imports, todos.
  */
 function formatFileContext(item) {
-  const lines = [`FILE: ${item.path}`];
-  if (item.functions?.length)  lines.push(`FUNCTIONS: ${item.functions.join(", ")}`);
-  if (item.classes?.length)    lines.push(`CLASSES: ${item.classes.join(", ")}`);
+  const lines = [`FILE: ${item.path} (${item.lines ?? "?"} lines)`];
   if (item.exports?.length)    lines.push(`EXPORTS: ${item.exports.join(", ")}`);
+  if (item.classes?.length)    lines.push(`CLASSES: ${item.classes.join(", ")}`);
+  if (item.methods?.length)    lines.push(`METHODS: ${item.methods.slice(0, 20).join(", ")}`);
+  if (item.functions?.length)  lines.push(`FUNCTIONS: ${item.functions.slice(0, 20).join(", ")}`);
+  if (item.constants?.length)  lines.push(`CONSTANTS: ${item.constants.join(", ")}`);
   if (item.events?.length)     lines.push(`EVENTS: ${item.events.join(", ")}`);
   if (item.commands?.length)   lines.push(`COMMANDS: ${item.commands.join(", ")}`);
   if (item.customIds?.length)  lines.push(`CUSTOM_IDS: ${item.customIds.join(", ")}`);
+  if (item.todos?.length)      lines.push(`TODOS/FIXMES: ${item.todos.slice(0, 5).join(" | ")}`);
   if (item.imports?.length) {
     const localImports = item.imports.filter((i) => i.startsWith(".")).slice(0, 10);
     if (localImports.length) lines.push(`IMPORTS: ${localImports.join(", ")}`);
@@ -1067,7 +1071,8 @@ function relevantContext(query) {
 const INVESTIGATION_TRIGGERS = [
   // Indonesian — explicit investigation / bug-check requests
   "cek error", "cek bug", "check error", "check bug",
-  "audit", "cari penyebab", "investigasi",
+  "cek kode", "cek source", "cek file",
+  "audit", "cari penyebab", "investigasi", "review",
   "kenapa error", "kenapa crash", "kenapa gagal", "kenapa tidak",
   "analisis error", "analisa error", "analisis bug", "analisa bug",
   "penyebab", "root cause", "trace bug",
@@ -1077,14 +1082,39 @@ const INVESTIGATION_TRIGGERS = [
   // Flow / architecture questions that benefit from deep context
   "flow", "call flow", "how does", "gimana cara", "gimana flow",
   "jelaskan flow", "explain flow", "explain how",
-  // Code review / security / performance
+  // Review specializations (also trigger deep mode)
   "code review", "security review", "performance review",
+  "discord review", "provider review", "database review",
+  "security audit", "performance audit",
   "memory leak", "race condition", "deadlock",
+  "TODO", "FIXME", "deprecated",
+  // Stack trace / error dump patterns
+  "stack trace", "traceback", "exception", "uncaughtexception",
 ];
+
+/**
+ * Detect which specialized investigation mode to use based on the query.
+ * Returns: "security" | "performance" | "discord" | "provider" | "database" | "bug" | null
+ * "null" means generic deep-investigation mode (bug hunting).
+ */
+function getInvestigationMode(query) {
+  const q = query.toLowerCase();
+  if (/security\s*(?:review|audit|scan)|hardcoded\s*(?:token|key)|credential\s*leak|injection|path\s*traversal|prototype\s*pollution|unsafe\s*eval|permission\s*abuse/.test(q))
+    return "security";
+  if (/performance\s*(?:review|audit)|memory\s*leak|blocking\s*code|sync\s*i\/o|heavy\s*loop|duplicate\s*(?:query|listener|event)|missing\s*cache/.test(q))
+    return "performance";
+  if (/discord\s*(?:review|audit)|slash\s*command|button|modal|select\s*menu|autocomplete|collector|interaction\s*(?:review|audit)/.test(q))
+    return "discord";
+  if (/provider\s*(?:review|audit)|openai|gemini|groq|anthropic|openrouter|api\s*key|billing|quota|rate\s*limit/.test(q))
+    return "provider";
+  if (/database\s*(?:review|audit)|db\s*(?:review|audit)|sqlite|json\s*db|duplicate\s*record|orphan|corrupt|missing\s*record/.test(q))
+    return "database";
+  return null;
+}
 
 function isInvestigationQuery(query) {
   const lower = query.toLowerCase();
-  return INVESTIGATION_TRIGGERS.some((t) => lower.includes(t));
+  return INVESTIGATION_TRIGGERS.some((t) => lower.includes(t.toLowerCase()));
 }
 
 /**
@@ -1306,14 +1336,188 @@ export async function recordError(payload = {}) {
 
 // ── Investigation & conversation (exported to conversation.js / events) ────────
 
-export async function investigate({ query, image }) {
+/**
+ * Build a specialized system prompt for each review mode.
+ * Each mode focuses the AI on a specific category of issues.
+ */
+function buildSpecializedSystemPrompt(mode, projectSummary, providerLabel) {
+  const header = [
+    `Anda adalah Principal Software Engineer, Security Engineer, dan Technical Investigator untuk project berikut:`,
+    `${projectSummary}`,
+    `Provider aktif: ${providerLabel}`,
+    ``,
+  ];
+
+  const footer = [
+    ``,
+    `FORMAT WAJIB untuk setiap temuan:`,
+    `🔎 TEMUAN #N — <judul singkat>`,
+    `Root Cause: <penjelasan teknis>`,
+    `File: <path/to/file.js>`,
+    `Line: <nomor baris>`,
+    `Kode bermasalah: \`<kode>\``,
+    `Penjelasan: <mengapa ini masalah>`,
+    `Dampak: <apa yang bisa terjadi>`,
+    `Severity: CRITICAL / HIGH / MEDIUM / LOW`,
+    `Confidence: <persen>%`,
+    `Patch:`,
+    `\`\`\`diff`,
+    `- kode lama`,
+    `+ kode baru`,
+    `\`\`\``,
+    ``,
+    `Jika tidak ada temuan: tulis hanya "✅ Tidak ditemukan masalah dalam file yang dianalisis."`,
+    `JANGAN mengarang file atau function yang tidak ada dalam source yang diberikan.`,
+    `Jawab dalam bahasa Indonesia.`,
+  ];
+
+  const modeLines = {
+    security: [
+      `TUGAS: Lakukan SECURITY REVIEW pada source code yang disediakan.`,
+      ``,
+      `WAJIB CARI (cek setiap item):`,
+      `1. Hardcoded token, API key, password, atau credential di source code`,
+      `2. API key atau secret yang mungkin ter-leak melalui log, error message, atau Discord reply`,
+      `3. Unsafe eval() atau new Function() dengan input dari user`,
+      `4. exec/execSync/spawn dengan input yang tidak di-sanitize (Command Injection)`,
+      `5. Path traversal — akses file dengan path dari user input tanpa normalisasi`,
+      `6. Prototype pollution — merge/assign object tanpa validasi key (__proto__, constructor)`,
+      `7. Privilege escalation — user non-owner bisa mengakses command owner-only`,
+      `8. Permission check yang hilang atau bisa di-bypass`,
+      `9. SQL/NoSQL injection melalui string concatenation`,
+      `10. Sensitive data yang disimpan di state/memory tanpa enkripsi`,
+    ],
+    performance: [
+      `TUGAS: Lakukan PERFORMANCE REVIEW pada source code yang disediakan.`,
+      ``,
+      `WAJIB CARI (cek setiap item):`,
+      `1. Memory leak — setInterval/setTimeout tanpa clearInterval/clearTimeout`,
+      `2. EventEmitter.on() tanpa .off() (listener yang terus bertambah)`,
+      `3. Discord collector tanpa stop() atau timeout`,
+      `4. Duplicate database query dalam satu request flow`,
+      `5. Duplicate event listener ter-register lebih dari sekali`,
+      `6. Blocking/synchronous I/O (fs.readFileSync, execSync) di hot path`,
+      `7. Heavy loop tanpa yield / tanpa break condition`,
+      `8. Object/Array besar yang di-copy setiap request tanpa reference sharing`,
+      `9. Missing cache pada data yang sering diambil berulang`,
+      `10. setInterval dengan interval sangat pendek (<1s) tanpa alasan`,
+    ],
+    discord: [
+      `TUGAS: Lakukan DISCORD REVIEW pada source code yang disediakan.`,
+      ``,
+      `WAJIB CARI (cek setiap item):`,
+      `1. Interaction tidak di-reply / defer dalam 3 detik pertama`,
+      `2. Button/Select Menu/Modal yang tidak memiliki handler di interactionCreate`,
+      `3. customId duplicate — dua komponen berbeda dengan customId yang sama`,
+      `4. Slash command yang di-register tapi tidak ada handler-nya`,
+      `5. Collector tanpa .on('end') atau tanpa filter yang benar`,
+      `6. ephemeral reply yang lupa di-set (informasi sensitif ter-expose ke channel)`,
+      `7. Permission check yang hilang untuk command staff/owner`,
+      `8. followUp() dipanggil tanpa deferReply() sebelumnya`,
+      `9. Message component yang ter-send ke channel non-teks (DM, category, dll)`,
+      `10. Autocomplete handler yang tidak memanggil respond() sebelum timeout`,
+    ],
+    provider: [
+      `TUGAS: Lakukan PROVIDER REVIEW pada source code yang disediakan.`,
+      ``,
+      `WAJIB CARI (cek setiap item):`,
+      `1. API request tanpa timeout (bisa hang selamanya)`,
+      `2. Tidak ada error handling untuk HTTP 401 (invalid key) — akan loop tanpa henti`,
+      `3. Tidak ada error handling untuk HTTP 429 (rate limit) — tidak ada backoff`,
+      `4. Tidak ada error handling untuk HTTP 500/502/503 — tidak ada retry`,
+      `5. API key di-log atau dikirim ke Discord sebagai plain text`,
+      `6. Provider quota habis tapi masih dikirim request (harusnya di-block lokal)`,
+      `7. Model yang di-hardcode dan tidak bisa diganti via config`,
+      `8. Tidak ada fallback saat provider tidak tersedia`,
+      `9. Response parsing yang tidak aman (crash jika shape API berubah)`,
+      `10. DNS / SSL error tidak ditangani dengan pesan yang jelas ke user`,
+    ],
+    database: [
+      `TUGAS: Lakukan DATABASE REVIEW pada source code yang disediakan.`,
+      ``,
+      `WAJIB CARI (cek setiap item):`,
+      `1. Database read/write tanpa try/catch`,
+      `2. Null check hilang setelah database read (bisa crash jika record tidak ada)`,
+      `3. Duplicate record — tidak ada unique key check sebelum insert`,
+      `4. Orphan record — relasi ke record lain yang mungkin sudah dihapus`,
+      `5. Database tidak di-flush/save setelah write (data hilang saat restart)`,
+      `6. Race condition pada concurrent read-modify-write tanpa lock`,
+      `7. JSON.parse() tanpa try/catch saat membaca data tersimpan`,
+      `8. Database file path yang di-hardcode (tidak portable ke lingkungan lain)`,
+      `9. Backup tidak ada atau tidak diuji`,
+      `10. Sensitive data (token, key) disimpan di database tanpa enkripsi`,
+    ],
+  };
+
+  const bugMode = [
+    `TUGAS UTAMA: Temukan bug nyata dalam source code yang disediakan. Baca SELURUH kode yang diberikan sebelum menjawab.`,
+    ``,
+    `WAJIB CARI (cek setiap item):`,
+    `1. throw tanpa catch yang menanganinya`,
+    `2. catch kosong atau catch yang hanya console.log/logger tanpa recovery`,
+    `3. Promise / async function tidak di-await (fire-and-forget tanpa void/catch)`,
+    `4. Race condition — state dishared antara beberapa async call tanpa lock/mutex`,
+    `5. Discord interaction timeout — >3 detik antara event masuk dan deferReply/reply pertama`,
+    `6. Akses property pada nilai yang bisa null/undefined tanpa optional chaining atau guard`,
+    `7. Import symbol yang tidak dieksport dari modulnya (import non-existent export)`,
+    `8. Event handler tidak ter-register, atau ter-register lebih dari sekali (duplicate listener)`,
+    `9. Memory leak — setInterval/setTimeout tanpa clearInterval/clearTimeout, EventEmitter.on tanpa .off, collector tanpa stop()`,
+    `10. API/fetch request tanpa timeout dan tanpa error handling`,
+    `11. Database call tanpa try/catch atau tanpa null-check pada hasil`,
+    `12. Unused import, dead code, atau variabel yang tidak pernah dibaca`,
+    ``,
+    `FORMAT WAJIB untuk setiap bug yang ditemukan:`,
+    `🐛 BUG #N — <judul singkat>`,
+    `Root Cause: <penjelasan teknis akar masalah>`,
+    `File: <path/to/file.js>`,
+    `Line: <nomor baris>`,
+    `Kode bermasalah: \`<kode>\``,
+    `Penjelasan: <mengapa ini bug>`,
+    `Dampak: <apa yang bisa terjadi>`,
+    `Severity: CRITICAL / HIGH / MEDIUM / LOW`,
+    `Confidence: <persen>%`,
+    `Patch:`,
+    `\`\`\`diff`,
+    `- kode lama`,
+    `+ kode baru`,
+    `\`\`\``,
+    ``,
+    `Jika tidak ada bug: tulis hanya "✅ Tidak ditemukan bug dalam file yang dianalisis."`,
+    `JANGAN menjelaskan isi file jika tidak ada bug di dalamnya.`,
+    `JANGAN mengarang file atau function yang tidak ada dalam source yang diberikan.`,
+    `Jawab dalam bahasa Indonesia.`,
+  ];
+
+  if (mode && modeLines[mode]) {
+    return [...header, ...modeLines[mode], ...footer].join("\n");
+  }
+  return [...header, ...bugMode].join("\n");
+}
+
+/**
+ * investigate() — the main entry point for project analysis.
+ *
+ * Accepts:
+ *   query       — user's question or request (required)
+ *   image       — base64 data URL from an image attachment (optional)
+ *   fileContent — text content from a non-image file attachment (optional)
+ *
+ * Modes:
+ *   deepMode  — full file read + import following for bug/investigation queries
+ *   shallowMode — keyword-matched excerpts for general Q&A
+ *   Specialized: security | performance | discord | provider | database review
+ */
+export async function investigate({ query, image, fileContent }) {
   const cfg     = config();
   const adapter = activeAdapter ?? resolveAdapter();
   const meta    = _pkgMeta ?? { name: "Discord Bot", version: "?" };
 
-  // Deep mode: full file reads + import following when user asks for bug/error investigation.
-  // Shallow mode: keyword-matched 55-line excerpts for general Q&A.
+  // Determine mode: specialized review or generic bug hunt
+  const reviewMode = getInvestigationMode(query);
+  // Deep mode: full file reads + import following for any investigation query.
+  // Shallow mode: keyword-matched excerpts for general Q&A.
   const deepMode = cfg.codeAnalysis && isInvestigationQuery(query);
+
   let context = "";
   if (cfg.codeAnalysis) {
     if (deepMode) {
@@ -1328,6 +1532,12 @@ export async function investigate({ query, image }) {
     }
   }
 
+  // Append uploaded file content to context (highest priority — user-provided source)
+  if (fileContent) {
+    const fileSection = `\n\n${"=".repeat(60)}\nFILE YANG DIUPLOAD USER (prioritas utama — baca ini dulu):\n${"=".repeat(60)}\n${fileContent}`;
+    context = fileContent + (context ? fileSection + "\n\n" + context : "");
+  }
+
   // Vision: strip image if provider does not support it.
   let effectiveImage = image;
   let visionNote = "";
@@ -1336,53 +1546,12 @@ export async function investigate({ query, image }) {
     visionNote = `\n\n⚠️ **Vision tidak didukung oleh ${adapter.PROVIDER_NAME}.** Gambar tidak dapat dianalisis. Ganti provider ke OpenAI / Google Gemini / Anthropic untuk mengaktifkan vision analysis.`;
   }
 
-  // System prompt — structured bug-hunting in deep mode, advisory Q&A otherwise.
+  // System prompt — specialized review mode, generic bug hunt, or shallow Q&A.
   const providerLabel  = `${adapter.PROVIDER_NAME} | Model: ${cfg.model || adapter.DEFAULT_MODEL}`;
   const projectSummary = getProjectSummary();
 
   const systemContent = deepMode
-    ? [
-        `Anda adalah Principal Software Engineer & Static Analysis Engine untuk project berikut:`,
-        `${projectSummary}`,
-        `Provider aktif: ${providerLabel}`,
-        ``,
-        `TUGAS UTAMA: Temukan bug nyata dalam source code yang disediakan. Baca SELURUH kode yang diberikan sebelum menjawab.`,
-        ``,
-        `WAJIB CARI (cek setiap item):`,
-        `1. throw tanpa catch yang menanganinya`,
-        `2. catch kosong atau catch yang hanya console.log/logger tanpa recovery`,
-        `3. Promise / async function tidak di-await (fire-and-forget tanpa void/catch)`,
-        `4. Race condition — state dishared antara beberapa async call tanpa lock/mutex`,
-        `5. Discord interaction timeout — >3 detik antara event masuk dan deferReply/reply pertama`,
-        `6. Akses property pada nilai yang bisa null/undefined tanpa optional chaining atau guard`,
-        `7. Import symbol yang tidak dieksport dari modulnya (import non-existent export)`,
-        `8. Event handler tidak ter-register, atau ter-register lebih dari sekali (duplicate listener)`,
-        `9. Memory leak — setInterval/setTimeout tanpa clearInterval/clearTimeout, EventEmitter.on tanpa .off, collector tanpa stop()`,
-        `10. API/fetch request tanpa timeout dan tanpa error handling`,
-        `11. Database call tanpa try/catch atau tanpa null-check pada hasil`,
-        `12. Unused import, dead code, atau variabel yang tidak pernah dibaca`,
-        ``,
-        `FORMAT WAJIB untuk setiap bug yang ditemukan:`,
-        `🐛 BUG #N — <judul singkat>`,
-        `Root Cause: <penjelasan teknis akar masalah>`,
-        `File: <path/to/file.js>`,
-        `Line: <nomor baris>`,
-        `Kode bermasalah: \`<kode>\``,
-        `Penjelasan: <mengapa ini bug>`,
-        `Dampak: <apa yang bisa terjadi>`,
-        `Severity: CRITICAL / HIGH / MEDIUM / LOW`,
-        `Confidence: <persen>%`,
-        `Patch:`,
-        `\`\`\`diff`,
-        `- kode lama`,
-        `+ kode baru`,
-        `\`\`\``,
-        ``,
-        `Jika tidak ada bug: tulis hanya "✅ Tidak ditemukan bug dalam file yang dianalisis."`,
-        `JANGAN menjelaskan isi file jika tidak ada bug di dalamnya.`,
-        `JANGAN mengarang file atau function yang tidak ada dalam source yang diberikan.`,
-        `Jawab dalam bahasa Indonesia.`,
-      ].join("\n")
+    ? buildSpecializedSystemPrompt(reviewMode, projectSummary, providerLabel)
     : [
         `Anda adalah AI Core Assistant untuk project: **${meta.name}** v${meta.version}.`,
         `Provider aktif: ${providerLabel}`,
@@ -1397,21 +1566,23 @@ export async function investigate({ query, image }) {
         `- Untuk call flow: ikuti import dari file utama → helper → utility.`,
       ].join("\n");
 
-  const userText = deepMode
-    ? [
-        `PERMINTAAN INVESTIGASI:`,
-        redact(query),
-        ``,
-        `SOURCE CODE PROJECT (baca seluruhnya sebelum menjawab):`,
-        context || "⚠️ Tidak ada file yang ditemukan — periksa konfigurasi codeAnalysis.",
-      ].join("\n")
-    : [
-        `PERTANYAAN:`,
-        redact(query),
-        ``,
-        `PROJECT EXCERPTS (gunakan sebagai sumber kebenaran):`,
-        context || "Tidak ada excerpt yang cocok untuk query ini.",
-      ].join("\n");
+  const modeLabel = reviewMode
+    ? `PERMINTAAN ${reviewMode.toUpperCase()} REVIEW`
+    : deepMode ? "PERMINTAAN INVESTIGASI" : "PERTANYAAN";
+
+  const contextLabel = deepMode
+    ? `SOURCE CODE PROJECT (baca seluruhnya sebelum menjawab):`
+    : `PROJECT EXCERPTS (gunakan sebagai sumber kebenaran):`;
+
+  const userText = [
+    `${modeLabel}:`,
+    redact(query),
+    ``,
+    contextLabel,
+    context || (deepMode
+      ? "⚠️ Tidak ada file yang ditemukan — periksa konfigurasi codeAnalysis."
+      : "Tidak ada excerpt yang cocok untuk query ini."),
+  ].join("\n");
 
   const messages = [
     { role: "system", content: systemContent },
